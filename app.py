@@ -1,20 +1,14 @@
 import streamlit as st
 import pandas as pd
 import glob
+import os
 import html
 
 
 @st.cache_data
-def load_data():
-    """フォルダ内の「在庫変動データ*.xlsm」の一番新しいファイルを読む"""
-    files = sorted(glob.glob("在庫変動データ*.xlsm"))
-    if not files:
-        raise FileNotFoundError("在庫変動データ*.xlsm が見つかりません。")
-
-    latest_file = files[-1]
-
-    # シート名が日付付きで変わっても、最初のシートを使うようにする
-    sheets_dict = pd.read_excel(latest_file, sheet_name=None)
+def load_data(file_path: str):
+    """指定されたファイルを読み込む"""
+    sheets_dict = pd.read_excel(file_path, sheet_name=None)
     sheet_name = list(sheets_dict.keys())[0]
     df = sheets_dict[sheet_name]
 
@@ -25,7 +19,7 @@ def load_data():
     }
     df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
 
-    return df, latest_file, sheet_name
+    return df, sheet_name
 
 
 def make_img_tag(url: str, width: int = 120) -> str:
@@ -48,8 +42,8 @@ def df_to_html_table(df: pd.DataFrame) -> str:
         tds = []
         for col in df.columns:
             val = row[col]
-            # すでに img タグなどのHTMLを入れている列はエスケープしない
             if col == "画像":
+                # 画像列はHTMLをそのまま
                 tds.append(f"<td>{val}</td>")
             else:
                 tds.append(f"<td>{html.escape(str(val))}</td>")
@@ -67,27 +61,49 @@ def df_to_html_table(df: pd.DataFrame) -> str:
 
 def main():
     st.set_page_config(page_title="在庫変動データビューア", layout="wide")
-
     st.title("在庫変動データビューア")
 
-    # ===== データ読み込み =====
-    try:
-        df, filename, sheet_name = load_data()
-    except Exception as e:
-        st.error(f"データ読み込みでエラーが発生しました: {e}")
+    # ================ フォルダ単位でファイルを探す ================
+    # 直下のフォルダ配下にある「在庫変動データ*.xlsm」を全部拾う
+    file_paths = sorted(glob.glob("*/在庫変動データ*.xlsm"))
+
+    # フォルダ名 -> そのフォルダ内のファイル一覧
+    folder_files = {}
+    for path in file_paths:
+        folder = os.path.basename(os.path.dirname(path))  # 例: "202511"
+        folder_files.setdefault(folder, []).append(path)
+
+    if not folder_files:
+        st.error("サブフォルダ内に 在庫変動データ*.xlsm が見つかりません。構成を確認してください。")
         st.stop()
 
-    st.caption(f"読み込みファイル: {filename}（シート: {sheet_name}）")
+    # フォルダ名（=月）一覧をソート
+    months = sorted(folder_files.keys())
+
+    # ================ サイドバーで「月フォルダ」を選択 ================
+    with st.sidebar:
+        st.header("月の選択")
+        selected_month = st.selectbox("表示する月フォルダ", months, index=len(months) - 1)
+
+    # 選択されたフォルダの中で、一番新しいファイルを使う
+    files_in_month = sorted(folder_files[selected_month])
+    selected_file = files_in_month[-1]
+
+    # ================ データ読み込み ================
+    try:
+        df, sheet_name = load_data(selected_file)
+    except Exception as e:
+        st.error(f"データ読み込みでエラー: {e}")
+        st.stop()
+
+    st.caption(f"フォルダ: {selected_month} / ファイル: {selected_file}（シート: {sheet_name}）")
     st.write(f"件数: {len(df):,} 件")
 
-    # ===== サイドバーでフィルタ =====
+    # ================ フィルタ設定 ================
     with st.sidebar:
         st.header("絞り込み")
-
-        # キーワード検索
         keyword = st.text_input("商品番号 / SKU / 商品名で検索")
 
-        # ランキングの範囲スライダー（列がある場合のみ）
         rank_range = None
         if "ランキング" in df.columns:
             min_rank = int(df["ランキング"].min())
@@ -99,23 +115,18 @@ def main():
                 (min_rank, min(min_rank + 49, max_rank)),
             )
 
-        # 売上個数（絶対値）の下限
         min_sales = 0
         if "売上個数" in df.columns:
             min_sales = st.number_input(
                 "売上個数（絶対値）の下限", min_value=0, value=0, step=1
             )
 
-    # ===== データ絞り込み =====
+    # ================ データ絞り込み ================
     filtered = df.copy()
 
     # キーワード検索
     if keyword:
-        cols = []
-        for c in ["商品番号", "SKU", "商品名"]:
-            if c in filtered.columns:
-                cols.append(c)
-
+        cols = [c for c in ["商品番号", "SKU", "商品名"] if c in filtered.columns]
         if cols:
             cond = False
             for c in cols:
@@ -133,27 +144,25 @@ def main():
     if "売上個数" in filtered.columns:
         filtered = filtered[filtered["売上個数"].abs() >= min_sales]
 
-    # ===== テーブル表示（HTMLで画像を左＆大きめ） =====
+    # ================ テーブル表示（画像先頭 & 文字大きめ） ================
     st.subheader("一覧")
 
-    # 表示したい主な列
-    base_cols = []
-    for c in ["ランキング", "商品番号", "SKU", "商品名", "属性1名", "属性2名", "現在庫", "売上個数"]:
-        if c in filtered.columns:
-            base_cols.append(c)
+    # 表示したい基本列
+    base_cols = [
+        c for c in ["ランキング", "商品番号", "SKU", "商品名", "属性1名", "属性2名", "現在庫", "売上個数"]
+        if c in filtered.columns
+    ]
 
-    # 画像URL列があれば画像列を先頭に作成
+    # 画像URL列があれば画像列を先頭に
     if "画像URL" in filtered.columns:
         display_df = filtered[["画像URL"] + base_cols].copy()
-
-        # 「画像」列として <img> タグに変換
         display_df.insert(0, "画像", display_df["画像URL"].apply(lambda u: make_img_tag(u, width=120)))
         display_df = display_df.drop(columns=["画像URL"])
     else:
         display_df = filtered[base_cols].copy()
 
-    # HTMLテーブルとして描画
     html_table = df_to_html_table(display_df)
+
     st.markdown(
         """
         <style>
@@ -163,9 +172,14 @@ def main():
         }
         th {
             background-color: #f2f2f2;
+            font-size: 14px;
         }
         td, th {
-            padding: 4px 6px;
+            padding: 6px 8px;
+            border: 1px solid #ccc;
+        }
+        tr:hover {
+            background-color: #f9f9f9;
         }
         img {
             display: block;
