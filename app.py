@@ -22,12 +22,12 @@ def load_data(file_path: str):
     return df, sheet_name
 
 
-def make_img_tag(url: str, width: int = 120, height: int = 120) -> str:
-    """縦横比を保たずに、枠にフィット（余分はトリミング）"""
+def make_img_tag(url: str, width: int = 120) -> str:
+    """画像URLから <img> タグを生成（URLがなければ空文字）"""
     if isinstance(url, str) and url.startswith("http"):
         safe_url = html.escape(url, quote=True)
         return (
-            f'<img src="{safe_url}" '
+            f'<img src="{safe_url}" width="{width}">'
             f'style="overflow:hidden;">'
         )
     return ""
