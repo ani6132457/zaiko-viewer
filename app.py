@@ -159,7 +159,7 @@ def main():
         <style>
         table {
             border-collapse: collapse;
-            font-size: 12px;
+            font-size: 14px;
         }
         th {
             background-color: #f2f2f2;
