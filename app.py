@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import glob
+import html
 
 
 @st.cache_data
@@ -25,6 +26,43 @@ def load_data():
     df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
 
     return df, latest_file, sheet_name
+
+
+def make_img_tag(url: str, width: int = 120) -> str:
+    """画像URLから <img> タグを生成（URLがなければ空文字）"""
+    if isinstance(url, str) and url.startswith("http"):
+        safe_url = html.escape(url, quote=True)
+        return f'<img src="{safe_url}" width="{width}">'
+    return ""
+
+
+def df_to_html_table(df: pd.DataFrame) -> str:
+    """DataFrame を HTMLテーブル文字列に変換（画像列はすでに <img> タグ前提）"""
+    # ヘッダー
+    thead_cells = "".join(f"<th>{html.escape(str(col))}</th>" for col in df.columns)
+    thead = f"<thead><tr>{thead_cells}</tr></thead>"
+
+    # 本体
+    rows_html = []
+    for _, row in df.iterrows():
+        tds = []
+        for col in df.columns:
+            val = row[col]
+            # すでに img タグなどのHTMLを入れている列はエスケープしない
+            if col == "画像":
+                tds.append(f"<td>{val}</td>")
+            else:
+                tds.append(f"<td>{html.escape(str(val))}</td>")
+        rows_html.append("<tr>" + "".join(tds) + "</tr>")
+    tbody = "<tbody>" + "".join(rows_html) + "</tbody>"
+
+    table = f"""
+    <table border="1" cellspacing="0" cellpadding="4">
+        {thead}
+        {tbody}
+    </table>
+    """
+    return table
 
 
 def main():
@@ -95,7 +133,7 @@ def main():
     if "売上個数" in filtered.columns:
         filtered = filtered[filtered["売上個数"].abs() >= min_sales]
 
-    # ===== テーブル表示（画像を一番左 & 少し大きめ） =====
+    # ===== テーブル表示（HTMLで画像を左＆大きめ） =====
     st.subheader("一覧")
 
     # 表示したい主な列
@@ -104,37 +142,39 @@ def main():
         if c in filtered.columns:
             base_cols.append(c)
 
-    # 画像列を先頭に追加（あれば）
-    cols_with_image = []
+    # 画像URL列があれば画像列を先頭に作成
     if "画像URL" in filtered.columns:
-        cols_with_image.append("画像URL")   # 画像を最初に
+        display_df = filtered[["画像URL"] + base_cols].copy()
 
-    cols_with_image += base_cols
-
-    # 必要な列だけ抜き出し
-    display_df = filtered[cols_with_image].copy()
-
-    # 画像列をサムネ（中サイズ）で表示
-    if "画像URL" in display_df.columns:
-        st.dataframe(
-            display_df,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "画像URL": st.column_config.ImageColumn(
-                    "画像",
-                    help="商品画像サムネイル",
-                    width="medium",  # medium：smallより少し大きい
-                )
-            },
-        )
+        # 「画像」列として <img> タグに変換
+        display_df.insert(0, "画像", display_df["画像URL"].apply(lambda u: make_img_tag(u, width=120)))
+        display_df = display_df.drop(columns=["画像URL"])
     else:
-        # 画像URL列がない場合のフォールバック
-        st.dataframe(
-            display_df,
-            use_container_width=True,
-            hide_index=True,
-        )
+        display_df = filtered[base_cols].copy()
+
+    # HTMLテーブルとして描画
+    html_table = df_to_html_table(display_df)
+    st.markdown(
+        """
+        <style>
+        table {
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+        td, th {
+            padding: 4px 6px;
+        }
+        img {
+            display: block;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown(html_table, unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
