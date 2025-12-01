@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import glob
-import os
 
 
 @st.cache_data
@@ -67,11 +66,10 @@ def main():
                 "売上個数（絶対値）の下限", min_value=0, value=0, step=1
             )
 
-        show_image = st.checkbox("商品画像も表示する（上位50件のみ）", value=False)
-
     # ===== データ絞り込み =====
     filtered = df.copy()
 
+    # キーワード検索
     if keyword:
         cols = []
         for c in ["商品番号", "SKU", "商品名"]:
@@ -84,37 +82,53 @@ def main():
                 cond = cond | filtered[c].astype(str).str.contains(keyword, case=False)
             filtered = filtered[cond]
 
+    # ランキング範囲
     if rank_range and "ランキング" in filtered.columns:
         filtered = filtered[
             (filtered["ランキング"] >= rank_range[0])
             & (filtered["ランキング"] <= rank_range[1])
         ]
 
+    # 売上個数（絶対値）
     if "売上個数" in filtered.columns:
         filtered = filtered[filtered["売上個数"].abs() >= min_sales]
 
-    # ===== テーブル表示 =====
+    # ===== テーブル表示（商品画像を必須表示） =====
+    st.subheader("一覧")
+
+    # 表示したい主な列
     display_cols = []
     for c in ["ランキング", "商品番号", "SKU", "商品名", "属性1名", "属性2名", "現在庫", "売上個数"]:
         if c in filtered.columns:
             display_cols.append(c)
 
-    st.subheader("一覧")
-    st.dataframe(
-        filtered[display_cols],
-        use_container_width=True,
-        hide_index=True,
-    )
+    # 画像列も必ず追加（あれば）
+    if "画像URL" in filtered.columns:
+        display_cols.append("画像URL")
 
-    # ===== 画像表示（任意） =====
-    if show_image and "画像URL" in filtered.columns:
-        st.subheader("商品画像（上位50件）")
-        for _, row in filtered.head(50).iterrows():
-            st.markdown(f"**{row.get('ランキング', '')}: {row.get('商品名', '')}**")
-            url = row.get("画像URL")
-            if isinstance(url, str) and url.startswith("http"):
-                st.image(url, width=200)
-            st.markdown("---")
+    display_df = filtered[display_cols].copy()
+
+    # 画像列を小さめサムネで表示
+    if "画像URL" in display_df.columns:
+        st.dataframe(
+            display_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "画像URL": st.column_config.ImageColumn(
+                    "画像",
+                    help="商品画像サムネイル",
+                    width="small",  # 小さめサイズ
+                )
+            },
+        )
+    else:
+        # 画像URL列がない場合のフォールバック
+        st.dataframe(
+            display_df,
+            use_container_width=True,
+            hide_index=True,
+        )
 
 
 if __name__ == "__main__":
