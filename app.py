@@ -93,42 +93,45 @@ def main():
     if "売上個数" in filtered.columns:
         filtered = filtered[filtered["売上個数"].abs() >= min_sales]
 
-    # ===== テーブル表示（商品画像を必須表示） =====
-    st.subheader("一覧")
+# ===== テーブル表示（画像を一番左 & 大きめ表示） =====
+st.subheader("一覧")
 
-    # 表示したい主な列
-    display_cols = []
-    for c in ["ランキング", "商品番号", "SKU", "商品名", "属性1名", "属性2名", "現在庫", "売上個数"]:
-        if c in filtered.columns:
-            display_cols.append(c)
+# 表示したい主な列
+display_cols = []
+for c in ["ランキング", "商品番号", "SKU", "商品名", "属性1名", "属性2名", "現在庫", "売上個数"]:
+    if c in filtered.columns:
+        display_cols.append(c)
 
-    # 画像列も必ず追加（あれば）
-    if "画像URL" in filtered.columns:
-        display_cols.append("画像URL")
+# 画像列を先頭に追加（あれば）
+cols_with_image = []
+if "画像URL" in filtered.columns:
+    cols_with_image.append("画像URL")   # 画像を最初に
 
-    display_df = filtered[display_cols].copy()
+cols_with_image += display_cols  # 他の列を後ろに追加
 
-    # 画像列を小さめサムネで表示
-    if "画像URL" in display_df.columns:
-        st.dataframe(
-            display_df,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "画像URL": st.column_config.ImageColumn(
-                    "画像",
-                    help="商品画像サムネイル",
-                    width="small",  # 小さめサイズ
-                )
-            },
-        )
-    else:
-        # 画像URL列がない場合のフォールバック
-        st.dataframe(
-            display_df,
-            use_container_width=True,
-            hide_index=True,
-        )
+# 必要な列だけ抜き出し
+display_df = filtered[cols_with_image].copy()
+
+# 画像列をサムネ（中サイズ）で表示
+if "画像URL" in display_df.columns:
+    st.dataframe(
+        display_df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "画像URL": st.column_config.ImageColumn(
+                "画像",
+                help="商品画像サムネイル",
+                width="medium",  # ← medium に変更（small より少し大きい）
+            )
+        },
+    )
+else:
+    st.dataframe(
+        display_cols,
+        use_container_width=True,
+        hide_index=True,
+    )
 
 
 if __name__ == "__main__":
