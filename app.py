@@ -136,7 +136,7 @@ def main():
         keyword = st.text_input("商品番号 / SKU / 商品名で検索")
 
         min_total_sales = st.number_input(
-            "売上個数合計（絶対値）の下限",
+            "売上個数合計（プラス値）の下限",
             min_value=0,
             value=0,
             step=1,
@@ -165,8 +165,10 @@ def main():
         if c in filtered.columns:
             group_keys.append(c)
 
+    # 元データの売上個数は「マイナスが大きいほど売れている」前提
+    # ここではまず単純に合計し、そのあと符号を反転して「売上個数合計（プラス）」を作る
     agg_dict = {
-        "売上個数": "sum",  # 合計売上個数（返品がマイナスなら差し引き後）
+        "売上個数": "sum",  # 合計（マイナスが大きいほど売れている）
     }
     if "現在庫" in filtered.columns:
         agg_dict["現在庫"] = "last"
@@ -177,20 +179,20 @@ def main():
 
     grouped = filtered.groupby(group_keys, dropna=False).agg(agg_dict).reset_index()
 
-    # 列名調整
-    grouped = grouped.rename(
-        columns={
-            "売上個数": "売上個数合計",
-            "月フォルダ": "集計月数",
-        }
-    )
+    # 元の合計値（マイナス）を別名に保持
+    grouped = grouped.rename(columns={"売上個数": "売上個数合計_元"})
 
-    # 売上個数合計の絶対値フィルタ
-    grouped["売上個数合計_abs"] = grouped["売上個数合計"].abs()
+    # 表示用の「売上個数合計」はマイナスを反転してプラスにする
+    grouped["売上個数合計"] = -grouped["売上個数合計_元"]
+
+    # 売れていない（合計0以下）のSKUは基本的に除外
+    grouped = grouped[grouped["売上個数合計"] > 0]
+
+    # 下限フィルタ（プラスの数値で指定）
     if min_total_sales > 0:
-        grouped = grouped[grouped["売上個数合計_abs"] >= min_total_sales]
+        grouped = grouped[grouped["売上個数合計"] >= min_total_sales]
 
-    # 売上個数合計の降順に並べ替え
+    # 売上個数合計の降順に並べ替え（よく売れている順）
     grouped = grouped.sort_values("売上個数合計", ascending=False)
 
     # 表示用列の順番
@@ -206,13 +208,18 @@ def main():
         if c in grouped.columns:
             agg_cols.append(c)
 
-    for c in ["売上個数合計", "現在庫", "集計月数"]:
+    # 元のマイナス合計は画面には出さない（必要ならあとで復活も可）
+    for c in ["売上個数合計", "現在庫", "月フォルダ"]:
         if c in grouped.columns:
             agg_cols.append(c)
 
+    # 表示用DataFrame
     df_agg = grouped[agg_cols].copy()
 
-    st.write(f"SKU数: {len(df_agg):,} 件")
+    # 表の列名を少し分かりやすく
+    df_agg = df_agg.rename(columns={"月フォルダ": "集計月数"})
+
+    st.write(f"SKU数: {len(df_agg):,} 件（売上個数合計 > 0 のみ）")
 
     # ================ 集計テーブル表示（1画面のみ） ================
     html_table_agg = df_to_html_table(df_agg)
