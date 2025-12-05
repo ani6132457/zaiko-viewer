@@ -82,7 +82,7 @@ def load_image_master():
 def make_html_table(df: pd.DataFrame) -> str:
     """DataFrame をシンプルな HTML テーブル文字列に変換"""
     # ヘッダー
-    thead_cells = "".onjoin(f"<th>{html.escape(str(col))}</th>" for col in df.columns)
+    thead_cells = "".join(f"<th>{html.escape(str(col))}</th>" for col in df.columns)
     thead = f"<thead><tr>{thead_cells}</tr></thead>"
 
     # 本体
