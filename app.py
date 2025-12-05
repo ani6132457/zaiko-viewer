@@ -3,6 +3,7 @@ import pandas as pd
 import glob
 import os
 import html
+import requests
 
 
 @st.cache_data
@@ -16,16 +17,71 @@ def load_data(file_paths):
 
     all_df = pd.concat(dfs, ignore_index=True)
 
-    # 念のため数値型に変換（増減値が文字列になっても壊れないように）
-    all_df["増減値"] = pd.to_numeric(all_df["増減値"], errors="coerce").fillna(0).astype(int)
-    all_df["変動後"] = pd.to_numeric(all_df["変動後"], errors="coerce").fillna(0).astype(int)
+    # 数値列を明示的に変換
+    for col in ["増減値", "変動後"]:
+        if col in all_df.columns:
+            all_df[col] = pd.to_numeric(all_df[col], errors="coerce").fillna(0).astype(int)
 
     return all_df
 
 
+@st.cache_data
+def fetch_image_url(page_url: str) -> str | None:
+    """商品ページURLから画像URLを取得（VBAマクロとほぼ同じロジック）"""
+    if not isinstance(page_url, str) or page_url == "":
+        return None
+    try:
+        resp = requests.get(page_url, timeout=5)
+    except Exception:
+        return None
+
+    if resp.status_code != 200:
+        return None
+
+    html_text = resp.text
+
+    # <span class="sale_desc"> を探す
+    marker = '<span class="sale_desc">'
+    start_pos = html_text.find(marker)
+    if start_pos == -1:
+        return None
+
+    # その後ろで <img を探す
+    img_pos = html_text.find("<img", start_pos)
+    if img_pos == -1:
+        return None
+
+    # src="..." を抜き出す
+    src_marker = 'src="'
+    src_start = html_text.find(src_marker, img_pos)
+    if src_start == -1:
+        return None
+    src_start += len(src_marker)
+    src_end = html_text.find('"', src_start)
+    if src_end == -1:
+        return None
+
+    img_url = html_text[src_start:src_end]
+    return img_url or None
+
+
+def make_img_tag_from_basic_code(basic_code: str, width: int = 120) -> str:
+    """
+    商品基本コードから商品ページURLを組み立てて、画像<img>タグを返す。
+    URL: https://item.rakuten.co.jp/hype/商品基本コード/
+    """
+    if not isinstance(basic_code, str) or basic_code == "":
+        return ""
+    page_url = f"https://item.rakuten.co.jp/hype/{basic_code}/"
+    img_url = fetch_image_url(page_url)
+    if not img_url:
+        return ""
+    safe = html.escape(img_url, quote=True)
+    return f'<img src="{safe}" width="{width}">'
+
+
 def make_html_table(df: pd.DataFrame) -> str:
     """DataFrame をシンプルな HTML テーブル文字列に変換"""
-
     # ヘッダー
     thead_cells = "".join(f"<th>{html.escape(str(col))}</th>" for col in df.columns)
     thead = f"<thead><tr>{thead_cells}</tr></thead>"
@@ -36,7 +92,11 @@ def make_html_table(df: pd.DataFrame) -> str:
         tds = []
         for col in df.columns:
             val = row[col]
-            tds.append(f"<td>{html.escape(str(val))}</td>")
+            if col == "画像":
+                # 画像列はHTMLそのまま
+                tds.append(f"<td>{val}</td>")
+            else:
+                tds.append(f"<td>{html.escape(str(val))}</td>")
         rows_html.append("<tr>" + "".join(tds) + "</tr>")
     tbody = "<tbody>" + "".join(rows_html) + "</tbody>"
 
@@ -50,8 +110,8 @@ def make_html_table(df: pd.DataFrame) -> str:
 
 
 def main():
-    st.set_page_config(page_title="Tempostar SKU別売上集計", layout="wide")
-    st.title("Tempostar 在庫変動データ - SKU別売上集計")
+    st.set_page_config(page_title="Tempostar SKU別売上集計（画像付き）", layout="wide")
+    st.title("Tempostar 在庫変動データ - SKU別売上集計（商品画像付き）")
 
     # ================ 対象CSVファイルの取得 ================
     file_paths = sorted(glob.glob("tempostar_stock_*.csv"))
@@ -62,7 +122,7 @@ def main():
 
     file_name_list = [os.path.basename(p) for p in file_paths]
 
-    # ================ サイドバー：対象ファイル選択 & フィルタ設定 ================
+    # ================ サイドバー：対象ファイル選択 & フィルタ ================
     with st.sidebar:
         st.header("集計設定")
 
@@ -78,10 +138,7 @@ def main():
             st.warning("少なくとも1つCSVファイルを選択してください。")
             st.stop()
 
-        # 選択されたファイル名からパスを復元
-        selected_paths = [
-            p for p in file_paths if os.path.basename(p) in selected_file_names
-        ]
+        selected_paths = [p for p in file_paths if os.path.basename(p) in selected_file_names]
 
         # キーワード絞り込み（集計前）
         keyword = st.text_input("商品コード / 商品基本コード / 商品名で検索")
@@ -106,9 +163,9 @@ def main():
         st.caption(f"・{name}")
     st.write(f"明細行数: {len(df_raw):,} 行")
 
-    # ================ 明細レベルでの絞り込み（キーワード） ================
     df = df_raw.copy()
 
+    # ================ 明細レベルでのキーワード絞り込み ================
     if keyword:
         cond = False
         for col in ["商品コード", "商品基本コード", "商品名"]:
@@ -116,61 +173,87 @@ def main():
                 cond = cond | df[col].astype(str).str.contains(keyword, case=False)
         df = df[cond]
 
-    # ================ SKU別集計（ここがメイン） ================
     # 必須列チェック
-    if not {"商品コード", "増減値"}.issubset(df.columns):
-        st.error("商品コード または 増減値 の列がCSVにありません。項目名を確認してください。")
+    if not {"商品コード", "商品基本コード", "増減値"}.issubset(df.columns):
+        st.error("商品コード / 商品基本コード / 増減値 のいずれかの列がCSVにありません。項目名を確認してください。")
         st.stop()
 
+    # ================ 売上用データ（更新理由＝受注取込のみ） ================
+    if "更新理由" in df.columns:
+        df_sales = df[df["更新理由"] == "受注取込"].copy()
+    else:
+        # 更新理由列がない場合は全行を売上として扱う（保険）
+        df_sales = df.copy()
+
+    # ================ SKU別売上集計 ================
     # グループキー（SKU＋商品情報）
-    group_keys = []
+    sales_group_keys = []
     for c in ["商品コード", "商品基本コード", "商品名", "属性1名", "属性2名"]:
-        if c in df.columns:
-            group_keys.append(c)
+        if c in df_sales.columns:
+            sales_group_keys.append(c)
 
-    # 増減値は「マイナス = 出荷（売れている）」前提
-    # まず単純に増減値を合計し、その後符号を反転して「売上個数合計（プラス）」を作る
-    agg_dict = {
-        "増減値": "sum",        # 合計（マイナスが大きいほど売れている）
-        "変動後": "last",       # 最後の変動後 在庫数
+    agg_sales = {
+        "増減値": "sum",  # マイナスが大きいほど売れている
     }
-    if "元ファイル" in df.columns:
-        agg_dict["元ファイル"] = pd.Series.nunique  # 何ファイル分か（＝日数などの目安）
 
-    grouped = df.groupby(group_keys, dropna=False).agg(agg_dict).reset_index()
+    sales_grouped = df_sales.groupby(sales_group_keys, dropna=False).agg(agg_sales).reset_index()
+    sales_grouped = sales_grouped.rename(columns={"増減値": "増減値合計"})
 
-    # 元の合計値（マイナス）の列名調整
-    grouped = grouped.rename(columns={"増減値": "増減値合計", "変動後": "現在庫"})
+    # 表示用「売上個数合計」＝ マイナスを反転してプラスに
+    sales_grouped["売上個数合計"] = -sales_grouped["増減値合計"]
 
-    # 表示用の「売上個数合計」はマイナスを反転してプラスにする
-    grouped["売上個数合計"] = -grouped["増減値合計"]
+    # 売れていない（0以下）は除外
+    sales_grouped = sales_grouped[sales_grouped["売上個数合計"] > 0]
 
-    # 売れていない（合計0以下）は基本除外
-    grouped = grouped[grouped["売上個数合計"] > 0]
+    # ================ 在庫情報（現在庫）を別途集計（全更新理由対象） ================
+    stock_group = None
+    if "変動後" in df.columns:
+        stock_group_keys = []
+        for c in ["商品コード", "商品基本コード", "商品名", "属性1名", "属性2名"]:
+            if c in df.columns:
+                stock_group_keys.append(c)
 
-    # 下限フィルタ（プラスの数値で指定）
+        agg_stock = {
+            "変動後": "last",  # 最後の変動後在庫
+        }
+        stock_group = df.groupby(stock_group_keys, dropna=False).agg(agg_stock).reset_index()
+        stock_group = stock_group.rename(columns={"変動後": "現在庫"})
+
+        # 売上集計結果とマージ
+        sales_grouped = pd.merge(
+            sales_grouped,
+            stock_group,
+            on=stock_group_keys,
+            how="left",
+        )
+
+    # ================ 売上個数合計の下限フィルタ & 並べ替え ================
     if min_total_sales > 0:
-        grouped = grouped[grouped["売上個数合計"] >= min_total_sales]
+        sales_grouped = sales_grouped[sales_grouped["売上個数合計"] >= min_total_sales]
 
-    # 売上個数合計の降順に並べ替え（よく売れている順）
-    grouped = grouped.sort_values("売上個数合計", ascending=False)
+    sales_grouped = sales_grouped.sort_values("売上個数合計", ascending=False)
 
-    # 表示用列の順番
-    display_cols = []
+    # ================ 画像列の生成（一番左） ================
+    sales_grouped.insert(
+        0,
+        "画像",
+        sales_grouped["商品基本コード"].apply(lambda code: make_img_tag_from_basic_code(code, width=120)),
+    )
 
+    # ================ 表示列の並び ================
+    display_cols = ["画像"]
     for c in ["商品コード", "商品基本コード", "商品名", "属性1名", "属性2名"]:
-        if c in grouped.columns:
+        if c in sales_grouped.columns:
+            display_cols.append(c)
+    for c in ["売上個数合計", "現在庫", "増減値合計"]:
+        if c in sales_grouped.columns:
             display_cols.append(c)
 
-    for c in ["売上個数合計", "現在庫", "増減値合計", "元ファイル"]:
-        if c in grouped.columns:
-            display_cols.append(c)
-
-    df_view = grouped[display_cols].copy()
+    df_view = sales_grouped[display_cols].copy()
 
     st.write(f"SKU数（売上個数合計 > 0）: {len(df_view):,} 件")
 
-    # ================ HTMLテーブルで表示（文字大きめ） ================
+    # ================ HTMLテーブルで表示 ================
     html_table = make_html_table(df_view)
 
     st.markdown(
@@ -190,6 +273,9 @@ def main():
         }
         tr:hover {
             background-color: #f9f9f9;
+        }
+        img {
+            display: block;
         }
         </style>
         """,
