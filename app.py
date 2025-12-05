@@ -3,12 +3,12 @@ import pandas as pd
 import glob
 import os
 import html
-import requests
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
+
+# ========= データ読み込み系 =========
 
 @st.cache_data
-def load_data(file_paths):
+def load_tempostar_data(file_paths):
     """指定されたTempostar CSVファイル群を読み込んで1つのDataFrameに結合"""
     dfs = []
     for path in file_paths:
@@ -27,60 +27,54 @@ def load_data(file_paths):
 
 
 @st.cache_data
-def fetch_image_map(basic_codes):
+def load_image_master():
     """
-    商品基本コードのリストから
-    code -> 画像URL の辞書をまとめて取得する（並列で高速化＆キャッシュ）
+    商品画像URLマスタフォルダ内のCSVをすべて読み込んで
+    商品番号 -> 商品画像パス の dict を返す
+    フォルダ構成:
+        app.py
+        商品画像URLマスタ/
+            master1.csv
+            master2.csv
+            ...
+    CSVフォーマット:
+        1列目: 商品番号（＝商品コードに対応）
+        2列目: 商品画像パス（例: /shoes4/0623_1.jpg）
     """
-    # ユニーク化して無駄なリクエスト削減
-    unique_codes = sorted(
-        set(str(c) for c in basic_codes if isinstance(c, str) and c.strip() != "")
-    )
+    master_folder = "商品画像URLマスタ"
+    pattern = os.path.join(master_folder, "*.csv")
+    paths = glob.glob(pattern)
 
-    def fetch_one(code):
-        page_url = f"https://item.rakuten.co.jp/hype/{code}/"
-        try:
-            resp = requests.get(page_url, timeout=5)
-        except Exception:
-            return code, ""
+    if not paths:
+        # マスタがなくてもアプリ自体は動くようにする（画像なし表示）
+        return {}
 
-        if resp.status_code != 200:
-            return code, ""
+    dfs = []
+    for p in paths:
+        # ヘッダー行ありを想定（1列目: 商品番号, 2列目: 商品画像パス）
+        # ヘッダー名が違っても位置で拾うようにする
+        df_raw = pd.read_csv(p, encoding="cp932", header=None)
+        if df_raw.shape[1] < 2:
+            continue
+        df = df_raw.iloc[:, :2].copy()
+        df.columns = ["商品番号", "商品画像パス"]
+        dfs.append(df)
 
-        html_text = resp.text
+    if not dfs:
+        return {}
 
-        marker = '<span class="sale_desc">'
-        start_pos = html_text.find(marker)
-        if start_pos == -1:
-            return code, ""
+    all_img = pd.concat(dfs, ignore_index=True)
 
-        img_pos = html_text.find("<img", start_pos)
-        if img_pos == -1:
-            return code, ""
+    # 前後の空白をトリム
+    all_img["商品番号"] = all_img["商品番号"].astype(str).str.strip()
+    all_img["商品画像パス"] = all_img["商品画像パス"].astype(str).str.strip()
 
-        src_marker = 'src="'
-        src_start = html_text.find(src_marker, img_pos)
-        if src_start == -1:
-            return code, ""
-        src_start += len(src_marker)
-        src_end = html_text.find('"', src_start)
-        if src_end == -1:
-            return code, ""
+    # 後勝ちで dict 化（重複があれば後のCSVを優先）
+    img_dict = dict(zip(all_img["商品番号"], all_img["商品画像パス"]))
+    return img_dict
 
-        img_url = html_text[src_start:src_end]
-        return code, img_url or ""
 
-    results = {}
-    # 並列で一気に取得（ワーカー数は環境に合わせて調整可能）
-    with ThreadPoolExecutor(max_workers=8) as ex:
-        futures = {ex.submit(fetch_one, code): code for code in unique_codes}
-        for fut in as_completed(futures):
-            code, url = fut.result()
-            if url:
-                results[code] = url
-
-    return results
-
+# ========= HTMLテーブル描画 =========
 
 def make_html_table(df: pd.DataFrame) -> str:
     """DataFrame をシンプルな HTML テーブル文字列に変換"""
@@ -111,6 +105,8 @@ def make_html_table(df: pd.DataFrame) -> str:
     return table
 
 
+# ========= メインアプリ =========
+
 def main():
     st.set_page_config(page_title="Tempostar SKU別売上集計（画像付き）", layout="wide")
     st.title("Tempostar 在庫変動データ - SKU別売上集計（商品画像付き）")
@@ -119,7 +115,7 @@ def main():
     file_paths = sorted(glob.glob("tempostar_stock_*.csv"))
 
     if not file_paths:
-        st.error("tempostar_stock_*.csv が見つかりません。\napp.py と同じフォルダに CSV を置いてください。")
+        st.error("tempostar_stock_*.csv が見つかりません。\napp.py と同じフォルダに Tempostar の CSV を置いてください。")
         st.stop()
 
     file_name_list = [os.path.basename(p) for p in file_paths]
@@ -154,7 +150,7 @@ def main():
 
     # ================ データ読み込み ================
     try:
-        df_raw = load_data(selected_paths)
+        df_raw = load_tempostar_data(selected_paths)
     except Exception as e:
         st.error(f"CSV読み込みでエラーが発生しました: {e}")
         st.stop()
@@ -231,20 +227,34 @@ def main():
 
     sales_grouped = sales_grouped.sort_values("売上個数合計", ascending=False)
 
-    # ================ 画像URLをまとめて取得 → 画像列を先頭に ================
-    # 商品基本コード一覧から画像URLマップを一括取得（並列＋キャッシュ）
-    code_list = sales_grouped["商品基本コード"].astype(str).tolist()
-    image_map = fetch_image_map(code_list)
+    # ================ 商品画像マスタを利用して画像列を作成 ================
+    img_master = load_image_master()
+    base_url = "https://image.rakuten.co.jp/hype/cabinet"
 
-    # HTML <img> タグに変換
-    def code_to_img_tag(code):
-        url = image_map.get(str(code), "")
-        if not url:
+    def code_to_img_tag(row):
+        # 商品番号マスタと突き合わせるキーを決定
+        # まず商品コード、なければ商品基本コードを使う
+        code = None
+        if "商品コード" in row and pd.notna(row["商品コード"]):
+            code = str(row["商品コード"]).strip()
+        elif "商品基本コード" in row and pd.notna(row["商品基本コード"]):
+            code = str(row["商品基本コード"]).strip()
+
+        if not code:
             return ""
+
+        rel_path = img_master.get(code, "")
+        if not rel_path:
+            return ""
+
+        # 画像URL生成: https://image.rakuten.co.jp/hype/cabinet + 商品画像パス
+        # 商品画像パスが "/shoes4/0623_1.jpg" 形式前提
+        rel_path = str(rel_path).strip()
+        url = base_url + rel_path
         safe = html.escape(url, quote=True)
         return f'<img src="{safe}" width="120">'
 
-    sales_grouped["画像"] = sales_grouped["商品基本コード"].apply(code_to_img_tag)
+    sales_grouped["画像"] = sales_grouped.apply(code_to_img_tag, axis=1)
 
     # 画像列を先頭へ
     cols = sales_grouped.columns.tolist()
@@ -263,7 +273,8 @@ def main():
     df_view = sales_grouped[display_cols].copy()
 
     st.write(f"SKU数（売上個数合計 > 0）: {len(df_view):,} 件")
-    st.caption("※ 画像URLは商品基本コードごとに並列取得し、キャッシュしています")
+    if not img_master:
+        st.warning("商品画像URLマスタが見つからないか、列数が不足しています。画像は表示されません。")
 
     # ================ HTMLテーブルで表示 ================
     html_table = make_html_table(df_view)
