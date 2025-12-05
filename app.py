@@ -30,16 +30,17 @@ def load_tempostar_data(file_paths):
 def load_image_master():
     """
     商品画像URLマスタフォルダ内のCSVをすべて読み込んで
-    商品番号 -> 商品画像パス の dict を返す
+    商品管理番号（商品URL） -> 商品画像パス1 の dict を返す
+
     フォルダ構成:
         app.py
         商品画像URLマスタ/
             master1.csv
             master2.csv
             ...
-    CSVフォーマット:
-        1列目: 商品番号（＝商品コードに対応）
-        2列目: 商品画像パス（例: /shoes4/0623_1.jpg）
+
+    CSVフォーマット（想定ヘッダー）:
+        商品管理番号（商品URL）, 商品画像パス1, ...
     """
     master_folder = "商品画像URLマスタ"
     pattern = os.path.join(master_folder, "*.csv")
@@ -51,14 +52,12 @@ def load_image_master():
 
     dfs = []
     for p in paths:
-        # ヘッダー行ありを想定（1列目: 商品番号, 2列目: 商品画像パス）
-        # ヘッダー名が違っても位置で拾うようにする
-        df_raw = pd.read_csv(p, encoding="cp932", header=None)
-        if df_raw.shape[1] < 2:
+        df = pd.read_csv(p, encoding="cp932")
+        if "商品管理番号（商品URL）" not in df.columns or "商品画像パス1" not in df.columns:
+            # 想定列がないファイルはスキップ
             continue
-        df = df_raw.iloc[:, :2].copy()
-        df.columns = ["商品番号", "商品画像パス"]
-        dfs.append(df)
+        sub = df[["商品管理番号（商品URL）", "商品画像パス1"]].copy()
+        dfs.append(sub)
 
     if not dfs:
         return {}
@@ -66,11 +65,15 @@ def load_image_master():
     all_img = pd.concat(dfs, ignore_index=True)
 
     # 前後の空白をトリム
-    all_img["商品番号"] = all_img["商品番号"].astype(str).str.strip()
-    all_img["商品画像パス"] = all_img["商品画像パス"].astype(str).str.strip()
+    all_img["商品管理番号（商品URL）"] = (
+        all_img["商品管理番号（商品URL）"].astype(str).str.strip()
+    )
+    all_img["商品画像パス1"] = all_img["商品画像パス1"].astype(str).str.strip()
 
     # 後勝ちで dict 化（重複があれば後のCSVを優先）
-    img_dict = dict(zip(all_img["商品番号"], all_img["商品画像パス"]))
+    img_dict = dict(
+        zip(all_img["商品管理番号（商品URL）"], all_img["商品画像パス1"])
+    )
     return img_dict
 
 
@@ -79,7 +82,7 @@ def load_image_master():
 def make_html_table(df: pd.DataFrame) -> str:
     """DataFrame をシンプルな HTML テーブル文字列に変換"""
     # ヘッダー
-    thead_cells = "".join(f"<th>{html.escape(str(col))}</th>" for col in df.columns)
+    thead_cells = "".onjoin(f"<th>{html.escape(str(col))}</th>" for col in df.columns)
     thead = f"<thead><tr>{thead_cells}</tr></thead>"
 
     # 本体
@@ -170,9 +173,11 @@ def main():
                 cond = cond | df[col].astype(str).str.contains(keyword, case=False)
         df = df[cond]
 
-    # 必須列チェック
-    if not {"商品コード", "商品基本コード", "増減値"}.issubset(df.columns):
-        st.error("商品コード / 商品基本コード / 増減値 のいずれかの列がCSVにありません。項目名を確認してください。")
+    # 必須列チェック（Tempostar側は 商品基本コード をキーに使う）
+    required_cols = {"商品基本コード", "増減値"}
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        st.error("CSVに以下の列が必要です: " + " / ".join(missing))
         st.stop()
 
     # ================ 売上用データ（更新理由＝受注取込のみ） ================
@@ -184,7 +189,13 @@ def main():
 
     # ================ SKU別売上集計 ================
     sales_group_keys = []
-    for c in ["商品コード", "商品基本コード", "商品名", "属性1名", "属性2名"]:
+    for c in [
+        "商品コード",
+        "商品基本コード",
+        "商品名",
+        "属性1名",
+        "属性2名",
+    ]:
         if c in df_sales.columns:
             sales_group_keys.append(c)
 
@@ -204,7 +215,13 @@ def main():
     # ================ 在庫情報（現在庫）を別途集計（全更新理由対象） ================
     if "変動後" in df.columns:
         stock_group_keys = []
-        for c in ["商品コード", "商品基本コード", "商品名", "属性1名", "属性2名"]:
+        for c in [
+            "商品コード",
+            "商品基本コード",
+            "商品名",
+            "属性1名",
+            "属性2名",
+        ]:
             if c in df.columns:
                 stock_group_keys.append(c)
 
@@ -231,30 +248,23 @@ def main():
     img_master = load_image_master()
     base_url = "https://image.rakuten.co.jp/hype/cabinet"
 
-    def code_to_img_tag(row):
-        # 商品番号マスタと突き合わせるキーを決定
-        # まず商品コード、なければ商品基本コードを使う
-        code = None
-        if "商品コード" in row and pd.notna(row["商品コード"]):
-            code = str(row["商品コード"]).strip()
-        elif "商品基本コード" in row and pd.notna(row["商品基本コード"]):
-            code = str(row["商品基本コード"]).strip()
-
+    def row_to_img_tag(row):
+        """
+        Tempostar側の 商品基本コード を
+        マスタ側の 商品管理番号（商品URL） とみなして紐付け
+        """
+        code = str(row["商品基本コード"]).strip()
         if not code:
             return ""
-
         rel_path = img_master.get(code, "")
         if not rel_path:
             return ""
-
-        # 画像URL生成: https://image.rakuten.co.jp/hype/cabinet + 商品画像パス
-        # 商品画像パスが "/shoes4/0623_1.jpg" 形式前提
         rel_path = str(rel_path).strip()
         url = base_url + rel_path
         safe = html.escape(url, quote=True)
         return f'<img src="{safe}" width="120">'
 
-    sales_grouped["画像"] = sales_grouped.apply(code_to_img_tag, axis=1)
+    sales_grouped["画像"] = sales_grouped.apply(row_to_img_tag, axis=1)
 
     # 画像列を先頭へ
     cols = sales_grouped.columns.tolist()
@@ -274,7 +284,10 @@ def main():
 
     st.write(f"SKU数（売上個数合計 > 0）: {len(df_view):,} 件")
     if not img_master:
-        st.warning("商品画像URLマスタが見つからないか、列数が不足しています。画像は表示されません。")
+        st.warning(
+            "商品画像URLマスタが見つからないか、"
+            "『商品管理番号（商品URL）』『商品画像パス1』列がありません。画像は表示されません。"
+        )
 
     # ================ HTMLテーブルで表示 ================
     html_table = make_html_table(df_view)
