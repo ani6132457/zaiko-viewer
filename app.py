@@ -6,32 +6,26 @@ import html
 
 
 @st.cache_data
-def load_data(file_path: str):
-    """指定されたファイルを読み込む"""
-    sheets_dict = pd.read_excel(file_path, sheet_name=None)
-    sheet_name = list(sheets_dict.keys())[0]
-    df = sheets_dict[sheet_name]
+def load_data(file_paths):
+    """指定されたTempostar CSVファイル群を読み込んで1つのDataFrameに結合"""
+    dfs = []
+    for path in file_paths:
+        df = pd.read_csv(path, encoding="cp932")
+        df["元ファイル"] = os.path.basename(path)
+        dfs.append(df)
 
-    # 列名を少しだけ扱いやすくリネーム
-    rename_map = {
-        "商品番号.1": "SKU",
-        "Unnamed: 9": "画像URL",
-    }
-    df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
+    all_df = pd.concat(dfs, ignore_index=True)
 
-    return df, sheet_name
+    # 念のため数値型に変換（増減値が文字列になっても壊れないように）
+    all_df["増減値"] = pd.to_numeric(all_df["増減値"], errors="coerce").fillna(0).astype(int)
+    all_df["変動後"] = pd.to_numeric(all_df["変動後"], errors="coerce").fillna(0).astype(int)
 
-
-def make_img_tag(url: str, width: int = 120) -> str:
-    """画像URLから <img> タグを生成（URLがなければ空文字）"""
-    if isinstance(url, str) and url.startswith("http"):
-        safe_url = html.escape(url, quote=True)
-        return f'<img src="{safe_url}" width="{width}">'
-    return ""
+    return all_df
 
 
-def df_to_html_table(df: pd.DataFrame) -> str:
-    """DataFrame を HTMLテーブル文字列に変換（画像列はすでに <img> タグ前提）"""
+def make_html_table(df: pd.DataFrame) -> str:
+    """DataFrame をシンプルな HTML テーブル文字列に変換"""
+
     # ヘッダー
     thead_cells = "".join(f"<th>{html.escape(str(col))}</th>" for col in df.columns)
     thead = f"<thead><tr>{thead_cells}</tr></thead>"
@@ -42,11 +36,7 @@ def df_to_html_table(df: pd.DataFrame) -> str:
         tds = []
         for col in df.columns:
             val = row[col]
-            if col == "画像":
-                # 画像列はHTMLをそのまま
-                tds.append(f"<td>{val}</td>")
-            else:
-                tds.append(f"<td>{html.escape(str(val))}</td>")
+            tds.append(f"<td>{html.escape(str(val))}</td>")
         rows_html.append("<tr>" + "".join(tds) + "</tr>")
     tbody = "<tbody>" + "".join(rows_html) + "</tbody>"
 
@@ -59,82 +49,44 @@ def df_to_html_table(df: pd.DataFrame) -> str:
     return table
 
 
-def first_non_null(series: pd.Series):
-    """最初の非NaN要素を返す（画像URLなどに使用）"""
-    s = series.dropna()
-    if len(s) == 0:
-        return None
-    return s.iloc[0]
-
-
 def main():
-    st.set_page_config(page_title="在庫変動データ SKU集計", layout="wide")
-    st.title("在庫変動データ SKU別集計ビューア")
+    st.set_page_config(page_title="Tempostar SKU別売上集計", layout="wide")
+    st.title("Tempostar 在庫変動データ - SKU別売上集計")
 
-    # ================ フォルダ単位でファイルを探す ================
-    # app.py と同じ階層のサブフォルダ配下にある「在庫変動データ*.xlsm」を全部拾う
-    # 例: 202511/在庫変動データ20251101.xlsm など
-    file_paths = sorted(glob.glob("*/在庫変動データ*.xlsm"))
+    # ================ 対象CSVファイルの取得 ================
+    file_paths = sorted(glob.glob("tempostar_stock_*.csv"))
 
-    # フォルダ名 -> そのフォルダ内のファイル一覧
-    folder_files = {}
-    for path in file_paths:
-        folder = os.path.basename(os.path.dirname(path))  # 例: "202511"
-        folder_files.setdefault(folder, []).append(path)
-
-    if not folder_files:
-        st.error("サブフォルダ内に 在庫変動データ*.xlsm が見つかりません。フォルダ構成を確認してください。")
+    if not file_paths:
+        st.error("tempostar_stock_*.csv が見つかりません。\napp.py と同じフォルダに CSV を置いてください。")
         st.stop()
 
-    # フォルダ名（=月）一覧をソート
-    months = sorted(folder_files.keys())
+    file_name_list = [os.path.basename(p) for p in file_paths]
 
-    # ================ サイドバー：月フォルダを複数選択 ================
+    # ================ サイドバー：対象ファイル選択 & フィルタ設定 ================
     with st.sidebar:
-        st.header("月の選択")
-        default_month = [months[-1]]  # デフォルトは最新月だけ
-        selected_months = st.multiselect(
-            "集計対象の月フォルダ（複数選択可）",
-            months,
-            default=default_month,
+        st.header("集計設定")
+
+        # 対象とするCSVファイル（複数選択可、デフォルトは一番新しいファイルだけ）
+        default_files = [file_name_list[-1]]
+        selected_file_names = st.multiselect(
+            "集計対象のCSVファイル（複数選択可）",
+            file_name_list,
+            default=default_files,
         )
 
-    if not selected_months:
-        st.warning("少なくとも1つ月フォルダを選択してください。")
-        st.stop()
-
-    # ================ 選択された複数月のデータを読み込み＆合算 ================
-    all_dfs = []
-    sheet_info = []
-
-    for month in selected_months:
-        files_in_month = sorted(folder_files[month])
-        selected_file = files_in_month[-1]  # その月フォルダ内の最新ファイルを使用
-
-        try:
-            df_month, sheet_name = load_data(selected_file)
-        except Exception as e:
-            st.error(f"データ読み込みでエラー（フォルダ: {month} / ファイル: {selected_file}）: {e}")
+        if not selected_file_names:
+            st.warning("少なくとも1つCSVファイルを選択してください。")
             st.stop()
 
-        df_month = df_month.copy()
-        df_month["月フォルダ"] = month  # どの月か分かるように列追加
+        # 選択されたファイル名からパスを復元
+        selected_paths = [
+            p for p in file_paths if os.path.basename(p) in selected_file_names
+        ]
 
-        all_dfs.append(df_month)
-        sheet_info.append(f"{month}: {os.path.basename(selected_file)}（シート: {sheet_name}）")
+        # キーワード絞り込み（集計前）
+        keyword = st.text_input("商品コード / 商品基本コード / 商品名で検索")
 
-    df = pd.concat(all_dfs, ignore_index=True)
-
-    st.caption("読み込みファイル一覧")
-    for info in sheet_info:
-        st.caption("・" + info)
-    st.write(f"明細行数: {len(df):,} 行（{len(selected_months)}か月分）")
-
-    # ================ フィルタ設定（集計前の前処理用） ================
-    with st.sidebar:
-        st.header("絞り込み（集計対象）")
-        keyword = st.text_input("商品番号 / SKU / 商品名で検索")
-
+        # 売上個数合計の下限（プラス表示）
         min_total_sales = st.number_input(
             "売上個数合計（プラス値）の下限",
             min_value=0,
@@ -142,50 +94,58 @@ def main():
             step=1,
         )
 
+    # ================ データ読み込み ================
+    try:
+        df_raw = load_data(selected_paths)
+    except Exception as e:
+        st.error(f"CSV読み込みでエラーが発生しました: {e}")
+        st.stop()
+
+    st.caption("読み込みファイル")
+    for name in selected_file_names:
+        st.caption(f"・{name}")
+    st.write(f"明細行数: {len(df_raw):,} 行")
+
     # ================ 明細レベルでの絞り込み（キーワード） ================
-    filtered = df.copy()
+    df = df_raw.copy()
 
-    # キーワード検索（集計前）
     if keyword:
-        cols = [c for c in ["商品番号", "SKU", "商品名"] if c in filtered.columns]
-        if cols:
-            cond = False
-            for c in cols:
-                cond = cond | filtered[c].astype(str).str.contains(keyword, case=False)
-            filtered = filtered[cond]
+        cond = False
+        for col in ["商品コード", "商品基本コード", "商品名"]:
+            if col in df.columns:
+                cond = cond | df[col].astype(str).str.contains(keyword, case=False)
+        df = df[cond]
 
-    # ================ SKU別集計（合算） ================
-    if not {"SKU", "売上個数"}.issubset(filtered.columns):
-        st.error("SKU または 売上個数 の列が見つからないため、集計できません。")
+    # ================ SKU別集計（ここがメイン） ================
+    # 必須列チェック
+    if not {"商品コード", "増減値"}.issubset(df.columns):
+        st.error("商品コード または 増減値 の列がCSVにありません。項目名を確認してください。")
         st.stop()
 
     # グループキー（SKU＋商品情報）
     group_keys = []
-    for c in ["SKU", "商品番号", "商品名", "属性1名", "属性2名"]:
-        if c in filtered.columns:
+    for c in ["商品コード", "商品基本コード", "商品名", "属性1名", "属性2名"]:
+        if c in df.columns:
             group_keys.append(c)
 
-    # 元データの売上個数は「マイナスが大きいほど売れている」前提
-    # ここではまず単純に合計し、そのあと符号を反転して「売上個数合計（プラス）」を作る
+    # 増減値は「マイナス = 出荷（売れている）」前提
+    # まず単純に増減値を合計し、その後符号を反転して「売上個数合計（プラス）」を作る
     agg_dict = {
-        "売上個数": "sum",  # 合計（マイナスが大きいほど売れている）
+        "増減値": "sum",        # 合計（マイナスが大きいほど売れている）
+        "変動後": "last",       # 最後の変動後 在庫数
     }
-    if "現在庫" in filtered.columns:
-        agg_dict["現在庫"] = "last"
-    if "画像URL" in filtered.columns:
-        agg_dict["画像URL"] = first_non_null
-    if "月フォルダ" in filtered.columns:
-        agg_dict["月フォルダ"] = pd.Series.nunique  # 何か月分か
+    if "元ファイル" in df.columns:
+        agg_dict["元ファイル"] = pd.Series.nunique  # 何ファイル分か（＝日数などの目安）
 
-    grouped = filtered.groupby(group_keys, dropna=False).agg(agg_dict).reset_index()
+    grouped = df.groupby(group_keys, dropna=False).agg(agg_dict).reset_index()
 
-    # 元の合計値（マイナス）を別名に保持
-    grouped = grouped.rename(columns={"売上個数": "売上個数合計_元"})
+    # 元の合計値（マイナス）の列名調整
+    grouped = grouped.rename(columns={"増減値": "増減値合計", "変動後": "現在庫"})
 
     # 表示用の「売上個数合計」はマイナスを反転してプラスにする
-    grouped["売上個数合計"] = -grouped["売上個数合計_元"]
+    grouped["売上個数合計"] = -grouped["増減値合計"]
 
-    # 売れていない（合計0以下）のSKUは基本的に除外
+    # 売れていない（合計0以下）は基本除外
     grouped = grouped[grouped["売上個数合計"] > 0]
 
     # 下限フィルタ（プラスの数値で指定）
@@ -196,33 +156,22 @@ def main():
     grouped = grouped.sort_values("売上個数合計", ascending=False)
 
     # 表示用列の順番
-    agg_cols = []
+    display_cols = []
 
-    # 画像列を先頭に
-    if "画像URL" in grouped.columns:
-        grouped.insert(0, "画像", grouped["画像URL"].apply(lambda u: make_img_tag(u, width=120)))
-        grouped = grouped.drop(columns=["画像URL"])
-        agg_cols.append("画像")
-
-    for c in ["SKU", "商品番号", "商品名", "属性1名", "属性2名"]:
+    for c in ["商品コード", "商品基本コード", "商品名", "属性1名", "属性2名"]:
         if c in grouped.columns:
-            agg_cols.append(c)
+            display_cols.append(c)
 
-    # 元のマイナス合計は画面には出さない（必要ならあとで復活も可）
-    for c in ["売上個数合計", "現在庫", "月フォルダ"]:
+    for c in ["売上個数合計", "現在庫", "増減値合計", "元ファイル"]:
         if c in grouped.columns:
-            agg_cols.append(c)
+            display_cols.append(c)
 
-    # 表示用DataFrame
-    df_agg = grouped[agg_cols].copy()
+    df_view = grouped[display_cols].copy()
 
-    # 表の列名を少し分かりやすく
-    df_agg = df_agg.rename(columns={"月フォルダ": "集計月数"})
+    st.write(f"SKU数（売上個数合計 > 0）: {len(df_view):,} 件")
 
-    st.write(f"SKU数: {len(df_agg):,} 件（売上個数合計 > 0 のみ）")
-
-    # ================ 集計テーブル表示（1画面のみ） ================
-    html_table_agg = df_to_html_table(df_agg)
+    # ================ HTMLテーブルで表示（文字大きめ） ================
+    html_table = make_html_table(df_view)
 
     st.markdown(
         """
@@ -242,14 +191,11 @@ def main():
         tr:hover {
             background-color: #f9f9f9;
         }
-        img {
-            display: block;
-        }
         </style>
         """,
         unsafe_allow_html=True,
     )
-    st.markdown(html_table_agg, unsafe_allow_html=True)
+    st.markdown(html_table, unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
