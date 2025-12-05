@@ -5,10 +5,9 @@ import os
 import html
 
 
-# ========= データ読み込み系 =========
-
 @st.cache_data
 def load_tempostar_data(file_paths):
+    """選択されたCSVファイルをすべて読み込んで結合"""
     dfs = []
     for path in file_paths:
         df = pd.read_csv(path, encoding="cp932")
@@ -17,6 +16,7 @@ def load_tempostar_data(file_paths):
 
     all_df = pd.concat(dfs, ignore_index=True)
 
+    # 数値列の変換
     for col in ["増減値", "変動後"]:
         if col in all_df.columns:
             all_df[col] = pd.to_numeric(all_df[col], errors="coerce").fillna(0).astype(int)
@@ -26,6 +26,7 @@ def load_tempostar_data(file_paths):
 
 @st.cache_data
 def load_image_master():
+    """同一フォルダ内の「商品画像URLマスタ」から画像マップを作成"""
     master_folder = "商品画像URLマスタ"
     pattern = os.path.join(master_folder, "*.csv")
     paths = glob.glob(pattern)
@@ -38,105 +39,81 @@ def load_image_master():
         df = pd.read_csv(p, encoding="cp932")
         if "商品管理番号（商品URL）" not in df.columns or "商品画像パス1" not in df.columns:
             continue
-        sub = df[["商品管理番号（商品URL）", "商品画像パス1"]].copy()
-        dfs.append(sub)
+        dfs.append(df)
 
     if not dfs:
         return {}
 
-    all_img = pd.concat(dfs, ignore_index=True)
+    img_df = pd.concat(dfs, ignore_index=True)
 
-    all_img["商品管理番号（商品URL）"] = all_img["商品管理番号（商品URL）"].astype(str).str.strip()
-    all_img["商品画像パス1"] = all_img["商品画像パス1"].astype(str).str.strip()
+    # トリム
+    img_df["商品管理番号（商品URL）"] = img_df["商品管理番号（商品URL）"].astype(str).str.strip()
+    img_df["商品画像パス1"] = img_df["商品画像パス1"].astype(str).str.strip()
 
-    img_dict = dict(zip(all_img["商品管理番号（商品URL）"], all_img["商品画像パス1"]))
-    return img_dict
+    return dict(zip(img_df["商品管理番号（商品URL）"], img_df["商品画像パス1"]))
 
 
-# ========= HTMLテーブル描画 =========
-
-def make_html_table(df: pd.DataFrame) -> str:
-    thead_cells = "".join(f"<th>{html.escape(str(col))}</th>" for col in df.columns)
-    thead = f"<thead><tr>{thead_cells}</tr></thead>"
-
-    rows_html = []
+def make_html_table(df):
+    thead = "<thead><tr>" + "".join(f"<th>{html.escape(str(c))}</th>" for c in df.columns) + "</tr></thead>"
+    tbody_rows = []
     for _, row in df.iterrows():
         tds = []
-        for col in df.columns:
-            val = row[col]
-            if col == "画像":
+        for c in df.columns:
+            val = row[c]
+            if c == "画像":
                 tds.append(f"<td>{val}</td>")
             else:
                 tds.append(f"<td>{html.escape(str(val))}</td>")
-        rows_html.append("<tr>" + "".join(tds) + "</tr>")
-    tbody = "<tbody>" + "".join(rows_html) + "</tbody>"
-
+        tbody_rows.append("<tr>" + "".join(tds) + "</tr>")
+    tbody = "<tbody>" + "".join(tbody_rows) + "</tbody>"
     return f"<table border='1' cellspacing='0' cellpadding='4'>{thead}{tbody}</table>"
 
 
-# ========= メイン =========
-
 def main():
-    st.set_page_config(page_title="Tempostar SKU別売上集計（画像付き）", layout="wide")
-    st.title("Tempostar 在庫変動データ - SKU別売上集計（商品画像付き）")
+    st.set_page_config(page_title="Tempostar 在庫ビューア", layout="wide")
+    st.title("Tempostar 在庫変動集計（画像付き）")
 
-    # ===== CSV読み込み先をローカルパスに変更 =====
-    BASE_DIR = r"C:\Users\ani\python_app\在庫ログ自動取得app"
+    # ←★ ここが変更点：同一フォルダ内を探索
+    BASE_DIR = os.getcwd()
     pattern = os.path.join(BASE_DIR, "tempostar_stock_*.csv")
     file_paths = sorted(glob.glob(pattern))
 
     if not file_paths:
-        st.error(f"指定フォルダに tempostar_stock_*.csv が見つかりません。\nパス: {BASE_DIR}")
+        st.error("tempostar_stock_*.csv をこのフォルダに置いてください。")
         st.stop()
 
-    file_name_list = [os.path.basename(p) for p in file_paths]
+    file_names = [os.path.basename(p) for p in file_paths]
 
     with st.sidebar:
         st.header("集計設定")
+        st.caption("CSV検索パス：")
         st.code(BASE_DIR)
 
-        selected_file_names = st.multiselect(
-            "集計対象のCSVファイル（複数選択可）",
-            file_name_list,
-            default=file_name_list,
+        selected_names = st.multiselect(
+            "集計対象CSV（複数選択可）",
+            file_names,
+            default=file_names,  # ←全部合算が標準
         )
-        if not selected_file_names:
-            st.warning("少なくとも1つCSVファイルを選択してください。")
+        if not selected_names:
             st.stop()
 
-        selected_paths = [
-            p for p in file_paths if os.path.basename(p) in selected_file_names
-        ]
+        target_paths = [p for p in file_paths if os.path.basename(p) in selected_names]
 
-        for p in selected_paths:
-            st.caption("・" + os.path.basename(p))
+        keyword = st.text_input("キーワード検索（商品名等）")
+        min_sales = st.number_input("売上個数合計の下限", min_value=0, value=0)
 
-        keyword = st.text_input("商品コード / 商品基本コード / 商品名で検索")
-        min_total_sales = st.number_input("売上個数合計（プラス）の下限", min_value=0, value=0, step=1)
+    df = load_tempostar_data(target_paths)
 
-    try:
-        df_raw = load_tempostar_data(selected_paths)
-    except Exception as e:
-        st.error(f"CSV読み込みでエラーが発生: {e}")
-        st.stop()
-
-    st.write(f"読み込みファイル数: {len(selected_paths)} 件")
-    st.write(f"明細行数: {len(df_raw):,} 行")
-
-    df = df_raw.copy()
+    st.write(f"読み込みファイル数: {len(target_paths)} 件")
+    st.write(f"明細行数: {len(df):,}")
 
     if keyword:
+        col_ok = ["商品コード", "商品基本コード", "商品名"]
         cond = False
-        for col in ["商品コード", "商品基本コード", "商品名"]:
-            if col in df.columns:
-                cond = cond | df[col].astype(str).str.contains(keyword, case=False)
+        for c in col_ok:
+            if c in df.columns:
+                cond |= df[c].astype(str).str.contains(keyword, case=False)
         df = df[cond]
-
-    required = {"商品基本コード", "増減値"}
-    missing = [c for c in required if c not in df.columns]
-    if missing:
-        st.error("必要列が不足: " + " / ".join(missing))
-        st.stop()
 
     if "更新理由" in df.columns:
         df_sales = df[df["更新理由"] == "受注取込"].copy()
@@ -144,39 +121,34 @@ def main():
         df_sales = df.copy()
 
     keys = [c for c in ["商品コード", "商品基本コード", "商品名", "属性1名", "属性2名"] if c in df_sales.columns]
-    sales_grouped = df_sales.groupby(keys, dropna=False).agg({"増減値": "sum"}).reset_index()
-    sales_grouped = sales_grouped.rename(columns={"増減値": "増減値合計"})
-    sales_grouped["売上個数合計"] = -sales_grouped["増減値合計"]
-    sales_grouped = sales_grouped[sales_grouped["売上個数合計"] > 0]
+    grouped = df_sales.groupby(keys).agg({"増減値": "sum"}).reset_index()
+    grouped = grouped.rename(columns={"増減値": "増減値合計"})
+    grouped["売上個数合計"] = -grouped["増減値合計"]
+    grouped = grouped[grouped["売上個数合計"] > 0]
 
     if "変動後" in df.columns:
-        stock = df.groupby(keys, dropna=False).agg({"変動後": "last"}).reset_index()
+        stock = df.groupby(keys).agg({"変動後": "last"}).reset_index()
         stock = stock.rename(columns={"変動後": "現在庫"})
-        sales_grouped = pd.merge(sales_grouped, stock, on=keys, how="left")
+        grouped = pd.merge(grouped, stock, on=keys, how="left")
 
-    if min_total_sales > 0:
-        sales_grouped = sales_grouped[sales_grouped["売上個数合計"] >= min_total_sales]
+    if min_sales > 0:
+        grouped = grouped[grouped["売上個数合計"] >= min_sales]
 
-    sales_grouped = sales_grouped.sort_values("売上個数合計", ascending=False)
+    grouped = grouped.sort_values("売上個数合計", ascending=False)
 
     img_master = load_image_master()
-    base_url = "https://image.rakuten.co.jp/hype/cabinet"
+    BASE_IMG = "https://image.rakuten.co.jp/hype/cabinet"
 
-    def img_tag(row):
+    def img(row):
         code = str(row["商品基本コード"]).strip()
-        rel = img_master.get(code, "")
-        if not rel:
+        path = img_master.get(code, "")
+        if not path:
             return ""
-        url = base_url + str(rel).strip()
-        return f'<img src="{html.escape(url)}" width="120">'
+        return f'<img src="{BASE_IMG}{path}" width="120">'
 
-    sales_grouped["画像"] = sales_grouped.apply(img_tag, axis=1)
-    cols = sales_grouped.columns.tolist()
-    cols.insert(0, cols.pop(cols.index("画像")))
-    sales_grouped = sales_grouped[cols]
-
-    view_cols = ["画像"] + [c for c in keys if c in sales_grouped.columns] + ["売上個数合計", "現在庫", "増減値合計"]
-    df_view = sales_grouped[view_cols].copy()
+    grouped["画像"] = grouped.apply(img, axis=1)
+    cols = ["画像"] + keys + ["売上個数合計", "現在庫", "増減値合計"]
+    df_view = grouped[cols]
 
     st.write(f"SKU数: {len(df_view):,}")
 
