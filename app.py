@@ -4,6 +4,7 @@ import glob
 import os
 import html
 import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 @st.cache_data
@@ -26,58 +27,59 @@ def load_data(file_paths):
 
 
 @st.cache_data
-def fetch_image_url(page_url: str) -> str | None:
-    """商品ページURLから画像URLを取得（VBAマクロとほぼ同じロジック）"""
-    if not isinstance(page_url, str) or page_url == "":
-        return None
-    try:
-        resp = requests.get(page_url, timeout=5)
-    except Exception:
-        return None
-
-    if resp.status_code != 200:
-        return None
-
-    html_text = resp.text
-
-    # <span class="sale_desc"> を探す
-    marker = '<span class="sale_desc">'
-    start_pos = html_text.find(marker)
-    if start_pos == -1:
-        return None
-
-    # その後ろで <img を探す
-    img_pos = html_text.find("<img", start_pos)
-    if img_pos == -1:
-        return None
-
-    # src="..." を抜き出す
-    src_marker = 'src="'
-    src_start = html_text.find(src_marker, img_pos)
-    if src_start == -1:
-        return None
-    src_start += len(src_marker)
-    src_end = html_text.find('"', src_start)
-    if src_end == -1:
-        return None
-
-    img_url = html_text[src_start:src_end]
-    return img_url or None
-
-
-def make_img_tag_from_basic_code(basic_code: str, width: int = 120) -> str:
+def fetch_image_map(basic_codes):
     """
-    商品基本コードから商品ページURLを組み立てて、画像<img>タグを返す。
-    URL: https://item.rakuten.co.jp/hype/商品基本コード/
+    商品基本コードのリストから
+    code -> 画像URL の辞書をまとめて取得する（並列で高速化＆キャッシュ）
     """
-    if not isinstance(basic_code, str) or basic_code == "":
-        return ""
-    page_url = f"https://item.rakuten.co.jp/hype/{basic_code}/"
-    img_url = fetch_image_url(page_url)
-    if not img_url:
-        return ""
-    safe = html.escape(img_url, quote=True)
-    return f'<img src="{safe}" width="{width}">'
+    # ユニーク化して無駄なリクエスト削減
+    unique_codes = sorted(
+        set(str(c) for c in basic_codes if isinstance(c, str) and c.strip() != "")
+    )
+
+    def fetch_one(code):
+        page_url = f"https://item.rakuten.co.jp/hype/{code}/"
+        try:
+            resp = requests.get(page_url, timeout=5)
+        except Exception:
+            return code, ""
+
+        if resp.status_code != 200:
+            return code, ""
+
+        html_text = resp.text
+
+        marker = '<span class="sale_desc">'
+        start_pos = html_text.find(marker)
+        if start_pos == -1:
+            return code, ""
+
+        img_pos = html_text.find("<img", start_pos)
+        if img_pos == -1:
+            return code, ""
+
+        src_marker = 'src="'
+        src_start = html_text.find(src_marker, img_pos)
+        if src_start == -1:
+            return code, ""
+        src_start += len(src_marker)
+        src_end = html_text.find('"', src_start)
+        if src_end == -1:
+            return code, ""
+
+        img_url = html_text[src_start:src_end]
+        return code, img_url or ""
+
+    results = {}
+    # 並列で一気に取得（ワーカー数は環境に合わせて調整可能）
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        futures = {ex.submit(fetch_one, code): code for code in unique_codes}
+        for fut in as_completed(futures):
+            code, url = fut.result()
+            if url:
+                results[code] = url
+
+    return results
 
 
 def make_html_table(df: pd.DataFrame) -> str:
@@ -126,8 +128,7 @@ def main():
     with st.sidebar:
         st.header("集計設定")
 
-        # 対象とするCSVファイル（複数選択可、デフォルトは一番新しいファイルだけ）
-        default_files = [file_name_list[-1]]
+        default_files = [file_name_list[-1]]  # デフォルトは最新CSVだけ
         selected_file_names = st.multiselect(
             "集計対象のCSVファイル（複数選択可）",
             file_name_list,
@@ -186,7 +187,6 @@ def main():
         df_sales = df.copy()
 
     # ================ SKU別売上集計 ================
-    # グループキー（SKU＋商品情報）
     sales_group_keys = []
     for c in ["商品コード", "商品基本コード", "商品名", "属性1名", "属性2名"]:
         if c in df_sales.columns:
@@ -206,7 +206,6 @@ def main():
     sales_grouped = sales_grouped[sales_grouped["売上個数合計"] > 0]
 
     # ================ 在庫情報（現在庫）を別途集計（全更新理由対象） ================
-    stock_group = None
     if "変動後" in df.columns:
         stock_group_keys = []
         for c in ["商品コード", "商品基本コード", "商品名", "属性1名", "属性2名"]:
@@ -219,7 +218,6 @@ def main():
         stock_group = df.groupby(stock_group_keys, dropna=False).agg(agg_stock).reset_index()
         stock_group = stock_group.rename(columns={"変動後": "現在庫"})
 
-        # 売上集計結果とマージ
         sales_grouped = pd.merge(
             sales_grouped,
             stock_group,
@@ -233,12 +231,25 @@ def main():
 
     sales_grouped = sales_grouped.sort_values("売上個数合計", ascending=False)
 
-    # ================ 画像列の生成（一番左） ================
-    sales_grouped.insert(
-        0,
-        "画像",
-        sales_grouped["商品基本コード"].apply(lambda code: make_img_tag_from_basic_code(code, width=120)),
-    )
+    # ================ 画像URLをまとめて取得 → 画像列を先頭に ================
+    # 商品基本コード一覧から画像URLマップを一括取得（並列＋キャッシュ）
+    code_list = sales_grouped["商品基本コード"].astype(str).tolist()
+    image_map = fetch_image_map(code_list)
+
+    # HTML <img> タグに変換
+    def code_to_img_tag(code):
+        url = image_map.get(str(code), "")
+        if not url:
+            return ""
+        safe = html.escape(url, quote=True)
+        return f'<img src="{safe}" width="120">'
+
+    sales_grouped["画像"] = sales_grouped["商品基本コード"].apply(code_to_img_tag)
+
+    # 画像列を先頭へ
+    cols = sales_grouped.columns.tolist()
+    cols.insert(0, cols.pop(cols.index("画像")))
+    sales_grouped = sales_grouped[cols]
 
     # ================ 表示列の並び ================
     display_cols = ["画像"]
@@ -252,6 +263,7 @@ def main():
     df_view = sales_grouped[display_cols].copy()
 
     st.write(f"SKU数（売上個数合計 > 0）: {len(df_view):,} 件")
+    st.caption("※ 画像URLは商品基本コードごとに並列取得し、キャッシュしています")
 
     # ================ HTMLテーブルで表示 ================
     html_table = make_html_table(df_view)
