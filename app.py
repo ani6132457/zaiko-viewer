@@ -114,10 +114,21 @@ def make_html_table(df):
 def main():
     st.set_page_config(page_title="Tempostar 売上集計（画像付き）", layout="wide")
 
-    # 日本語カレンダー適用
-    enable_japanese_calendar()
+    # --- カレンダーを日本語化（ここを追加！） ---
+    st.markdown("""
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/ja.js"></script>
+    <script>
+    document.addEventListener("DOMContentLoaded", function () {
+        flatpickr(".stDateInput input", {
+            locale: "ja"
+        });
+    });
+    </script>
+    """, unsafe_allow_html=True)
 
     st.title("Tempostar 在庫変動データ - SKU別売上集計（商品画像付き）")
+
 
     # ---------- CSV一覧 ----------
     raw_paths = sorted(glob.glob("tempostar_stock_*.csv"))
