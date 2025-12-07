@@ -115,10 +115,9 @@ def main():
     st.set_page_config(page_title="Tempostar SKU別売上集計（画像付き）", layout="wide")
     st.title("Tempostar 在庫変動データ - SKU別売上集計（商品画像付き）")
 
-    # ================ UNCパスからCSV一覧を取得 ================
-    # ネットワークパス:
-    # \\192.168.0.85\Public\ani\在庫変動ログ\在庫変動エクセル\在庫ログ自動取得
-    BASE_DIR = r"\\192.168.0.85\Public\ani\在庫変動ログ\在庫変動エクセル\在庫ログ自動取得"
+    # ================ ローカルパスからCSV一覧を取得 ================
+    # ここを UNC ではなくローカルパスに変更
+    BASE_DIR = r"C:\Users\ani\github\zaiko-viewer"
     pattern = os.path.join(BASE_DIR, "tempostar_stock_*.csv")
 
     paths = sorted(glob.glob(pattern))
