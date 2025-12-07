@@ -117,7 +117,7 @@ def main():
 
     # ================ ローカルパスからCSV一覧を取得 ================
     # ここを UNC ではなくローカルパスに変更
-    BASE_DIR = "C:\Users\ani\github\zaiko-viewer"
+    BASE_DIR = r"C:\Users\ani\github\zaiko-viewer"
     pattern = os.path.join(BASE_DIR, "tempostar_stock_*.csv")
 
     paths = sorted(glob.glob(pattern))
