@@ -3,6 +3,8 @@ import pandas as pd
 import glob
 import os
 import html
+import re
+from datetime import datetime, date
 
 
 # ========= データ読み込み系 =========
@@ -114,31 +116,71 @@ def main():
     st.set_page_config(page_title="Tempostar SKU別売上集計（画像付き）", layout="wide")
     st.title("Tempostar 在庫変動データ - SKU別売上集計（商品画像付き）")
 
-    # ================ 対象CSVファイルの取得 ================
-    file_paths = sorted(glob.glob("tempostar_stock_*.csv"))
+    # ================ 対象CSVファイルの取得（ファイル名から日付を抽出） ================
+    raw_paths = sorted(glob.glob("tempostar_stock_*.csv"))
 
-    if not file_paths:
+    if not raw_paths:
         st.error("tempostar_stock_*.csv が見つかりません。\napp.py と同じフォルダに Tempostar の CSV を置いてください。")
         st.stop()
 
-    file_name_list = [os.path.basename(p) for p in file_paths]
+    file_infos = []
+    date_pattern = re.compile(r"tempostar_stock_(\d{8})")
 
-    # ================ サイドバー：対象ファイル選択 & フィルタ ================
+    for path in raw_paths:
+        name = os.path.basename(path)
+        m = date_pattern.search(name)
+        if not m:
+            # 日付が取れないファイルは一旦無視（必要なら別扱いにしてもOK）
+            continue
+        d = datetime.strptime(m.group(1), "%Y%m%d").date()
+        file_infos.append({"date": d, "path": path, "name": name})
+
+    if not file_infos:
+        st.error("tempostar_stock_YYYYMMDD.csv 形式のファイルが見つかりません。")
+        st.stop()
+
+    # 利用可能な日付の最小・最大
+    all_dates = [fi["date"] for fi in file_infos]
+    min_date = min(all_dates)
+    max_date = max(all_dates)
+
+    # ================ サイドバー：カレンダーで期間を選択 ================
     with st.sidebar:
         st.header("集計設定")
 
-        default_files = [file_name_list[-1]]  # デフォルトは最新CSVだけ
-        selected_file_names = st.multiselect(
-            "集計対象のCSVファイル（複数選択可）",
-            file_name_list,
-            default=default_files,
+        st.write(f"利用可能なデータ期間：{min_date} 〜 {max_date}")
+
+        # デフォルトは最新日のみ
+        default_range = (max_date, max_date)
+        selected_range = st.date_input(
+            "集計期間（開始日〜終了日）",
+            value=default_range,
         )
 
-        if not selected_file_names:
-            st.warning("少なくとも1つCSVファイルを選択してください。")
+        # Streamlitのバージョンによって返り値形式が違う場合があるので吸収
+        if isinstance(selected_range, (list, tuple)) and len(selected_range) == 2:
+            start_date, end_date = selected_range
+        else:
+            # 単一日指定になっていた場合はその日だけにする
+            start_date = end_date = selected_range
+
+        if start_date > end_date:
+            start_date, end_date = end_date, start_date
+
+        # 選択期間内のファイルを抽出
+        selected_infos = [
+            fi for fi in file_infos if start_date <= fi["date"] <= end_date
+        ]
+        selected_paths = [fi["path"] for fi in selected_infos]
+
+        if not selected_paths:
+            st.error("選択した期間に対応するCSVファイルがありません。")
             st.stop()
 
-        selected_paths = [p for p in file_paths if os.path.basename(p) in selected_file_names]
+        st.write("集計対象日数:", len(selected_infos), "日")
+        # 確認用に日付リストを表示（必要なければ消してもOK）
+        st.caption("対象日:")
+        st.caption("、".join(str(fi["date"]) for fi in selected_infos))
 
         # キーワード絞り込み（集計前）
         keyword = st.text_input("商品コード / 商品基本コード / 商品名で検索")
@@ -159,8 +201,8 @@ def main():
         st.stop()
 
     st.caption("読み込みファイル")
-    for name in selected_file_names:
-        st.caption(f"・{name}")
+    for fi in selected_infos:
+        st.caption(f"・{fi['date']} : {os.path.basename(fi['path'])}")
     st.write(f"明細行数: {len(df_raw):,} 行")
 
     df = df_raw.copy()
@@ -173,7 +215,7 @@ def main():
                 cond = cond | df[col].astype(str).str.contains(keyword, case=False)
         df = df[cond]
 
-    # 必須列チェック（Tempostar側は 商品基本コード をキーに使う）
+    # 必須列チェック（Tempostar側は 商品コード＋商品基本コード を使う）
     required_cols = {"商品コード", "商品基本コード", "増減値"}
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
@@ -277,7 +319,10 @@ def main():
 
     df_view = sales_grouped[display_cols].copy()
 
-    st.write(f"SKU数（売上個数合計 > 0）: {len(df_view):,} 件")
+    st.write(
+        f"SKU数（売上個数合計 > 0）: {len(df_view):,} 件"
+        f"　/　集計期間: {start_date} 〜 {end_date}"
+    )
     if not img_master:
         st.warning(
             "商品画像URLマスタが見つからないか、"
