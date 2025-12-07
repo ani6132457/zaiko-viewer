@@ -3,7 +3,6 @@ import pandas as pd
 import glob
 import os
 import html
-from datetime import datetime, date
 
 
 # ========= データ読み込み系 =========
@@ -115,85 +114,51 @@ def main():
     st.set_page_config(page_title="Tempostar SKU別売上集計（画像付き）", layout="wide")
     st.title("Tempostar 在庫変動データ - SKU別売上集計（商品画像付き）")
 
-    # ================ ローカルパスからCSV一覧を取得 ================
-    # ここを UNC ではなくローカルパスに変更
-    BASE_DIR = r"C:\Users\ani\github\zaiko-viewer"
+    # ================ UNCパスからCSV一覧を取得 ================
+    # ネットワークパス:
+    # \\192.168.0.85\Public\ani\在庫変動ログ\在庫変動エクセル\在庫ログ自動取得
+    BASE_DIR = r"\\192.168.0.85\Public\ani\在庫変動ログ\在庫変動エクセル\在庫ログ自動取得"
     pattern = os.path.join(BASE_DIR, "tempostar_stock_*.csv")
 
-    paths = sorted(glob.glob(pattern))
+    file_paths = sorted(glob.glob(pattern))
 
-    if not paths:
+    if not file_paths:
         st.error(
             "指定フォルダに tempostar_stock_*.csv が見つかりません。\n"
             f"パス: {BASE_DIR}"
         )
         st.stop()
 
-    # ファイル名から日付を解析してリスト化
-    file_infos = []
-    for p in paths:
-        name = os.path.basename(p)  # 例: tempostar_stock_20251204.csv
-        stem, _ = os.path.splitext(name)  # tempostar_stock_20251204
-        date_part = stem.replace("tempostar_stock_", "")
-        try:
-            d = datetime.strptime(date_part, "%Y%m%d").date()
-        except Exception:
-            # もし想定外の形式ならスキップ
-            continue
-        file_infos.append({"path": p, "name": name, "date": d})
+    file_name_list = [os.path.basename(p) for p in file_paths]
 
-    if not file_infos:
-        st.error("ファイル名から日付を解析できませんでした。tempostar_stock_YYYYMMDD.csv 形式か確認してください。")
-        st.stop()
-
-    all_dates = [info["date"] for info in file_infos]
-    min_date = min(all_dates)
-    max_date = max(all_dates)
-
-    # ================ サイドバー：カレンダーで日付範囲選択 & フィルタ ================
+    # ================ サイドバー：対象ファイル選択 & フィルタ ================
     with st.sidebar:
         st.header("集計設定")
 
         st.caption("CSV保存先パス")
         st.code(BASE_DIR)
 
-        st.caption("集計対象日付（カレンダーから期間を選択）")
-        date_range = st.date_input(
-            "日付範囲",
-            (min_date, max_date),
-            min_value=min_date,
-            max_value=max_date,
-            format="YYYY-MM-DD",
+        # デフォルトは「全部選択」＝全期間合算
+        default_files = file_name_list
+
+        selected_file_names = st.multiselect(
+            "集計対象のCSVファイル（複数選択可）",
+            file_name_list,
+            default=default_files,
         )
 
-        # st.date_input は単日 or タプルどちらも返る可能性がある
-        if isinstance(date_range, tuple):
-            if len(date_range) == 2:
-                start_date, end_date = date_range
-            elif len(date_range) == 1:
-                start_date = end_date = date_range[0]
-            else:
-                start_date = end_date = min_date
-        else:
-            start_date = end_date = date_range
-
-        if start_date is None or end_date is None:
-            start_date, end_date = min_date, max_date
-
-        # 選択された日付範囲に含まれるファイルだけを対象に
-        selected_infos = [
-            info for info in file_infos if start_date <= info["date"] <= end_date
-        ]
-
-        if not selected_infos:
-            st.warning("この日付範囲に該当するCSVがありません。日付範囲を見直してください。")
+        if not selected_file_names:
+            st.warning("少なくとも1つCSVファイルを選択してください。")
             st.stop()
 
-        selected_paths = [info["path"] for info in selected_infos]
+        # 選択されたファイル名に対応するパスだけを対象にする
+        selected_paths = [
+            p for p in file_paths if os.path.basename(p) in selected_file_names
+        ]
 
-        st.caption("選択中の日付とファイル")
-        for info in selected_infos:
-            st.caption(f"・{info['date']}  ({info['name']})")
+        st.caption("選択中のファイル")
+        for p in selected_paths:
+            st.caption("・" + os.path.basename(p))
 
         # キーワード絞り込み（集計前）
         keyword = st.text_input("商品コード / 商品基本コード / 商品名で検索")
