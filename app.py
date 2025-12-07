@@ -129,35 +129,12 @@ def main():
         )
         st.stop()
 
-    file_name_list = [os.path.basename(p) for p in file_paths]
-
-    # ================ サイドバー：対象ファイル選択 & フィルタ ================
+    # ================ サイドバー：フィルタだけ（ファイルは全件） ================
     with st.sidebar:
-        st.header("集計設定")
+        st.header("集計設定（全CSV合算）")
 
-        st.caption("CSV保存先パス")
-        st.code(BASE_DIR)
-
-        # デフォルトは「全部選択」＝全期間合算
-        default_files = file_name_list
-
-        selected_file_names = st.multiselect(
-            "集計対象のCSVファイル（複数選択可）",
-            file_name_list,
-            default=default_files,
-        )
-
-        if not selected_file_names:
-            st.warning("少なくとも1つCSVファイルを選択してください。")
-            st.stop()
-
-        # 選択されたファイル名に対応するパスだけを対象にする
-        selected_paths = [
-            p for p in file_paths if os.path.basename(p) in selected_file_names
-        ]
-
-        st.caption("選択中のファイル")
-        for p in selected_paths:
+        st.caption("対象CSVパス")
+        for p in file_paths:
             st.caption("・" + os.path.basename(p))
 
         # キーワード絞り込み（集計前）
@@ -171,14 +148,14 @@ def main():
             step=1,
         )
 
-    # ================ データ読み込み（選択CSVを合算） ================
+    # ================ データ読み込み（全CSV合算） ================
     try:
-        df_raw = load_tempostar_data(selected_paths)
+        df_raw = load_tempostar_data(file_paths)
     except Exception as e:
         st.error(f"CSV読み込みでエラーが発生しました: {e}")
         st.stop()
 
-    st.write(f"読み込みCSVファイル数: {len(selected_paths)} 件")
+    st.write(f"読み込みCSVファイル数: {len(file_paths)} 件")
     st.write(f"明細行数合計: {len(df_raw):,} 行")
 
     df = df_raw.copy()
