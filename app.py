@@ -174,37 +174,36 @@ def main():
         df = df[cond]
 
     # 必須列チェック（Tempostar側は 商品基本コード をキーに使う）
-    required_cols = {"商品基本コード", "増減値"}
+    required_cols = {"商品コード", "商品基本コード", "増減値"}
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
         st.error("CSVに以下の列が必要です: " + " / ".join(missing))
         st.stop()
 
-    # ================ 売上用データ（更新理由＝受注取込のみ） ================
+    # =========================
+    # 売上用データ（更新理由＝受注取込のみ）
+    # =========================
     if "更新理由" in df.columns:
         df_sales = df[df["更新理由"] == "受注取込"].copy()
     else:
-        # 更新理由列がない場合は全行を売上として扱う（保険）
         df_sales = df.copy()
 
-    # ================ SKU別売上集計 ================
-    sales_group_keys = []
-    for c in [
-        "商品コード",
-        "商品基本コード",
-        "商品名",
-        "属性1名",
-        "属性2名",
-    ]:
-        if c in df_sales.columns:
-            sales_group_keys.append(c)
-
+    # ================ SKU別売上集計（商品コード単位で合算） ================
+    # 商品コードごとに増減値を合算し、その他の情報は最後のものを採用
     agg_sales = {
-        "増減値": "sum",  # マイナスが大きいほど売れている
+        "商品基本コード": "last",
+        "商品名": "last",
+        "属性1名": "last",
+        "属性2名": "last",
+        "増減値": "sum",
     }
-
-    sales_grouped = df_sales.groupby(sales_group_keys, dropna=False).agg(agg_sales).reset_index()
-    sales_grouped = sales_grouped.rename(columns={"増減値": "増減値合計"})
+    sales_grouped = (
+        df_sales
+        .groupby("商品コード", dropna=False)
+        .agg(agg_sales)
+        .reset_index()
+        .rename(columns={"増減値": "増減値合計"})
+    )
 
     # 表示用「売上個数合計」＝ マイナスを反転してプラスに
     sales_grouped["売上個数合計"] = -sales_grouped["増減値合計"]
@@ -212,29 +211,28 @@ def main():
     # 売れていない（0以下）は除外
     sales_grouped = sales_grouped[sales_grouped["売上個数合計"] > 0]
 
-    # ================ 在庫情報（現在庫）を別途集計（全更新理由対象） ================
+    # ================ 在庫情報（現在庫：商品コード単位） ================
     if "変動後" in df.columns:
-        stock_group_keys = []
-        for c in [
-            "商品コード",
-            "商品基本コード",
-            "商品名",
-            "属性1名",
-            "属性2名",
-        ]:
-            if c in df.columns:
-                stock_group_keys.append(c)
-
         agg_stock = {
-            "変動後": "last",  # 最後の変動後在庫
+            "商品基本コード": "last",
+            "商品名": "last",
+            "属性1名": "last",
+            "属性2名": "last",
+            "変動後": "last",
         }
-        stock_group = df.groupby(stock_group_keys, dropna=False).agg(agg_stock).reset_index()
-        stock_group = stock_group.rename(columns={"変動後": "現在庫"})
+        stock_group = (
+            df
+            .groupby("商品コード", dropna=False)
+            .agg(agg_stock)
+            .reset_index()
+            .rename(columns={"変動後": "現在庫"})
+        )
 
+        # 売上集計とマージ（商品コードで結合）
         sales_grouped = pd.merge(
             sales_grouped,
-            stock_group,
-            on=stock_group_keys,
+            stock_group[["商品コード", "現在庫"]],
+            on="商品コード",
             how="left",
         )
 
@@ -272,10 +270,7 @@ def main():
     sales_grouped = sales_grouped[cols]
 
     # ================ 表示列の並び ================
-    display_cols = ["画像"]
-    for c in ["商品コード", "商品基本コード", "商品名", "属性1名", "属性2名"]:
-        if c in sales_grouped.columns:
-            display_cols.append(c)
+    display_cols = ["画像", "商品コード", "商品基本コード", "商品名", "属性1名", "属性2名"]
     for c in ["売上個数合計", "現在庫", "増減値合計"]:
         if c in sales_grouped.columns:
             display_cols.append(c)
