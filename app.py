@@ -114,28 +114,31 @@ def main():
     st.set_page_config(page_title="Tempostar SKU別売上集計（画像付き）", layout="wide")
     st.title("Tempostar 在庫変動データ - SKU別売上集計（商品画像付き）")
 
-    # ================ UNCパスからCSV一覧を取得 ================
-    # ネットワークパス:
-    # \\192.168.0.85\Public\ani\在庫変動ログ\在庫変動エクセル\在庫ログ自動取得
-    BASE_DIR = r"\\192.168.0.85\Public\ani\在庫変動ログ\在庫変動エクセル\在庫ログ自動取得"
-    pattern = os.path.join(BASE_DIR, "tempostar_stock_*.csv")
-
-    file_paths = sorted(glob.glob(pattern))
+    # ================ 対象CSVファイルの取得 ================
+    file_paths = sorted(glob.glob("tempostar_stock_*.csv"))
 
     if not file_paths:
-        st.error(
-            "指定フォルダに tempostar_stock_*.csv が見つかりません。\n"
-            f"パス: {BASE_DIR}"
-        )
+        st.error("tempostar_stock_*.csv が見つかりません。\napp.py と同じフォルダに Tempostar の CSV を置いてください。")
         st.stop()
 
-    # ================ サイドバー：フィルタだけ（ファイルは全件） ================
-    with st.sidebar:
-        st.header("集計設定（全CSV合算）")
+    file_name_list = [os.path.basename(p) for p in file_paths]
 
-        st.caption("対象CSVパス")
-        for p in file_paths:
-            st.caption("・" + os.path.basename(p))
+    # ================ サイドバー：対象ファイル選択 & フィルタ ================
+    with st.sidebar:
+        st.header("集計設定")
+
+        default_files = [file_name_list[-1]]  # デフォルトは最新CSVだけ
+        selected_file_names = st.multiselect(
+            "集計対象のCSVファイル（複数選択可）",
+            file_name_list,
+            default=default_files,
+        )
+
+        if not selected_file_names:
+            st.warning("少なくとも1つCSVファイルを選択してください。")
+            st.stop()
+
+        selected_paths = [p for p in file_paths if os.path.basename(p) in selected_file_names]
 
         # キーワード絞り込み（集計前）
         keyword = st.text_input("商品コード / 商品基本コード / 商品名で検索")
@@ -148,15 +151,17 @@ def main():
             step=1,
         )
 
-    # ================ データ読み込み（全CSV合算） ================
+    # ================ データ読み込み ================
     try:
-        df_raw = load_tempostar_data(file_paths)
+        df_raw = load_tempostar_data(selected_paths)
     except Exception as e:
         st.error(f"CSV読み込みでエラーが発生しました: {e}")
         st.stop()
 
-    st.write(f"読み込みCSVファイル数: {len(file_paths)} 件")
-    st.write(f"明細行数合計: {len(df_raw):,} 行")
+    st.caption("読み込みファイル")
+    for name in selected_file_names:
+        st.caption(f"・{name}")
+    st.write(f"明細行数: {len(df_raw):,} 行")
 
     df = df_raw.copy()
 
