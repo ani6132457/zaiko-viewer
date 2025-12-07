@@ -114,6 +114,15 @@ def make_html_table(df: pd.DataFrame) -> str:
 
 def main():
     st.set_page_config(page_title="Tempostar SKU別売上集計（画像付き）", layout="wide")
+
+    # 日本語カレンダー設定
+    st.markdown("""
+        <script>
+            const lang = document.documentElement.lang;
+            document.documentElement.lang = "ja";
+        </script>
+    """, unsafe_allow_html=True)
+
     st.title("Tempostar 在庫変動データ - SKU別売上集計（商品画像付き）")
 
     # ================ 対象CSVファイルの取得（ファイル名から日付を抽出） ================
