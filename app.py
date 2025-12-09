@@ -7,28 +7,6 @@ import re
 from datetime import datetime
 
 
-# ========================================
-#  日本語カレンダー UI（Flatpickr）を有効化
-# ========================================
-def enable_japanese_calendar():
-    st.markdown("""
-    <link rel="stylesheet" 
-    href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
-    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
-    <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/ja.js"></script>
-
-    <script>
-    document.addEventListener("DOMContentLoaded", function () {
-        // Streamlit の date_input をすべて日本語カレンダー化
-        flatpickr(".stDateInput input", {
-            locale: "ja",
-            dateFormat: "Y-m-d"
-        });
-    });
-    </script>
-    """, unsafe_allow_html=True)
-
-
 # ==========================
 # Tempostar CSV 読み込み
 # ==========================
@@ -114,21 +92,7 @@ def make_html_table(df):
 def main():
     st.set_page_config(page_title="Tempostar 売上集計（画像付き）", layout="wide")
 
-    # --- カレンダーを日本語化（ここを追加！） ---
-    st.markdown("""
-    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
-    <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/ja.js"></script>
-    <script>
-    document.addEventListener("DOMContentLoaded", function () {
-        flatpickr(".stDateInput input", {
-            locale: "ja"
-        });
-    });
-    </script>
-    """, unsafe_allow_html=True)
-
     st.title("Tempostar 在庫変動データ - SKU別売上集計（商品画像付き）")
-
 
     # ---------- CSV一覧 ----------
     raw_paths = sorted(glob.glob("tempostar_stock_*.csv"))
@@ -151,7 +115,7 @@ def main():
         st.error("tempostar_stock_YYYYMMDD.csv の形式が見つかりません。")
         return
 
-    all_dates = [fi["date"] for fi in file_infos]
+    all_dates = sorted({fi["date"] for fi in file_infos})
     min_date, max_date = min(all_dates), max(all_dates)
 
     # ---------- サイドバー ----------
@@ -160,17 +124,16 @@ def main():
 
         st.write(f"📅 データ期間： **{min_date} 〜 {max_date}**")
 
-        selected_range = st.date_input(
+        # ★ 英語カレンダーはやめて、日本語表記の日付スライダーに変更 ★
+        selected_range = st.select_slider(
             "集計期間（日付を選択）",
-            value=(max_date, max_date)
+            options=all_dates,
+            value=(max_date, max_date),          # デフォルトは最新日だけ
+            format_func=lambda d: d.strftime("%Y/%m/%d"),  # 日本式表示
         )
 
-        # 形式吸収
-        if isinstance(selected_range, (list, tuple)) and len(selected_range) == 2:
-            start_date, end_date = selected_range
-        else:
-            start_date = end_date = selected_range
-
+        # select_slider は (start, end) を返す
+        start_date, end_date = selected_range
         if start_date > end_date:
             start_date, end_date = end_date, start_date
 
@@ -186,7 +149,7 @@ def main():
         for fi in target:
             st.caption(f"・{fi['date']} : {fi['name']}")
 
-        keyword = st.text_input("検索（商品コード / 商品名）")
+        keyword = st.text_input("検索（商品コード / 商品基本コード / 商品名）")
         min_total_sales = st.number_input(
             "売上個数の下限（プラス値）", min_value=0, value=0
         )
@@ -264,17 +227,29 @@ def main():
     sales_grouped = sales_grouped[cols]
 
     # ---------- 表示 ----------
-    display = ["画像", "商品コード", "商品基本コード", "商品名", "属性1名", "属性2名",
-               "売上個数合計", "現在庫", "増減値合計"]
+    display = [
+        "画像",
+        "商品コード",
+        "商品基本コード",
+        "商品名",
+        "属性1名",
+        "属性2名",
+        "売上個数合計",
+        "現在庫",
+        "増減値合計",
+    ]
 
     df_view = sales_grouped[display]
 
-    st.write(f"📦 SKU数：{len(df_view):,}　｜　期間：{start_date}〜{end_date}")
+    st.write(
+        f"📦 SKU数：{len(df_view):,}　｜　集計期間：{start_date.strftime('%Y/%m/%d')} 〜 {end_date.strftime('%Y/%m/%d')}"
+    )
 
     # テーブル表示（HTML）
     table_html = make_html_table(df_view)
 
-    st.markdown("""
+    st.markdown(
+        """
     <style>
     table { border-collapse: collapse; font-size: 14px; }
     th { background:#f2f2f2; }
@@ -282,7 +257,9 @@ def main():
     tr:hover { background:#fafafa; }
     img { display:block; }
     </style>
-    """, unsafe_allow_html=True)
+    """,
+        unsafe_allow_html=True,
+    )
 
     st.markdown(table_html, unsafe_allow_html=True)
 
