@@ -4,7 +4,7 @@ import glob
 import os
 import html
 import re
-from datetime import datetime
+from datetime import datetime, date
 
 
 # ==========================
@@ -118,29 +118,91 @@ def main():
     all_dates = sorted({fi["date"] for fi in file_infos})
     min_date, max_date = min(all_dates), max(all_dates)
 
+    # 年・月・日の一覧を作成
+    years = sorted({d.year for d in all_dates})
+
     # ---------- サイドバー ----------
     with st.sidebar:
         st.header("集計条件")
 
         st.write(f"📅 データ期間： **{min_date} 〜 {max_date}**")
 
-        # ★ カレンダーの代わりに「日付プルダウン（数字のみ）」を使う ★
-        start_date = st.selectbox(
-            "集計開始日",
-            options=all_dates,
-            index=len(all_dates) - 1,
-            format_func=lambda d: d.strftime("%Y/%m/%d"),
+        # ===== 開始日 =====
+        st.subheader("集計開始日")
+
+        # 年
+        default_start_year = max_date.year
+        start_year = st.selectbox(
+            "開始年", years,
+            index=years.index(default_start_year),
+            key="start_year",
+            format_func=lambda y: f"{y}"
         )
 
-        end_date = st.selectbox(
-            "集計終了日",
-            options=all_dates,
-            index=len(all_dates) - 1,
-            format_func=lambda d: d.strftime("%Y/%m/%d"),
+        # 月（その年にデータがある月だけ）
+        start_month_candidates = sorted({d.month for d in all_dates if d.year == start_year})
+        # デフォルトはその年の中で最大の月
+        default_start_month = max(d.month for d in all_dates if d.year == start_year)
+        start_month = st.selectbox(
+            "開始月",
+            start_month_candidates,
+            index=start_month_candidates.index(default_start_month),
+            key="start_month",
+            format_func=lambda m: f"{m}"
         )
+
+        # 日（その年・月にデータがある日だけ）
+        start_day_candidates = sorted(
+            {d.day for d in all_dates if d.year == start_year and d.month == start_month}
+        )
+        default_start_day = min(start_day_candidates)  # とりあえずその月の最初の日
+        start_day = st.selectbox(
+            "開始日",
+            start_day_candidates,
+            index=start_day_candidates.index(default_start_day),
+            key="start_day",
+            format_func=lambda d: f"{d}"
+        )
+
+        # ===== 終了日 =====
+        st.subheader("集計終了日")
+
+        default_end_year = max_date.year
+        end_year = st.selectbox(
+            "終了年", years,
+            index=years.index(default_end_year),
+            key="end_year",
+            format_func=lambda y: f"{y}"
+        )
+
+        end_month_candidates = sorted({d.month for d in all_dates if d.year == end_year})
+        default_end_month = max(d.month for d in all_dates if d.year == end_year)
+        end_month = st.selectbox(
+            "終了月",
+            end_month_candidates,
+            index=end_month_candidates.index(default_end_month),
+            key="end_month",
+            format_func=lambda m: f"{m}"
+        )
+
+        end_day_candidates = sorted(
+            {d.day for d in all_dates if d.year == end_year and d.month == end_month}
+        )
+        default_end_day = max(end_day_candidates)
+        end_day = st.selectbox(
+            "終了日",
+            end_day_candidates,
+            index=end_day_candidates.index(default_end_day),
+            key="end_day",
+            format_func=lambda d: f"{d}"
+        )
+
+        # 実際の日付オブジェクト
+        start_date = date(start_year, start_month, start_day)
+        end_date = date(end_year, end_month, end_day)
 
         if start_date > end_date:
-            st.warning("開始日が終了日より後になっています。自動で並び替えます。")
+            st.warning("開始日が終了日より後になっています。自動で入れ替えます。")
             start_date, end_date = end_date, start_date
 
         # 期間内 CSV
