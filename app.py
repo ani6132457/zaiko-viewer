@@ -117,109 +117,134 @@ def main():
 
     all_dates = sorted({fi["date"] for fi in file_infos})
     min_date, max_date = min(all_dates), max(all_dates)
-
-    # 年・月・日の一覧を作成
     years = sorted({d.year for d in all_dates})
 
-    # ---------- サイドバー ----------
+    # ==========================
+    # サイドバー
+    # ==========================
     with st.sidebar:
         st.header("集計条件")
-
         st.write(f"📅 データ期間： **{min_date} 〜 {max_date}**")
 
-        # -------------------------
-        #   開始日（横並び）
-        # -------------------------
-        st.subheader("開始日")
-
-        c1, c2, c3 = st.columns([1, 1, 1])
+        # ===== 開始日（横並び：年・月・日）=====
+        st.markdown("##### 開始日")
+        c1, c2, c3 = st.columns([1.4, 1.0, 1.0])
 
         with c1:
             start_year = st.selectbox(
-                "年", years,
+                "開始年",
+                years,
                 index=years.index(max_date.year),
                 key="start_year",
-                label_visibility="collapsed"
+                label_visibility="collapsed",
             )
 
         with c2:
-            start_month_candidates = sorted({d.month for d in all_dates if d.year == start_year})
+            start_month_candidates = sorted(
+                {d.month for d in all_dates if d.year == start_year}
+            )
+            default_start_month = min(start_month_candidates)
             start_month = st.selectbox(
-                "月", start_month_candidates,
-                index=len(start_month_candidates)-1,
+                "開始月",
+                start_month_candidates,
+                index=start_month_candidates.index(default_start_month),
                 key="start_month",
-                label_visibility="collapsed"
+                label_visibility="collapsed",
             )
 
         with c3:
-            start_day_candidates = sorted({d.day for d in all_dates if d.year == start_year and d.month == start_month})
+            start_day_candidates = sorted(
+                {
+                    d.day
+                    for d in all_dates
+                    if d.year == start_year and d.month == start_month
+                }
+            )
+            default_start_day = min(start_day_candidates)
             start_day = st.selectbox(
-                "日", start_day_candidates,
-                index=0,     # 月初にしておく
+                "開始日",
+                start_day_candidates,
+                index=start_day_candidates.index(default_start_day),
                 key="start_day",
-                label_visibility="collapsed"
+                label_visibility="collapsed",
             )
 
         start_date = date(start_year, start_month, start_day)
 
-
-        # -------------------------
-        #   終了日（横並び）
-        # -------------------------
-        st.subheader("終了日")
-
-        c4, c5, c6 = st.columns([1, 1, 1])
+        # ===== 終了日（横並び：年・月・日）=====
+        st.markdown("##### 終了日")
+        c4, c5, c6 = st.columns([1.4, 1.0, 1.0])
 
         with c4:
             end_year = st.selectbox(
-                "年", years,
+                "終了年",
+                years,
                 index=years.index(max_date.year),
                 key="end_year",
-                label_visibility="collapsed"
+                label_visibility="collapsed",
             )
 
         with c5:
-            end_month_candidates = sorted({d.month for d in all_dates if d.year == end_year})
+            end_month_candidates = sorted(
+                {d.month for d in all_dates if d.year == end_year}
+            )
+            default_end_month = max(end_month_candidates)
             end_month = st.selectbox(
-                "月", end_month_candidates,
-                index=len(end_month_candidates)-1,
+                "終了月",
+                end_month_candidates,
+                index=end_month_candidates.index(default_end_month),
                 key="end_month",
-                label_visibility="collapsed"
+                label_visibility="collapsed",
             )
 
         with c6:
-            end_day_candidates = sorted({d.day for d in all_dates if d.year == end_year and d.month == end_month})
+            end_day_candidates = sorted(
+                {
+                    d.day
+                    for d in all_dates
+                    if d.year == end_year and d.month == end_month
+                }
+            )
+            default_end_day = max(end_day_candidates)
             end_day = st.selectbox(
-                "日", end_day_candidates,
-                index=len(end_day_candidates)-1,
+                "終了日",
+                end_day_candidates,
+                index=end_day_candidates.index(default_end_day),
                 key="end_day",
-                label_visibility="collapsed"
+                label_visibility="collapsed",
             )
 
         end_date = date(end_year, end_month, end_day)
 
-        # 日付の前後関係調整
+        # 日付前後チェック
         if start_date > end_date:
-            st.warning("開始日の方が終了日より後でした → 自動で並べ替えました")
+            st.warning("開始日が終了日より後でした → 自動で入れ替えます")
             start_date, end_date = end_date, start_date
 
-        # 対象 CSV の抽出
+        # 期間内 CSV 抽出
         target = [fi for fi in file_infos if start_date <= fi["date"] <= end_date]
         if not target:
-            st.error("選択された日付範囲の CSV がありません")
-            return
+            st.error("選択範囲のCSVがありません。")
+            st.stop()
 
         paths = [fi["path"] for fi in target]
 
+        # 上部の入力系（キーワード・下限）
+        keyword = st.text_input("検索（商品コード / 商品基本コード / 商品名）")
+        min_total_sales = st.number_input(
+            "売上個数の下限（プラス値）", min_value=0, value=0
+        )
+
+        # ここから下に余白を入れて「対象CSV」を一番下に
+        st.markdown("---")
         st.caption("対象CSV：")
         for fi in target:
             st.caption(f"・{fi['date']} : {fi['name']}")
 
-        keyword = st.text_input("検索（商品コード / 商品基本コード / 商品名）")
-        min_total_sales = st.number_input("売上個数の下限（プラス値）", min_value=0, value=0)
+    # ==========================
+    # メイン集計処理
+    # ==========================
 
-
-    # ---------- CSV読込 ----------
     df = load_tempostar_data(paths)
 
     if keyword:
@@ -235,7 +260,7 @@ def main():
         st.error("Tempostar CSV に必要な列が不足しています。")
         return
 
-    # ---------- 売上（受注取込のみ） ----------
+    # 売上（受注取込のみ）
     if "更新理由" in df.columns:
         df_sales = df[df["更新理由"] == "受注取込"]
     else:
@@ -256,10 +281,11 @@ def main():
         .rename(columns={"増減値": "増減値合計"})
     )
 
+    # 売上個数（マイナス反転）
     sales_grouped["売上個数合計"] = -sales_grouped["増減値合計"]
     sales_grouped = sales_grouped[sales_grouped["売上個数合計"] > 0]
 
-    # ---------- 在庫 ----------
+    # 在庫
     if "変動後" in df.columns:
         stock_group = (
             df.groupby("商品コード")
@@ -269,13 +295,13 @@ def main():
         )
         sales_grouped = sales_grouped.merge(stock_group, on="商品コード", how="left")
 
-    # ---------- フィルタ ----------
+    # フィルタ
     if min_total_sales > 0:
         sales_grouped = sales_grouped[sales_grouped["売上個数合計"] >= min_total_sales]
 
     sales_grouped = sales_grouped.sort_values("売上個数合計", ascending=False)
 
-    # ---------- 画像 ----------
+    # 画像
     img_master = load_image_master()
     base_url = "https://image.rakuten.co.jp/hype/cabinet"
 
@@ -291,7 +317,7 @@ def main():
     cols.insert(0, cols.pop(cols.index("画像")))
     sales_grouped = sales_grouped[cols]
 
-    # ---------- 表示 ----------
+    # 表示
     display = [
         "画像",
         "商品コード",
@@ -310,7 +336,6 @@ def main():
         f"📦 SKU数：{len(df_view):,}　｜　集計期間：{start_date.strftime('%Y/%m/%d')} 〜 {end_date.strftime('%Y/%m/%d')}"
     )
 
-    # テーブル表示（HTML）
     table_html = make_html_table(df_view)
 
     st.markdown(
