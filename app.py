@@ -124,17 +124,23 @@ def main():
 
         st.write(f"📅 データ期間： **{min_date} 〜 {max_date}**")
 
-        # ★ 英語カレンダーはやめて、日本語表記の日付スライダーに変更 ★
-        selected_range = st.select_slider(
-            "集計期間（日付を選択）",
+        # ★ カレンダーの代わりに「日付プルダウン（数字のみ）」を使う ★
+        start_date = st.selectbox(
+            "集計開始日",
             options=all_dates,
-            value=(max_date, max_date),          # デフォルトは最新日だけ
-            format_func=lambda d: d.strftime("%Y/%m/%d"),  # 日本式表示
+            index=len(all_dates) - 1,
+            format_func=lambda d: d.strftime("%Y/%m/%d"),
         )
 
-        # select_slider は (start, end) を返す
-        start_date, end_date = selected_range
+        end_date = st.selectbox(
+            "集計終了日",
+            options=all_dates,
+            index=len(all_dates) - 1,
+            format_func=lambda d: d.strftime("%Y/%m/%d"),
+        )
+
         if start_date > end_date:
+            st.warning("開始日が終了日より後になっています。自動で並び替えます。")
             start_date, end_date = end_date, start_date
 
         # 期間内 CSV
