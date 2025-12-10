@@ -223,13 +223,14 @@ def main():
 /* =======================
    発注推奨数を強調表示
    ======================= */
-/* 列位置：SKU別は7列目〜なので、在庫少商品の場合は最終列 */
-.sku-table td:last-child,
-.sku-table th:last-child {
+/* 発注推奨数列だけ強調 */
+.sku-table td:has(span.order-col),
+.sku-table th:has(span.order-col) {
     font-weight: bold;
-    background: #FFE4E1;   /* 薄い赤系で注意表示 */
-    color: #C40000;        /* 文字は見やすい濃赤 */
+    background: #FFE4E1;
+    color: #C40000;
     text-align: center;
+}
 }
 </style>
 """,
@@ -728,6 +729,9 @@ def main():
                                 "発注推奨数",
                             ]
                             restock_view = restock_view[cols2]
+                            # 発注推奨数列をHTML生成用にクラス付与
+                            restock_view.rename(columns={"発注推奨数": "<span class='order-col'>発注推奨数</span>"}, inplace=True)
+
                             # 小数点1桁表示
                             restock_view["1日平均売上"] = restock_view["1日平均売上"].map(
                                 lambda x: f"{x:.1f}"
