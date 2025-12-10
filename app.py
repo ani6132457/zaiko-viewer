@@ -141,36 +141,37 @@ def main():
             "target_days": 30,
             "restock_months": 1,  # 在庫少タブ用：直近◯ヶ月
             "submitted": False,
-            "mode": "SKU別売上集計",
         }
 
     f = st.session_state["filters"]
 
     # ==========================
-    # サイドバー（どのタブの条件かを選ぶ）
+    # Sidebar（フォーム）
     # ==========================
     with st.sidebar:
         st.header("集計条件")
         st.caption(f"📅 データ期間：{min_date} ～ {max_date}")
 
         with st.form("filter_form"):
-            mode = st.radio(
-                "条件を設定するタブ",
-                ["SKU別売上集計", "在庫少商品（発注目安）"],
-                horizontal=True,
-                index=0 if f.get("mode", "SKU別売上集計") == "SKU別売上集計" else 1,
+            # --- SKU別売上集計 用 ---
+            st.markdown("### SKU別売上集計 用の条件")
+            start_date = st.date_input(
+                "開始日（SKU別売上タブにのみ適用）",
+                f["start_date"],
+                min_value=min_date,
+                max_value=max_date,
+            )
+            end_date = st.date_input(
+                "終了日（SKU別売上タブにのみ適用）",
+                f["end_date"],
+                min_value=min_date,
+                max_value=max_date,
             )
 
-            # ▼SKU別売上集計タブなら日付あり
-            if mode == "SKU別売上集計":
-                start_date = st.date_input(
-                    "開始日", f["start_date"], min_value=min_date, max_value=max_date
-                )
-                end_date = st.date_input(
-                    "終了日", f["end_date"], min_value=min_date, max_value=max_date
-                )
+            st.caption("※在庫少商品タブでは、下の『直近◯ヶ月』だけを使って集計します。")
 
-            # ▼キーワード・売上下限は両方で共通
+            # --- 共通条件 ---
+            st.markdown("### 共通条件（両タブ共通）")
             keyword = st.text_input(
                 "検索（商品コード / 商品基本コード / 商品名）",
                 f["keyword"],
@@ -181,60 +182,61 @@ def main():
                 value=int(f["min_total_sales"]),
             )
 
-            # ▼在庫少タブだけ追加の設定を表示
-            if mode == "在庫少商品（発注目安）":
-                months_choices = [1, 2, 3, 4, 5, 6]
-                default_restock = int(f.get("restock_months", 1))
-                if default_restock not in months_choices:
-                    default_restock = 1
-                restock_months = st.selectbox(
-                    "直近◯ヶ月",
-                    months_choices,
-                    index=months_choices.index(default_restock),
-                )
-                target_days = st.number_input(
-                    "何日分の在庫を確保するか（発注目安）",
-                    min_value=1,
-                    max_value=365,
-                    value=int(f["target_days"]),
-                )
+            # --- 在庫少商品タブ専用 ---
+            st.markdown("### 在庫少商品（発注目安） 用")
+            months_choices = [1, 2, 3, 4, 5, 6]
+            default_restock = int(f.get("restock_months", 1))
+            if default_restock not in months_choices:
+                default_restock = 1
+
+            restock_months = st.selectbox(
+                "在庫少商品の集計期間（直近◯ヶ月）",
+                months_choices,
+                index=months_choices.index(default_restock),
+            )
+
+            target_days = st.number_input(
+                "何日分の在庫を確保するか（発注目安）",
+                min_value=1,
+                max_value=365,
+                value=int(f["target_days"]),
+            )
 
             submitted = st.form_submit_button("この条件で表示")
 
-        # ---------- 入力保存 ----------
         if submitted:
-            f["mode"] = mode
+            if start_date > end_date:
+                start_date, end_date = end_date, start_date
 
-            # タブ1だけが日付設定
-            if mode == "SKU別売上集計":
-                if start_date > end_date:
-                    start_date, end_date = end_date, start_date
-                f["start_date"] = start_date
-                f["end_date"] = end_date
-
-            # 共通設定
+            f["start_date"] = start_date
+            f["end_date"] = end_date
             f["keyword"] = keyword
             f["min_total_sales"] = int(min_total_sales)
-
-            # 在庫少タブのみ
-            if mode == "在庫少商品（発注目安）":
-                f["restock_months"] = int(restock_months)
-                f["target_days"] = int(target_days)
-
+            f["target_days"] = int(target_days)
+            f["restock_months"] = int(restock_months)
             f["submitted"] = True
 
-    # 条件未確定時は終了
+        # 対象CSV一覧（SKUタブ用の参照情報）
+        if f["submitted"]:
+            target_files = [
+                fi for fi in file_infos
+                if f["start_date"] <= fi["date"] <= f["end_date"]
+            ]
+            st.markdown("---")
+            st.caption("対象CSV（SKU別売上集計タブ）：")
+            for fi in target_files:
+                st.caption(f"・{fi['date']} : {fi['name']}")
+
     if not f["submitted"]:
-        st.info("条件を設定して「この条件で表示」を押してください")
+        st.info("左の条件を設定して『この条件で表示』ボタンを押してください。")
         return
 
-    # 設定取得
     start_date = f["start_date"]
     end_date = f["end_date"]
     keyword = f["keyword"]
     min_total_sales = f["min_total_sales"]
-    restock_months = f["restock_months"]
     target_days = f["target_days"]
+    restock_months = f["restock_months"]
 
     # ---------- SKU別売上用 DF 読み込み ----------
     main_files = [fi for fi in file_infos if start_date <= fi["date"] <= end_date]
@@ -436,7 +438,7 @@ def main():
     )
 
     # ==========================
-    # タブ表示（中身だけ）
+    # タブ表示
     # ==========================
     tab1, tab2 = st.tabs(["SKU別売上集計", "在庫少商品（発注目安）"])
 
