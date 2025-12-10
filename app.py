@@ -141,34 +141,28 @@ def main():
             "target_days": 30,
             "restock_months": 1,  # 在庫少タブ用：直近◯ヶ月
             "submitted": False,
+            "mode": "SKU別売上集計",
         }
 
     f = st.session_state["filters"]
 
     # ==========================
-    # まずタブを定義（選択状態保持）
-    # ==========================
-    tab1, tab2 = st.tabs(["SKU別売上集計", "在庫少商品（発注目安）"])
-
-    tab_index = st.session_state.get("_tab_index", 0)
-    # 現在アクティブなタブを検出し保存
-    if tab1:
-        tab_index = 0
-    if tab2:
-        tab_index = 1
-    st.session_state["_tab_index"] = tab_index
-
-    # ==========================
-    # Sidebar（タブごとに分岐）
+    # サイドバー（どのタブの条件かを選ぶ）
     # ==========================
     with st.sidebar:
         st.header("集計条件")
         st.caption(f"📅 データ期間：{min_date} ～ {max_date}")
 
         with st.form("filter_form"):
+            mode = st.radio(
+                "条件を設定するタブ",
+                ["SKU別売上集計", "在庫少商品（発注目安）"],
+                horizontal=True,
+                index=0 if f.get("mode", "SKU別売上集計") == "SKU別売上集計" else 1,
+            )
 
             # ▼SKU別売上集計タブなら日付あり
-            if tab_index == 0:
+            if mode == "SKU別売上集計":
                 start_date = st.date_input(
                     "開始日", f["start_date"], min_value=min_date, max_value=max_date
                 )
@@ -176,7 +170,7 @@ def main():
                     "終了日", f["end_date"], min_value=min_date, max_value=max_date
                 )
 
-            # ▼キーワード・売上下限は両方のタブで表示
+            # ▼キーワード・売上下限は両方で共通
             keyword = st.text_input(
                 "検索（商品コード / 商品基本コード / 商品名）",
                 f["keyword"],
@@ -188,9 +182,11 @@ def main():
             )
 
             # ▼在庫少タブだけ追加の設定を表示
-            if tab_index == 1:
+            if mode == "在庫少商品（発注目安）":
                 months_choices = [1, 2, 3, 4, 5, 6]
                 default_restock = int(f.get("restock_months", 1))
+                if default_restock not in months_choices:
+                    default_restock = 1
                 restock_months = st.selectbox(
                     "直近◯ヶ月",
                     months_choices,
@@ -207,8 +203,10 @@ def main():
 
         # ---------- 入力保存 ----------
         if submitted:
+            f["mode"] = mode
+
             # タブ1だけが日付設定
-            if tab_index == 0:
+            if mode == "SKU別売上集計":
                 if start_date > end_date:
                     start_date, end_date = end_date, start_date
                 f["start_date"] = start_date
@@ -218,8 +216,8 @@ def main():
             f["keyword"] = keyword
             f["min_total_sales"] = int(min_total_sales)
 
-            # タブ2のみ
-            if tab_index == 1:
+            # 在庫少タブのみ
+            if mode == "在庫少商品（発注目安）":
                 f["restock_months"] = int(restock_months)
                 f["target_days"] = int(target_days)
 
@@ -237,7 +235,6 @@ def main():
     min_total_sales = f["min_total_sales"]
     restock_months = f["restock_months"]
     target_days = f["target_days"]
-
 
     # ---------- SKU別売上用 DF 読み込み ----------
     main_files = [fi for fi in file_infos if start_date <= fi["date"] <= end_date]
@@ -439,7 +436,7 @@ def main():
     )
 
     # ==========================
-    # タブ表示
+    # タブ表示（中身だけ）
     # ==========================
     tab1, tab2 = st.tabs(["SKU別売上集計", "在庫少商品（発注目安）"])
 
