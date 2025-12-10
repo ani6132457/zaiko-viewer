@@ -287,7 +287,7 @@ def main():
         else:
             df_sku = df[df["商品コード"] == selected_sku].copy()
 
-            # 元ファイル名から日付を抽出
+            # 元ファイル名から日付を抽出（YYYYMMDD）
             df_sku["日付"] = df_sku["元ファイル"].str.extract(r"(\d{8})")
             df_sku["日付"] = pd.to_datetime(df_sku["日付"], format="%Y%m%d", errors="coerce")
 
@@ -296,19 +296,13 @@ def main():
             if df_plot.empty:
                 st.warning("選択したSKUの在庫データがありません。")
             else:
-                # ▼ 軸のフォーマットを「12/1」形式にする
-                try:
-                    # Mac / Linux
-                    df_plot["日付文字列"] = df_plot["日付"].dt.strftime("%-m/%-d")
-                except Exception:
-                    # Windows
-                    df_plot["日付文字列"] = df_plot["日付"].dt.strftime("%#m/%#d")
-
-                df_plot2 = df_plot.set_index("日付文字列")["変動後"]
+                # ★ 文字列にはせず、そのまま日付で index にする
+                df_plot2 = df_plot.set_index("日付")["変動後"]
 
                 st.line_chart(df_plot2)
 
         st.markdown("---")
+
 
     # ==========================
     # 売上集計（受注取込のみ）
