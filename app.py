@@ -519,6 +519,7 @@ def main():
 .sku-table td:nth-child(4),
 .sku-table th:nth-child(4) {
     max-width: 300px;             /* 必要に応じて調整 */
+    left: 120px; /* 画像の幅に合わせて */
     display: -webkit-box;
     -webkit-line-clamp: 3;        /* 最大3行 */
     -webkit-box-orient: vertical;
