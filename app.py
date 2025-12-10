@@ -134,11 +134,13 @@ def main():
     # --------------------------
     # フィルタの初期値（1か月前〜最新日）
     # --------------------------
-    if "filters" not in st.session_state:
-        one_month_ago = (pd.Timestamp(max_date) - pd.DateOffset(months=1)).date()
-        if one_month_ago < min_date:
-            one_month_ago = min_date
+    # まず「1か月前」の日付を計算（filters の有無に関係なく）
+    one_month_ago = (pd.Timestamp(max_date) - pd.DateOffset(months=1)).date()
+    if one_month_ago < min_date:
+        one_month_ago = min_date
 
+    if "filters" not in st.session_state:
+        # 初回起動時
         st.session_state["filters"] = {
             "start_date": one_month_ago,
             "end_date": max_date,
@@ -147,6 +149,18 @@ def main():
             "target_days": 30,  # 何日分在庫を持ちたいか
             "submitted": False,
         }
+    else:
+        # 以前のバージョンのセッションなど、足りないキーを補完
+        defaults = {
+            "start_date": one_month_ago,
+            "end_date": max_date,
+            "keyword": "",
+            "min_total_sales": 0,
+            "target_days": 30,
+            "submitted": False,
+        }
+        for k, v in defaults.items():
+            st.session_state["filters"].setdefault(k, v)
 
     f = st.session_state["filters"]
 
