@@ -450,7 +450,7 @@ def main():
         rel = img_master.get(code, "")
         if not rel:
             return ""
-        return f'<img src="{base_url + rel}" width="120">'
+        return f'<img src="{base_url + rel}" width="70">'
 
     sales_grouped["画像"] = sales_grouped.apply(to_img, axis=1)
 
@@ -476,60 +476,105 @@ def main():
     # ==========================
     # テーブル用 CSS（sticky ヘッダー）
     # ==========================
-    st.markdown(
-        """
-    <style>
-    .sku-table {
-        border-collapse: collapse;
-        font-size: 14px;
-        width: 100%;
-        table-layout: fixed;
-    }
-
-    .sku-table th {
-        background:#f2f2f2;
-    }
-
-    .sku-table td,
-    .sku-table th {
-        padding:6px 8px;
-        border:1px solid #ccc;
-        vertical-align: top;
-        white-space: normal;
-        word-break: break-word;
-    }
-
-    .sku-table tbody tr:hover {
-        background:#fafafa;
-    }
-
-    .sku-table img {
-        display:block;
-    }
-
-    /* ヘッダー固定：ページ全体のスクロールに追従 */
-    .sku-table thead th {
-        position: sticky;
-        top: 3.2rem;  /* ヘッダーが上部バーに隠れるようならここを調整 */
-        z-index: 2;
-        background:#f2f2f2;
-    }
-
-/* ▼ 商品名（4列目）を3行までに制限 */
-.sku-table td:nth-child(4),
-.sku-table th:nth-child(4) {
-    max-width: 300px;             /* 必要に応じて調整 */
-    left: 120px; /* 画像の幅に合わせて */
-    display: -webkit-box;
-    -webkit-line-clamp: 3;        /* 最大3行 */
-    -webkit-box-orient: vertical;
-    overflow: hidden;
+st.markdown(
+    """
+<style>
+/* ===== テーブル全体 ===== */
+.sku-table {
+    border-collapse: collapse;
+    font-size: 13px;
+    width: 100%;
 }
 
-    </style>
-    """,
-        unsafe_allow_html=True,
-    )
+/* ヘッダー */
+.sku-table th {
+    background:#f2f2f2;
+}
+
+/* 共通セル */
+.sku-table td,
+.sku-table th {
+    padding:4px 6px;
+    border:1px solid #ccc;
+    vertical-align: top;
+}
+
+.sku-table tbody tr:hover {
+    background:#fafafa;
+}
+
+/* 画像を小さく＆揃える */
+.sku-table img {
+    display:block;
+    max-height:70px;   /* 高さ制限 */
+    width:auto;
+    margin:auto;
+}
+
+/* ===== 列ごとの調整 ===== */
+/* 1列目：画像 */
+.sku-table th:nth-child(1),
+.sku-table td:nth-child(1) {
+    width:72px;
+    text-align:center;
+}
+
+/* 2列目：商品コード */
+.sku-table th:nth-child(2),
+.sku-table td:nth-child(2) {
+    width:110px;
+    white-space:nowrap;
+}
+
+/* 3列目：商品基本コード */
+.sku-table th:nth-child(3),
+.sku-table td:nth-child(3) {
+    width:110px;
+    white-space:nowrap;
+}
+
+/* 4列目：商品名 → 横幅広め＋3行まで表示 */
+.sku-table th:nth-child(4),
+.sku-table td:nth-child(4) {
+    max-width:420px;              /* 商品名はここで幅を確保 */
+    display:-webkit-box;
+    -webkit-line-clamp:3;         /* 最大3行 */
+    -webkit-box-orient:vertical;
+    overflow:hidden;
+}
+
+/* 5,6列目：属性1/2名 → そこそこ幅 */
+.sku-table th:nth-child(5),
+.sku-table td:nth-child(5),
+.sku-table th:nth-child(6),
+.sku-table td:nth-child(6) {
+    width:110px;
+    white-space:nowrap;
+}
+
+/* 7〜9列目：数値列（売上個数合計 / 現在庫 / 増減値合計） */
+.sku-table th:nth-child(7),
+.sku-table td:nth-child(7),
+.sku-table th:nth-child(8),
+.sku-table td:nth-child(8),
+.sku-table th:nth-child(9),
+.sku-table td:nth-child(9) {
+    width:80px;
+    text-align:right;
+    white-space:nowrap;
+}
+
+/* ===== ヘッダー固定（sticky） ===== */
+.sku-table thead th {
+    position: sticky;
+    top: 3.2rem;  /* ヘッダーが隠れるようならここを微調整 */
+    z-index: 2;
+    background:#f2f2f2;
+}
+</style>
+""",
+    unsafe_allow_html=True,
+)
 
     # ==========================
     # タブ：①売上集計 ②在庫少商品（発注目安）
