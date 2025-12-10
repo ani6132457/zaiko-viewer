@@ -211,6 +211,27 @@ def main():
     z-index:2;
     background:#f2f2f2;
 }
+
+/* =======================
+   表の文字サイズアップ
+   ======================= */
+.sku-table {
+    font-size: 14px;   /* ← 今13px → 14pxに拡大 */
+}
+
+/* =======================
+   発注推奨数を強調表示
+   ======================= */
+/* 列位置：SKU別は7列目〜なので、在庫少商品の場合は最終列 */
+.sku-table td:last-child,
+.sku-table th:last-child {
+    font-weight: bold;
+    background: #FFE4E1;   /* 薄い赤系で注意表示 */
+    color: #C40000;        /* 文字は見やすい濃赤 */
+    text-align: center;
+}
+
+
 </style>
 """,
         unsafe_allow_html=True,
