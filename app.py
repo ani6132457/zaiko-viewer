@@ -280,28 +280,34 @@ def main():
     params = st.experimental_get_query_params()
     selected_sku = params.get("sku", [None])[0]
 
-    if selected_sku:
-        st.markdown(f"## 📈 在庫推移グラフ：{selected_sku}")
+if selected_sku:
+    st.markdown(f"## 📈 在庫推移グラフ：{selected_sku}")
 
-        if "変動後" not in df.columns:
-            st.warning("このデータには『変動後』列がないため、在庫推移グラフを表示できません。")
+    if "変動後" not in df.columns:
+        st.warning("このデータには『変動後』列がないため、在庫推移グラフを表示できません。")
+    else:
+        df_sku = df[df["商品コード"] == selected_sku].copy()
+
+        df_sku["日付"] = df_sku["元ファイル"].str.extract(r"(\d{8})")
+        df_sku["日付"] = pd.to_datetime(df_sku["日付"], format="%Y%m%d", errors="coerce")
+
+        df_plot = df_sku[["日付", "変動後"]].dropna().sort_values("日付")
+
+        if df_plot.empty:
+            st.warning("選択したSKUの在庫データがありません。")
         else:
-            # 選択SKUの行だけ抜き取る
-            df_sku = df[df["商品コード"] == selected_sku].copy()
+            # ▼ 軸のフォーマットを「12/1」形式にする
+            try:
+                df_plot["日付文字列"] = df_plot["日付"].dt.strftime("%-m/%-d")  # Mac/Linux
+            except:
+                df_plot["日付文字列"] = df_plot["日付"].dt.strftime("%#m/%#d")  # Windows
 
-            # 元ファイル名から日付を抽出して日付列を付与
-            df_sku["日付"] = df_sku["元ファイル"].str.extract(r"(\d{8})")
-            df_sku["日付"] = pd.to_datetime(df_sku["日付"], format="%Y%m%d", errors="coerce")
+            df_plot2 = df_plot.set_index("日付文字列")["変動後"]
 
-            # 必要な列だけ
-            df_plot = df_sku[["日付", "変動後"]].dropna().sort_values("日付")
+            st.line_chart(df_plot2)
 
-            if df_plot.empty:
-                st.warning("選択したSKUの在庫データがありません。")
-            else:
-                st.line_chart(df_plot.set_index("日付")["変動後"])
+    st.markdown("---")
 
-        st.markdown("---")
 
     # ==========================
     # 売上集計（受注取込のみ）
