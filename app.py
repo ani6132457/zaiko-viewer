@@ -141,20 +141,31 @@ def main():
         st.markdown("##### 開始日")
         c1, c2, c3 = st.columns([1.4, 1.0, 1.0])
 
+        # ★ 最新日から1ヶ月前を初期値にする
+        one_month_ago = max_date - pd.DateOffset(months=1)
+        # ストリームリット用に日付型へ変換
+        one_month_ago = one_month_ago.date()
+
+        # 年
+        default_start_year = one_month_ago.year
         with c1:
             start_year = st.selectbox(
                 "開始年",
                 years,
-                index=years.index(max_date.year),
+                index=years.index(default_start_year),
                 key="start_year",
                 label_visibility="collapsed",
             )
 
-        with c2:
-            start_month_candidates = sorted(
-                {d.month for d in all_dates if d.year == start_year}
-            )
+        # 月
+        start_month_candidates = sorted(
+            {d.month for d in all_dates if d.year == start_year}
+        )
+        default_start_month = one_month_ago.month
+        if default_start_month not in start_month_candidates:
             default_start_month = min(start_month_candidates)
+
+        with c2:
             start_month = st.selectbox(
                 "開始月",
                 start_month_candidates,
@@ -163,15 +174,19 @@ def main():
                 label_visibility="collapsed",
             )
 
-        with c3:
-            start_day_candidates = sorted(
-                {
-                    d.day
-                    for d in all_dates
-                    if d.year == start_year and d.month == start_month
-                }
-            )
+        # 日
+        start_day_candidates = sorted(
+            {
+                d.day
+                for d in all_dates
+                if d.year == start_year and d.month == start_month
+            }
+        )
+        default_start_day = one_month_ago.day
+        if default_start_day not in start_day_candidates:
             default_start_day = min(start_day_candidates)
+
+        with c3:
             start_day = st.selectbox(
                 "開始日",
                 start_day_candidates,
