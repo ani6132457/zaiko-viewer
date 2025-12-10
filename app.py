@@ -695,6 +695,8 @@ def main():
                                 "発注推奨数",
                             ]
                             restock_view = restock_view[cols2]
+                            restock_view["1日平均売上"] = restock_view["1日平均売上"].map(lambda x: f"{x:.1f}")
+                            restock_view["目標在庫"] = restock_view["目標在庫"].map(lambda x: f"{x:.1f}")
                             st.write(
                                 f"⚠ 抽出SKU数：{len(restock_view):,} ｜ 目標在庫：平均 {target_days} 日分"
                             )
