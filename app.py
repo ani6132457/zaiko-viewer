@@ -276,12 +276,13 @@ def main():
     })
     tbl["売上個数合計"] = -tbl["増減値合計"]
 
-    # 現在庫
-    if "変動後" in df.columns:
-        stock = df.groupby("商品コード")["変動後"].last()
-        tbl["現在庫"] = stock.reindex(tbl["商品コード"]).fillna(0).astype(int)
-    else:
-        tbl["現在庫"] = 0
+# 現在庫（NaNや文字列をすべて0に正規化してから整数化）
+if "変動後" in df.columns:
+    stock = df.groupby("商品コード")["変動後"].last()
+    stock = pd.to_numeric(stock, errors="coerce").fillna(0).astype(int)
+    tbl["現在庫"] = stock.reindex(tbl["商品コード"]).fillna(0).astype(int)
+else:
+    tbl["現在庫"] = 0
 
     info_cols = ["商品基本コード", "商品名", "属性1名", "属性2名"]
     info = df_sales.groupby("商品コード", dropna=False)[info_cols].last().reset_index()
