@@ -464,7 +464,6 @@ def main():
                             "属性2名",
                             "売上個数合計",
                             "現在庫",
-                            "増減値合計",
                         ]
                         df_view = sales_grouped[display_cols]
 
@@ -683,7 +682,6 @@ def main():
                             "属性2名",
                             "売上個数合計",
                             "現在庫",
-                            "増減値合計",
                         ]
                         cols_r = ["画像"] + [
                             c for c in display_cols if c != "画像"
