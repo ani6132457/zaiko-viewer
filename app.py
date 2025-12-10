@@ -379,13 +379,20 @@ def main():
     width:110px; white-space:nowrap;
 }
 /* 4:商品名（3行制限） */
-.sku-table td:nth-child(4), .sku-table th:nth-child(4) {
+/* ← ヘッダー側：普通のセルとして扱う */
+.sku-table th:nth-child(4) {
+    max-width:420px;
+}
+
+/* ← データ側だけ、3行制限＆省略 */
+.sku-table td:nth-child(4) {
     max-width:420px;
     display:-webkit-box;
     -webkit-line-clamp:3;
     -webkit-box-orient:vertical;
     overflow:hidden;
 }
+
 /* 5,6:属性 */
 .sku-table td:nth-child(5), .sku-table th:nth-child(5),
 .sku-table td:nth-child(6), .sku-table th:nth-child(6) {
