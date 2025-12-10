@@ -475,11 +475,25 @@ def main():
     st.markdown(
         """
     <style>
-    table { border-collapse: collapse; font-size: 14px; }
+    table { border-collapse: collapse; font-size: 14px; width: 100%; }
     th { background:#f2f2f2; }
     td, th { padding:6px 8px; border:1px solid #ccc; }
     tr:hover { background:#fafafa; }
     img { display:block; }
+
+    /* ▼ ヘッダー固定（スクロール追従） */
+    thead th {
+        position: sticky;
+        top: 0;
+        z-index: 2; /* ヘッダーを前面に */
+    }
+
+    /* ▼ 表をスクロール可能にする（縦方向） */
+    .table-container {
+        max-height: 72vh; /* 画面の約70%高さ以内 */
+        overflow-y: auto;
+        border: 1px solid #ccc;
+    }
     </style>
     """,
         unsafe_allow_html=True,
