@@ -130,100 +130,122 @@ def main():
     min_date, max_date = min(all_dates), max(all_dates)
     years = sorted({d.year for d in all_dates})
 
+    # --------------------------
+    # フィルタの初期値（1か月前〜最新日）
+    # --------------------------
+    if "filters" not in st.session_state:
+        # 最新日から1か月前
+        one_month_ago = (pd.Timestamp(max_date) - pd.DateOffset(months=1)).date()
+        if one_month_ago < min_date:
+            one_month_ago = min_date
+
+        st.session_state["filters"] = {
+            "start_date": one_month_ago,
+            "end_date": max_date,
+            "keyword": "",
+            "min_total_sales": 0,
+            "submitted": False,
+        }
+
+    f = st.session_state["filters"]
+
     # ==========================
-    # サイドバー
+    # サイドバー（フォーム＋ボタン）
     # ==========================
     with st.sidebar:
         st.header("集計条件")
         st.write(f"📅 データ期間： **{min_date} 〜 {max_date}**")
 
-        # ===== 開始日（横並び：年・月・日）=====
-        st.markdown("##### 開始日")
-        c1, c2, c3 = st.columns([1.4, 1.0, 1.0])
+        with st.form("filter_form"):
+            st.markdown("##### 開始日")
+            c1, c2, c3 = st.columns([1.4, 1.0, 1.0])
 
-        # ★ 最新日から1ヶ月前を初期値にする
-        one_month_ago = max_date - pd.DateOffset(months=1)
-        # ストリームリット用に日付型へ変換
-        one_month_ago = one_month_ago.date()
+            # 現在の開始日
+            cur_start = f["start_date"]
+            cur_end = f["end_date"]
 
-        # 年
-        default_start_year = one_month_ago.year
-        with c1:
-            start_year = st.selectbox(
-                "開始年",
-                years,
-                index=years.index(default_start_year),
-                key="start_year",
-                label_visibility="collapsed",
+            # --- 開始年 ---
+            with c1:
+                start_year = st.selectbox(
+                    "開始年",
+                    years,
+                    index=years.index(cur_start.year),
+                    key="start_year",
+                    label_visibility="collapsed",
+                )
+
+            # --- 開始月 ---
+            start_month_candidates = sorted(
+                {d.month for d in all_dates if d.year == start_year}
             )
+            default_start_month = cur_start.month
+            if default_start_month not in start_month_candidates:
+                default_start_month = min(start_month_candidates)
 
-        # 月
-        start_month_candidates = sorted(
-            {d.month for d in all_dates if d.year == start_year}
-        )
-        default_start_month = one_month_ago.month
-        if default_start_month not in start_month_candidates:
-            default_start_month = min(start_month_candidates)
+            with c2:
+                start_month = st.selectbox(
+                    "開始月",
+                    start_month_candidates,
+                    index=start_month_candidates.index(default_start_month),
+                    key="start_month",
+                    label_visibility="collapsed",
+                )
 
-        with c2:
-            start_month = st.selectbox(
-                "開始月",
-                start_month_candidates,
-                index=start_month_candidates.index(default_start_month),
-                key="start_month",
-                label_visibility="collapsed",
+            # --- 開始日 ---
+            start_day_candidates = sorted(
+                {
+                    d.day
+                    for d in all_dates
+                    if d.year == start_year and d.month == start_month
+                }
             )
+            default_start_day = cur_start.day
+            if default_start_day not in start_day_candidates:
+                default_start_day = min(start_day_candidates)
 
-        # 日
-        start_day_candidates = sorted(
-            {
-                d.day
-                for d in all_dates
-                if d.year == start_year and d.month == start_month
-            }
-        )
-        default_start_day = one_month_ago.day
-        if default_start_day not in start_day_candidates:
-            default_start_day = min(start_day_candidates)
+            with c3:
+                start_day = st.selectbox(
+                    "開始日",
+                    start_day_candidates,
+                    index=start_day_candidates.index(default_start_day),
+                    key="start_day",
+                    label_visibility="collapsed",
+                )
 
-        with c3:
-            start_day = st.selectbox(
-                "開始日",
-                start_day_candidates,
-                index=start_day_candidates.index(default_start_day),
-                key="start_day",
-                label_visibility="collapsed",
-            )
+            start_date = date(start_year, start_month, start_day)
 
-        start_date = date(start_year, start_month, start_day)
+            # ===== 終了日 =====
+            st.markdown("##### 終了日")
+            c4, c5, c6 = st.columns([1.4, 1.0, 1.0])
 
-        # ===== 終了日（横並び：年・月・日）=====
-        st.markdown("##### 終了日")
-        c4, c5, c6 = st.columns([1.4, 1.0, 1.0])
+            # --- 終了年 ---
+            with c4:
+                end_year = st.selectbox(
+                    "終了年",
+                    years,
+                    index=years.index(cur_end.year),
+                    key="end_year",
+                    label_visibility="collapsed",
+                )
 
-        with c4:
-            end_year = st.selectbox(
-                "終了年",
-                years,
-                index=years.index(max_date.year),
-                key="end_year",
-                label_visibility="collapsed",
-            )
-
-        with c5:
+            # --- 終了月 ---
             end_month_candidates = sorted(
                 {d.month for d in all_dates if d.year == end_year}
             )
-            default_end_month = max(end_month_candidates)
-            end_month = st.selectbox(
-                "終了月",
-                end_month_candidates,
-                index=end_month_candidates.index(default_end_month),
-                key="end_month",
-                label_visibility="collapsed",
-            )
+            default_end_month = cur_end.month
+            if default_end_month not in end_month_candidates:
+                default_end_month = max(end_month_candidates)
 
-        with c6:
+            with c5:
+                end_month = st.selectbox(
+                    "終了月",
+                    end_month_candidates,
+                    index=end_month_candidates.index(default_end_month),
+                    key="end_month",
+                    label_visibility="collapsed",
+                )
+
+            # --- 終了日 ---
             end_day_candidates = sorted(
                 {
                     d.day
@@ -231,37 +253,68 @@ def main():
                     if d.year == end_year and d.month == end_month
                 }
             )
-            default_end_day = max(end_day_candidates)
-            end_day = st.selectbox(
-                "終了日",
-                end_day_candidates,
-                index=end_day_candidates.index(default_end_day),
-                key="end_day",
-                label_visibility="collapsed",
+            default_end_day = cur_end.day
+            if default_end_day not in end_day_candidates:
+                default_end_day = max(end_day_candidates)
+
+            with c6:
+                end_day = st.selectbox(
+                    "終了日",
+                    end_day_candidates,
+                    index=end_day_candidates.index(default_end_day),
+                    key="end_day",
+                    label_visibility="collapsed",
+                )
+
+            end_date = date(end_year, end_month, end_day)
+
+            # 日付前後チェック（ここで入れ替え）
+            if start_date > end_date:
+                st.warning("開始日が終了日より後でした → 自動で入れ替えます")
+                start_date, end_date = end_date, start_date
+
+            # キーワード・売上下限
+            keyword = st.text_input(
+                "検索（商品コード / 商品基本コード / 商品名）",
+                value=f["keyword"],
+            )
+            min_total_sales = st.number_input(
+                "売上個数の下限（プラス値）",
+                min_value=0,
+                value=int(f["min_total_sales"]),
             )
 
-        end_date = date(end_year, end_month, end_day)
+            submitted = st.form_submit_button("この条件で表示")
 
-        # 日付前後チェック
-        if start_date > end_date:
-            st.warning("開始日が終了日より後でした → 自動で入れ替えます")
-            start_date, end_date = end_date, start_date
+        # ボタンが押されたら値を保存
+        if submitted:
+            f["start_date"] = start_date
+            f["end_date"] = end_date
+            f["keyword"] = keyword
+            f["min_total_sales"] = int(min_total_sales)
+            f["submitted"] = True
 
-        # 期間内 CSV 抽出
-        target = [fi for fi in file_infos if start_date <= fi["date"] <= end_date]
-        if not target:
-            st.error("選択範囲のCSVがありません。")
-            st.stop()
+    # まだボタンを押していない場合はここで終了
+    if not f["submitted"]:
+        st.info("左の条件を設定して『この条件で表示』ボタンを押してください。")
+        return
 
-        paths = [fi["path"] for fi in target]
+    # ここから先は「この条件で表示」押した後だけ動く
+    start_date = f["start_date"]
+    end_date = f["end_date"]
+    keyword = f["keyword"]
+    min_total_sales = f["min_total_sales"]
 
-        # 上部の入力系（キーワード・下限）
-        keyword = st.text_input("検索（商品コード / 商品基本コード / 商品名）")
-        min_total_sales = st.number_input(
-            "売上個数の下限（プラス値）", min_value=0, value=0
-        )
+    # 期間内 CSV 抽出
+    target = [fi for fi in file_infos if start_date <= fi["date"] <= end_date]
+    if not target:
+        st.error("選択範囲のCSVがありません。")
+        return
 
-        # 対象CSVは一番下に表示
+    paths = [fi["path"] for fi in target]
+
+    # 対象CSVをサイドバーに表示
+    with st.sidebar:
         st.markdown("---")
         st.caption("対象CSV：")
         for fi in target:
@@ -302,7 +355,7 @@ def main():
         else:
             df_sku = df[df["商品コード"] == selected_sku].copy()
 
-            # 元ファイル名から日付を抽出（YYYYMMDD）
+            # 元ファイル名から日付を抽出
             df_sku["日付"] = df_sku["元ファイル"].str.extract(r"(\d{8})")
             df_sku["日付"] = pd.to_datetime(df_sku["日付"], format="%Y%m%d", errors="coerce")
 
@@ -311,13 +364,11 @@ def main():
             if df_plot.empty:
                 st.warning("選択したSKUの在庫データがありません。")
             else:
-                # ★ 文字列にはせず、そのまま日付で index にする
+                # 日付で index をとってそのまま描画（並びが正しくなる）
                 df_plot2 = df_plot.set_index("日付")["変動後"]
-
                 st.line_chart(df_plot2)
 
         st.markdown("---")
-
 
     # ==========================
     # 売上集計（受注取込のみ）
