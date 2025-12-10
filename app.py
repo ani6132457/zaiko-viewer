@@ -175,12 +175,16 @@ def main():
                 max_value=365,
                 value=int(f["target_days"]),
             )
+            months_choices = [1, 2, 3, 4, 5, 6]
+            default_restock = int(f.get("restock_months", 1))
+            if default_restock not in months_choices:
+                default_restock = 1
+
             restock_months = st.selectbox(
                 "在庫少商品の集計期間（直近◯ヶ月）",
-                [1, 2, 3, 4, 5, 6],
-                index=[1, 2, 3, 4, 5, 6].index(int(f["restock_months"])),
+                months_choices,
+                index=months_choices.index(default_restock),
             )
-
             submitted = st.form_submit_button("この条件で表示")
 
         if submitted:
