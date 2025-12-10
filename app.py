@@ -20,7 +20,7 @@ def load_tempostar_data(file_paths):
 
     all_df = pd.concat(dfs, ignore_index=True)
 
-    # 数値列
+    # 数値列を明示的に変換
     for col in ["増減値", "変動後"]:
         if col in all_df.columns:
             all_df[col] = pd.to_numeric(all_df[col], errors="coerce").fillna(0).astype(int)
@@ -59,7 +59,7 @@ def load_image_master():
 
 
 # ==========================
-# HTML テーブル生成
+# HTML テーブル生成（商品コードクリック対応）
 # ==========================
 def make_html_table(df):
     thead = "<thead><tr>" + "".join(
@@ -72,10 +72,14 @@ def make_html_table(df):
         for col in df.columns:
             val = row[col]
 
-            # ▼ 商品コードだけクリック可能にする
+            # ▼ 商品コードはクリック可能リンクにする
             if col == "商品コード":
                 code = html.escape(str(val))
-                link = f"<a href='?sku={code}' style='color:#0073e6; text-decoration:none; cursor:pointer;'>{code}</a>"
+                link = (
+                    f"<a href='?sku={code}' "
+                    f"style='color:#0073e6; text-decoration:none; cursor:pointer;'>"
+                    f"{code}</a>"
+                )
                 tds.append(f"<td>{link}</td>")
             elif col == "画像":
                 tds.append(f"<td>{val}</td>")
@@ -242,7 +246,7 @@ def main():
             "売上個数の下限（プラス値）", min_value=0, value=0
         )
 
-        # ここから下に余白を入れて「対象CSV」を一番下に
+        # 対象CSVは一番下に表示
         st.markdown("---")
         st.caption("対象CSV：")
         for fi in target:
@@ -252,8 +256,10 @@ def main():
     # メイン集計処理
     # ==========================
 
+    # 日付範囲内の CSV 読み込み
     df = load_tempostar_data(paths)
 
+    # キーワード絞り込み
     if keyword:
         cond = False
         for col in ["商品コード", "商品基本コード", "商品名"]:
@@ -267,7 +273,39 @@ def main():
         st.error("Tempostar CSV に必要な列が不足しています。")
         return
 
-    # 売上（受注取込のみ）
+    # ==========================
+    # 商品コードクリック時の在庫推移グラフ
+    # ==========================
+
+    params = st.experimental_get_query_params()
+    selected_sku = params.get("sku", [None])[0]
+
+    if selected_sku:
+        st.markdown(f"## 📈 在庫推移グラフ：{selected_sku}")
+
+        if "変動後" not in df.columns:
+            st.warning("このデータには『変動後』列がないため、在庫推移グラフを表示できません。")
+        else:
+            # 選択SKUの行だけ抜き取る
+            df_sku = df[df["商品コード"] == selected_sku].copy()
+
+            # 元ファイル名から日付を抽出して日付列を付与
+            df_sku["日付"] = df_sku["元ファイル"].str.extract(r"(\d{8})")
+            df_sku["日付"] = pd.to_datetime(df_sku["日付"], format="%Y%m%d", errors="coerce")
+
+            # 必要な列だけ
+            df_plot = df_sku[["日付", "変動後"]].dropna().sort_values("日付")
+
+            if df_plot.empty:
+                st.warning("選択したSKUの在庫データがありません。")
+            else:
+                st.line_chart(df_plot.set_index("日付")["変動後"])
+
+        st.markdown("---")
+
+    # ==========================
+    # 売上集計（受注取込のみ）
+    # ==========================
     if "更新理由" in df.columns:
         df_sales = df[df["更新理由"] == "受注取込"]
     else:
@@ -292,7 +330,7 @@ def main():
     sales_grouped["売上個数合計"] = -sales_grouped["増減値合計"]
     sales_grouped = sales_grouped[sales_grouped["売上個数合計"] > 0]
 
-    # 在庫
+    # 在庫（現在庫）
     if "変動後" in df.columns:
         stock_group = (
             df.groupby("商品コード")
@@ -302,13 +340,16 @@ def main():
         )
         sales_grouped = sales_grouped.merge(stock_group, on="商品コード", how="left")
 
-    # フィルタ
+    # 売上個数の下限フィルタ
     if min_total_sales > 0:
         sales_grouped = sales_grouped[sales_grouped["売上個数合計"] >= min_total_sales]
 
+    # 並べ替え（売上個数降順）
     sales_grouped = sales_grouped.sort_values("売上個数合計", ascending=False)
 
-    # 画像
+    # ==========================
+    # 画像列の付与
+    # ==========================
     img_master = load_image_master()
     base_url = "https://image.rakuten.co.jp/hype/cabinet"
 
@@ -320,11 +361,13 @@ def main():
         return f'<img src="{base_url + rel}" width="120">'
 
     sales_grouped["画像"] = sales_grouped.apply(to_img, axis=1)
+
+    # 画像列を先頭へ
     cols = sales_grouped.columns.tolist()
     cols.insert(0, cols.pop(cols.index("画像")))
     sales_grouped = sales_grouped[cols]
 
-    # 表示
+    # 表示列
     display = [
         "画像",
         "商品コード",
@@ -336,13 +379,14 @@ def main():
         "現在庫",
         "増減値合計",
     ]
-
     df_view = sales_grouped[display]
 
+    # 概要表示
     st.write(
         f"📦 SKU数：{len(df_view):,}　｜　集計期間：{start_date.strftime('%Y/%m/%d')} 〜 {end_date.strftime('%Y/%m/%d')}"
     )
 
+    # テーブル表示（HTML）
     table_html = make_html_table(df_view)
 
     st.markdown(
