@@ -66,7 +66,7 @@ def load_image_master():
 # ==========================
 # HTML テーブル生成（商品コードクリック対応）
 # ==========================
-def make_html_table(df):
+def make_html_table(df: pd.DataFrame) -> str:
     thead = "<thead><tr>" + "".join(
         f"<th>{html.escape(str(c))}</th>" for c in df.columns
     ) + "</tr></thead>"
@@ -84,6 +84,10 @@ def make_html_table(df):
                 )
                 tds.append(f"<td>{link}</td>")
             elif col == "画像":
+                # 画像列はすでにHTMLなのでそのまま
+                tds.append(f"<td>{val}</td>")
+            elif col == "発注推奨数":
+                # 発注推奨数は <span class="order-col">～</span> をそのまま表示
                 tds.append(f"<td>{val}</td>")
             else:
                 tds.append(f"<td>{html.escape(str(val))}</td>")
@@ -147,7 +151,7 @@ def main():
             "min_total_sales": 0,
             "restock_months": 1,
             "target_days": 30,
-            "max_current_stock": 999999,  # ★現在庫フィルタ（初期は実質フィルタなし）
+            "max_current_stock": 999999,  # 現在庫上限フィルタ
         }
         st.session_state["restock_applied"] = False
 
@@ -161,7 +165,11 @@ def main():
     st.markdown(
         """
 <style>
-.sku-table { border-collapse:collapse; font-size:13px; width:100%; }
+.sku-table {
+    border-collapse:collapse;
+    font-size:14px;
+    width:100%;
+}
 .sku-table th { background:#f2f2f2; }
 .sku-table td, .sku-table th {
     padding:4px 6px;
@@ -181,11 +189,9 @@ def main():
     width:110px; white-space:nowrap;
 }
 /* 4:商品名 */
-/* ヘッダーは普通のまま */
 .sku-table th:nth-child(4) {
     max-width:420px;
 }
-/* データ側だけ3行制限 */
 .sku-table td:nth-child(4) {
     max-width:420px;
     display:-webkit-box;
@@ -198,7 +204,7 @@ def main():
 .sku-table td:nth-child(6), .sku-table th:nth-child(6) {
     width:110px; white-space:nowrap;
 }
-/* 7,8,9:数値列 */
+/* 数値列 */
 .sku-table td:nth-child(7), .sku-table th:nth-child(7),
 .sku-table td:nth-child(8), .sku-table th:nth-child(8),
 .sku-table td:nth-child(9), .sku-table th:nth-child(9) {
@@ -213,24 +219,13 @@ def main():
     background:#f2f2f2;
 }
 
-/* =======================
-   表の文字サイズアップ
-   ======================= */
-.sku-table {
-    font-size: 14px;   /* ← 今13px → 14pxに拡大 */
-}
-
-/* =======================
-   発注推奨数を強調表示
-   ======================= */
-/* 発注推奨数列だけ強調 */
-.sku-table td:has(span.order-col),
-.sku-table th:has(span.order-col) {
-    font-weight: bold;
-    background: #FFE4E1;
-    color: #C40000;
-    text-align: center;
-}
+/* 発注推奨数セルの強調 */
+.sku-table td .order-col {
+    font-weight:bold;
+    background:#ffe4e1;
+    color:#c40000;
+    padding:2px 6px;
+    border-radius:4px;
 }
 </style>
 """,
@@ -444,9 +439,7 @@ def main():
                             rel = img_master.get(key, "")
                             if not rel:
                                 return ""
-                            return (
-                                f'<img src="{base_url + rel}" width="70">'
-                            )
+                            return f'<img src="{base_url + rel}" width="70">'
 
                         sales_grouped["画像"] = sales_grouped[
                             "商品基本コード"
@@ -518,7 +511,6 @@ def main():
                     value=int(f_r["target_days"]),
                 )
 
-                # ★現在庫の最大値フィルタ
                 max_current_stock = st.number_input(
                     "現在庫の上限（この数以下を抽出）",
                     min_value=0,
@@ -548,7 +540,7 @@ def main():
                 min_total_sales_r = f_r["min_total_sales"]
                 restock_months = f_r["restock_months"]
                 target_days = f_r["target_days"]
-                max_current_stock = f_r["max_current_stock"]  # ★ここで読み出し
+                max_current_stock = f_r["max_current_stock"]
 
                 # 直近 restock_months ヶ月
                 end_r = max_date
@@ -651,7 +643,7 @@ def main():
                             .astype(int)
                         )
 
-                        # ★現在庫フィルタをここで適用（この数以下だけ残す）
+                        # 現在庫フィルタ
                         sales_recent = sales_recent[
                             sales_recent["現在庫"] <= max_current_stock
                         ]
@@ -665,9 +657,7 @@ def main():
                             rel = img_master.get(key, "")
                             if not rel:
                                 return ""
-                            return (
-                                f'<img src="{base_url + rel}" width="70">'
-                            )
+                            return f'<img src="{base_url + rel}" width="70">'
 
                         sales_recent["画像"] = sales_recent[
                             "商品基本コード"
@@ -729,16 +719,19 @@ def main():
                                 "発注推奨数",
                             ]
                             restock_view = restock_view[cols2]
-                            # 発注推奨数列をHTML生成用にクラス付与
-                            restock_view.rename(columns={"発注推奨数": "<span class='order-col'>発注推奨数</span>"}, inplace=True)
 
                             # 小数点1桁表示
-                            restock_view["1日平均売上"] = restock_view["1日平均売上"].map(
-                                lambda x: f"{x:.1f}"
-                            )
-                            restock_view["目標在庫"] = restock_view["目標在庫"].map(
-                                lambda x: f"{x:.1f}"
-                            )
+                            restock_view["1日平均売上"] = restock_view[
+                                "1日平均売上"
+                            ].map(lambda x: f"{x:.1f}")
+                            restock_view["目標在庫"] = restock_view[
+                                "目標在庫"
+                            ].map(lambda x: f"{x:.1f}")
+
+                            # 発注推奨数セルを強調用HTMLでラップ
+                            restock_view["発注推奨数"] = restock_view[
+                                "発注推奨数"
+                            ].apply(lambda x: f"<span class='order-col'>{x}</span>")
 
                             st.write(
                                 f"⚠ 抽出SKU数：{len(restock_view):,} ｜ 目標在庫：平均 {target_days} 日分"
