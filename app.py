@@ -147,6 +147,7 @@ def main():
             "min_total_sales": 0,
             "restock_months": 1,
             "target_days": 30,
+            "max_current_stock": 999999,  # ★現在庫フィルタ（初期は実質フィルタなし）
         }
         st.session_state["restock_applied"] = False
 
@@ -230,8 +231,6 @@ def main():
     color: #C40000;        /* 文字は見やすい濃赤 */
     text-align: center;
 }
-
-
 </style>
 """,
         unsafe_allow_html=True,
@@ -519,6 +518,14 @@ def main():
                     value=int(f_r["target_days"]),
                 )
 
+                # ★現在庫の最大値フィルタ
+                max_current_stock = st.number_input(
+                    "現在庫の上限（この数以下を抽出）",
+                    min_value=0,
+                    max_value=999999,
+                    value=int(f_r.get("max_current_stock", 999999)),
+                )
+
                 submit_restock = st.form_submit_button("この条件で表示")
 
             if submit_restock:
@@ -527,6 +534,7 @@ def main():
                     "min_total_sales": int(min_total_sales_r),
                     "restock_months": int(restock_months),
                     "target_days": int(target_days),
+                    "max_current_stock": int(max_current_stock),
                 }
                 st.session_state["restock_applied"] = True
 
@@ -540,6 +548,7 @@ def main():
                 min_total_sales_r = f_r["min_total_sales"]
                 restock_months = f_r["restock_months"]
                 target_days = f_r["target_days"]
+                max_current_stock = f_r["max_current_stock"]  # ★ここで読み出し
 
                 # 直近 restock_months ヶ月
                 end_r = max_date
@@ -642,6 +651,11 @@ def main():
                             .astype(int)
                         )
 
+                        # ★現在庫フィルタをここで適用（この数以下だけ残す）
+                        sales_recent = sales_recent[
+                            sales_recent["現在庫"] <= max_current_stock
+                        ]
+
                         # 画像列
                         img_master = load_image_master()
                         base_url = "https://image.rakuten.co.jp/hype/cabinet"
@@ -716,8 +730,14 @@ def main():
                                 "発注推奨数",
                             ]
                             restock_view = restock_view[cols2]
-                            restock_view["1日平均売上"] = restock_view["1日平均売上"].map(lambda x: f"{x:.1f}")
-                            restock_view["目標在庫"] = restock_view["目標在庫"].map(lambda x: f"{x:.1f}")
+                            # 小数点1桁表示
+                            restock_view["1日平均売上"] = restock_view["1日平均売上"].map(
+                                lambda x: f"{x:.1f}"
+                            )
+                            restock_view["目標在庫"] = restock_view["目標在庫"].map(
+                                lambda x: f"{x:.1f}"
+                            )
+
                             st.write(
                                 f"⚠ 抽出SKU数：{len(restock_view):,} ｜ 目標在庫：平均 {target_days} 日分"
                             )
