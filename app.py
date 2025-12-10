@@ -4,7 +4,7 @@ import glob
 import os
 import html
 import re
-from datetime import datetime, date, timedelta
+from datetime import datetime, timedelta
 
 
 # ==========================
@@ -127,253 +127,32 @@ def main():
     all_dates = sorted({fi["date"] for fi in file_infos})
     min_date, max_date = min(all_dates), max(all_dates)
 
-    # ---------- フィルタ初期値 ----------
+    # ---------- 初期フィルタ（セッション） ----------
     default_start = max_date - timedelta(days=30)
     if default_start < min_date:
         default_start = min_date
 
-    if "filters" not in st.session_state:
-        st.session_state["filters"] = {
+    if "sku_filters" not in st.session_state:
+        st.session_state["sku_filters"] = {
             "start_date": default_start,
             "end_date": max_date,
             "keyword": "",
             "min_total_sales": 0,
-            "target_days": 30,
-            "restock_months": 1,  # 在庫少タブ用：直近◯ヶ月
-            "submitted": False,
         }
+        st.session_state["sku_applied"] = False
 
-    f = st.session_state["filters"]
+    if "restock_filters" not in st.session_state:
+        st.session_state["restock_filters"] = {
+            "keyword": "",
+            "min_total_sales": 0,
+            "restock_months": 1,
+            "target_days": 30,
+        }
+        st.session_state["restock_applied"] = False
 
-    # ==========================
-    # Sidebar（フォーム）
-    # ==========================
-    with st.sidebar:
-        st.header("集計条件")
-        st.caption(f"📅 データ期間：{min_date} ～ {max_date}")
-
-        with st.form("filter_form"):
-            # --- SKU別売上集計 用 ---
-            st.markdown("### SKU別売上集計 用の条件")
-            start_date = st.date_input(
-                "開始日（SKU別売上タブにのみ適用）",
-                f["start_date"],
-                min_value=min_date,
-                max_value=max_date,
-            )
-            end_date = st.date_input(
-                "終了日（SKU別売上タブにのみ適用）",
-                f["end_date"],
-                min_value=min_date,
-                max_value=max_date,
-            )
-
-            st.caption("※在庫少商品タブでは、下の『直近◯ヶ月』だけを使って集計します。")
-
-            # --- 共通条件 ---
-            st.markdown("### 共通条件（両タブ共通）")
-            keyword = st.text_input(
-                "検索（商品コード / 商品基本コード / 商品名）",
-                f["keyword"],
-            )
-            min_total_sales = st.number_input(
-                "売上個数の下限（プラス値）",
-                min_value=0,
-                value=int(f["min_total_sales"]),
-            )
-
-            # --- 在庫少商品タブ専用 ---
-            st.markdown("### 在庫少商品（発注目安） 用")
-            months_choices = [1, 2, 3, 4, 5, 6]
-            default_restock = int(f.get("restock_months", 1))
-            if default_restock not in months_choices:
-                default_restock = 1
-
-            restock_months = st.selectbox(
-                "在庫少商品の集計期間（直近◯ヶ月）",
-                months_choices,
-                index=months_choices.index(default_restock),
-            )
-
-            target_days = st.number_input(
-                "何日分の在庫を確保するか（発注目安）",
-                min_value=1,
-                max_value=365,
-                value=int(f["target_days"]),
-            )
-
-            submitted = st.form_submit_button("この条件で表示")
-
-        if submitted:
-            if start_date > end_date:
-                start_date, end_date = end_date, start_date
-
-            f["start_date"] = start_date
-            f["end_date"] = end_date
-            f["keyword"] = keyword
-            f["min_total_sales"] = int(min_total_sales)
-            f["target_days"] = int(target_days)
-            f["restock_months"] = int(restock_months)
-            f["submitted"] = True
-
-        # 対象CSV一覧（SKUタブ用の参照情報）
-        if f["submitted"]:
-            target_files = [
-                fi for fi in file_infos
-                if f["start_date"] <= fi["date"] <= f["end_date"]
-            ]
-            st.markdown("---")
-            st.caption("対象CSV（SKU別売上集計タブ）：")
-            for fi in target_files:
-                st.caption(f"・{fi['date']} : {fi['name']}")
-
-    if not f["submitted"]:
-        st.info("左の条件を設定して『この条件で表示』ボタンを押してください。")
-        return
-
-    start_date = f["start_date"]
-    end_date = f["end_date"]
-    keyword = f["keyword"]
-    min_total_sales = f["min_total_sales"]
-    target_days = f["target_days"]
-    restock_months = f["restock_months"]
-
-    # ---------- SKU別売上用 DF 読み込み ----------
-    main_files = [fi for fi in file_infos if start_date <= fi["date"] <= end_date]
-    if not main_files:
-        st.error("選択範囲のCSVがありません。")
-        return
-    main_paths = [fi["path"] for fi in main_files]
-    df_main = load_tempostar_data(main_paths)
-
-    # キーワード絞り込み（SKUタブ・グラフ共通）
-    if keyword:
-        cond = False
-        for col in ["商品コード", "商品基本コード", "商品名"]:
-            if col in df_main.columns:
-                cond |= df_main[col].astype(str).str.contains(keyword, case=False)
-        df_main = df_main[cond]
-
-    # 必須列チェック
-    required = {"商品コード", "商品基本コード", "増減値"}
-    if not required.issubset(df_main.columns):
-        st.error("Tempostar CSV に『商品コード』『商品基本コード』『増減値』が必要です。")
-        return
-
-    # ==========================
-    # 商品コードクリック時の在庫推移グラフ（df_mainベース）
-    # ==========================
+    # クエリパラメータ（グラフ用）
     params = st.experimental_get_query_params()
     selected_sku = params.get("sku", [None])[0]
-
-    if selected_sku:
-        st.markdown(f"## 📈 在庫推移グラフ：{selected_sku}")
-
-        if "変動後" not in df_main.columns:
-            st.warning("『変動後』列がないため在庫推移グラフを表示できません。")
-        else:
-            df_sku = df_main[df_main["商品コード"] == selected_sku].copy()
-            df_sku["日付"] = df_sku["元ファイル"].str.extract(r"(\d{8})")
-            df_sku["日付"] = pd.to_datetime(
-                df_sku["日付"], format="%Y%m%d", errors="coerce"
-            )
-            df_plot = df_sku[["日付", "変動後"]].dropna().sort_values("日付")
-
-            if df_plot.empty:
-                st.warning("選択したSKUの在庫データがありません。")
-            else:
-                st.line_chart(df_plot.set_index("日付")["変動後"])
-
-        st.markdown("---")
-
-    # ==========================
-    # 売上集計（SKUタブ用：df_main）
-    # ==========================
-    if "更新理由" in df_main.columns:
-        df_sales_main = df_main[df_main["更新理由"] == "受注取込"].copy()
-    else:
-        df_sales_main = df_main.copy()
-
-    agg_sales = {
-        "商品基本コード": "last",
-        "商品名": "last",
-        "属性1名": "last",
-        "属性2名": "last",
-        "増減値": "sum",
-    }
-
-    sales_grouped = (
-        df_sales_main.groupby("商品コード", dropna=False)
-        .agg(agg_sales)
-        .reset_index()
-        .rename(columns={"増減値": "増減値合計"})
-    )
-
-    sales_grouped["売上個数合計"] = -sales_grouped["増減値合計"]
-    sales_grouped = sales_grouped[sales_grouped["売上個数合計"] > 0]
-
-    # 在庫（現在庫）…SKUタブでは df_main 内の最新値でOKとする
-    if "変動後" in df_main.columns:
-        stock_group = (
-            df_main.groupby("商品コード", dropna=False)["変動後"]
-            .last()
-            .reset_index()
-            .rename(columns={"変動後": "現在庫"})
-        )
-        stock_group["現在庫"] = (
-            pd.to_numeric(stock_group["現在庫"], errors="coerce")
-            .fillna(0)
-            .astype(int)
-        )
-        sales_grouped = sales_grouped.merge(stock_group, on="商品コード", how="left")
-    else:
-        sales_grouped["現在庫"] = 0
-
-    sales_grouped["現在庫"] = (
-        pd.to_numeric(sales_grouped["現在庫"], errors="coerce")
-        .fillna(0)
-        .astype(int)
-    )
-
-    if min_total_sales > 0:
-        sales_grouped = sales_grouped[
-            sales_grouped["売上個数合計"] >= min_total_sales
-        ]
-
-    sales_grouped = sales_grouped.sort_values("売上個数合計", ascending=False)
-
-    # ==========================
-    # 画像列の付与（共通）
-    # ==========================
-    img_master = load_image_master()
-    base_url = "https://image.rakuten.co.jp/hype/cabinet"
-
-    def to_img(code):
-        key = str(code).strip()
-        rel = img_master.get(key, "")
-        if not rel:
-            return ""
-        return f'<img src="{base_url + rel}" width="70">'
-
-    sales_grouped["画像"] = sales_grouped["商品基本コード"].apply(to_img)
-
-    # 画像列を先頭へ
-    cols = sales_grouped.columns.tolist()
-    cols.insert(0, cols.pop(cols.index("画像")))
-    sales_grouped = sales_grouped[cols]
-
-    display_cols = [
-        "画像",
-        "商品コード",
-        "商品基本コード",
-        "商品名",
-        "属性1名",
-        "属性2名",
-        "売上個数合計",
-        "現在庫",
-        "増減値合計",
-    ]
-    df_view = sales_grouped[display_cols]
 
     # ==========================
     # CSS（列幅・3行制限・ヘッダー固定）
@@ -438,105 +217,491 @@ def main():
     )
 
     # ==========================
-    # タブ表示
+    # タブ
     # ==========================
     tab1, tab2 = st.tabs(["SKU別売上集計", "在庫少商品（発注目安）"])
 
-    # ---- タブ1：SKU別売上集計 ----
+    # --------------------------------------------------
+    # タブ1：SKU別売上集計
+    # --------------------------------------------------
     with tab1:
-        st.write(
-            f"📦 SKU数：{len(df_view):,} ｜ 集計期間：{start_date} ～ {end_date}"
-        )
-        st.markdown(make_html_table(df_view), unsafe_allow_html=True)
+        left, right = st.columns([1, 3])
 
-    # ---- タブ2：在庫少商品（直近◯ヶ月）----
-    with tab2:
-        # 直近 restock_months ヶ月分の CSV を別途読み込む（サイドバー期間とは独立）
-        end_r = max_date
-        start_r = (pd.Timestamp(max_date) - pd.DateOffset(months=restock_months)).date()
-        if start_r < min_date:
-            start_r = min_date
+        # ---- 左カラム：フィルタ ----
+        with left:
+            st.subheader("SKU別売上集計 - 条件")
+            st.text(f"データ期間：{min_date} ～ {max_date}")
 
-        restock_files = [
-            fi for fi in file_infos if start_r <= fi["date"] <= end_r
-        ]
-        if not restock_files:
-            st.warning(f"直近{restock_months}ヶ月（{start_r} ～ {end_r}）にCSVがありません。")
-            return
+            f_sku = st.session_state["sku_filters"]
 
-        restock_paths = [fi["path"] for fi in restock_files]
-        df_restock = load_tempostar_data(restock_paths)
-
-        # キーワードも適用
-        if keyword:
-            cond_r = False
-            for col in ["商品コード", "商品基本コード", "商品名"]:
-                if col in df_restock.columns:
-                    cond_r |= df_restock[col].astype(str).str.contains(keyword, case=False)
-            df_restock = df_restock[cond_r]
-
-        if "更新理由" in df_restock.columns:
-            df_sales_recent = df_restock[df_restock["更新理由"] == "受注取込"].copy()
-        else:
-            df_sales_recent = df_restock.copy()
-
-        if df_sales_recent.empty:
-            st.warning(
-                f"直近{restock_months}ヶ月（{start_r} ～ {end_r}）に売上データがありません。"
-            )
-        else:
-            sales_recent = (
-                df_sales_recent.groupby("商品コード", dropna=False)
-                .agg(agg_sales)
-                .reset_index()
-                .rename(columns={"増減値": "増減値合計"})
-            )
-            sales_recent["売上個数合計"] = -sales_recent["増減値合計"]
-            sales_recent = sales_recent[sales_recent["売上個数合計"] > 0]
-
-            # 現在庫は SKUタブで集計済みの値を使用（sales_grouped から）
-            stock_for_merge = sales_grouped[["商品コード", "現在庫"]].copy()
-            sales_recent = sales_recent.merge(
-                stock_for_merge, on="商品コード", how="left"
-            )
-            sales_recent["現在庫"] = (
-                pd.to_numeric(sales_recent["現在庫"], errors="coerce")
-                .fillna(0)
-                .astype(int)
-            )
-
-            # 画像列
-            sales_recent["画像"] = sales_recent["商品基本コード"].apply(to_img)
-
-            # 表示順に揃える
-            cols_r = ["画像"] + [c for c in display_cols if c != "画像"]
-            sales_recent = sales_recent[cols_r]
-
-            period_days = max((end_r - start_r).days + 1, 1)
-            sales_recent["1日平均売上"] = sales_recent["売上個数合計"] / period_days
-            sales_recent["目標在庫"] = sales_recent["1日平均売上"] * target_days
-
-            target_qty = pd.to_numeric(sales_recent["目標在庫"], errors="coerce")
-            current_stock = pd.to_numeric(sales_recent["現在庫"], errors="coerce")
-            diff = (target_qty - current_stock).fillna(0)
-            sales_recent["発注推奨数"] = diff.where(diff > 0, 0).round().astype(int)
-
-            restock_view = sales_recent[sales_recent["発注推奨数"] > 0]
-            restock_view = restock_view.sort_values("発注推奨数", ascending=False)
-
-            st.info(
-                f"発注目安は直近{restock_months}ヶ月（{start_r} ～ {end_r}）の売上から計算しています。"
-            )
-
-            if restock_view.empty:
-                st.success("発注推奨の商品はありません。")
-            else:
-                cols2 = display_cols + ["1日平均売上", "目標在庫", "発注推奨数"]
-                restock_view = restock_view[cols2]
-                st.write(
-                    f"⚠ 抽出SKU数：{len(restock_view):,} ｜ 目標在庫：平均 {target_days} 日分"
+            with st.form("sku_form"):
+                start_date = st.date_input(
+                    "開始日",
+                    f_sku["start_date"],
+                    min_value=min_date,
+                    max_value=max_date,
                 )
-                st.markdown(make_html_table(restock_view), unsafe_allow_html=True)
+                end_date = st.date_input(
+                    "終了日",
+                    f_sku["end_date"],
+                    min_value=min_date,
+                    max_value=max_date,
+                )
+                keyword = st.text_input(
+                    "検索（商品コード / 商品基本コード / 商品名）",
+                    f_sku["keyword"],
+                )
+                min_total_sales = st.number_input(
+                    "売上個数の下限（プラス値）",
+                    min_value=0,
+                    value=int(f_sku["min_total_sales"]),
+                )
+
+                submit_sku = st.form_submit_button("この条件で表示")
+
+            if submit_sku:
+                if start_date > end_date:
+                    start_date, end_date = end_date, start_date
+                st.session_state["sku_filters"] = {
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "keyword": keyword,
+                    "min_total_sales": int(min_total_sales),
+                }
+                st.session_state["sku_applied"] = True
+
+        # ---- 右カラム：結果 ----
+        with right:
+            if not st.session_state["sku_applied"]:
+                st.info("左側で条件を設定して『この条件で表示』を押してください。")
+            else:
+                f_sku = st.session_state["sku_filters"]
+                start_date = f_sku["start_date"]
+                end_date = f_sku["end_date"]
+                keyword = f_sku["keyword"]
+                min_total_sales = f_sku["min_total_sales"]
+
+                # ---------- DF 読み込み ----------
+                main_files = [
+                    fi for fi in file_infos if start_date <= fi["date"] <= end_date
+                ]
+                if not main_files:
+                    st.error("選択範囲のCSVがありません。")
+                else:
+                    main_paths = [fi["path"] for fi in main_files]
+                    df_main = load_tempostar_data(main_paths)
+
+                    # キーワード絞り込み
+                    if keyword:
+                        cond = False
+                        for col in ["商品コード", "商品基本コード", "商品名"]:
+                            if col in df_main.columns:
+                                cond |= df_main[col].astype(str).str.contains(
+                                    keyword, case=False
+                                )
+                        df_main = df_main[cond]
+
+                    # 必須列チェック
+                    required = {"商品コード", "商品基本コード", "増減値"}
+                    if not required.issubset(df_main.columns):
+                        st.error(
+                            "Tempostar CSV に『商品コード』『商品基本コード』『増減値』が必要です。"
+                        )
+                    else:
+                        # --- 在庫推移グラフ ---
+                        if selected_sku:
+                            st.markdown(f"### 📈 在庫推移グラフ：{selected_sku}")
+
+                            if "変動後" not in df_main.columns:
+                                st.warning(
+                                    "『変動後』列がないため在庫推移グラフを表示できません。"
+                                )
+                            else:
+                                df_sku = df_main[
+                                    df_main["商品コード"] == selected_sku
+                                ].copy()
+                                df_sku["日付"] = df_sku["元ファイル"].str.extract(
+                                    r"(\d{8})"
+                                )
+                                df_sku["日付"] = pd.to_datetime(
+                                    df_sku["日付"],
+                                    format="%Y%m%d",
+                                    errors="coerce",
+                                )
+                                df_plot = (
+                                    df_sku[["日付", "変動後"]]
+                                    .dropna()
+                                    .sort_values("日付")
+                                )
+
+                                if df_plot.empty:
+                                    st.warning(
+                                        "選択したSKUの在庫データがありません。"
+                                    )
+                                else:
+                                    st.line_chart(
+                                        df_plot.set_index("日付")["変動後"]
+                                    )
+
+                            st.markdown("---")
+
+                        # --- 売上集計 ---
+                        if "更新理由" in df_main.columns:
+                            df_sales_main = df_main[
+                                df_main["更新理由"] == "受注取込"
+                            ].copy()
+                        else:
+                            df_sales_main = df_main.copy()
+
+                        agg_sales = {
+                            "商品基本コード": "last",
+                            "商品名": "last",
+                            "属性1名": "last",
+                            "属性2名": "last",
+                            "増減値": "sum",
+                        }
+
+                        sales_grouped = (
+                            df_sales_main.groupby("商品コード", dropna=False)
+                            .agg(agg_sales)
+                            .reset_index()
+                            .rename(columns={"増減値": "増減値合計"})
+                        )
+
+                        sales_grouped["売上個数合計"] = -sales_grouped["増減値合計"]
+                        sales_grouped = sales_grouped[
+                            sales_grouped["売上個数合計"] > 0
+                        ]
+
+                        # 在庫（現在庫）
+                        if "変動後" in df_main.columns:
+                            stock_group = (
+                                df_main.groupby(
+                                    "商品コード", dropna=False
+                                )["変動後"]
+                                .last()
+                                .reset_index()
+                                .rename(columns={"変動後": "現在庫"})
+                            )
+                            stock_group["現在庫"] = (
+                                pd.to_numeric(
+                                    stock_group["現在庫"], errors="coerce"
+                                )
+                                .fillna(0)
+                                .astype(int)
+                            )
+                            sales_grouped = sales_grouped.merge(
+                                stock_group, on="商品コード", how="left"
+                            )
+                        else:
+                            sales_grouped["現在庫"] = 0
+
+                        sales_grouped["現在庫"] = (
+                            pd.to_numeric(
+                                sales_grouped["現在庫"], errors="coerce"
+                            )
+                            .fillna(0)
+                            .astype(int)
+                        )
+
+                        if min_total_sales > 0:
+                            sales_grouped = sales_grouped[
+                                sales_grouped["売上個数合計"]
+                                >= min_total_sales
+                            ]
+
+                        sales_grouped = sales_grouped.sort_values(
+                            "売上個数合計", ascending=False
+                        )
+
+                        # 画像列
+                        img_master = load_image_master()
+                        base_url = "https://image.rakuten.co.jp/hype/cabinet"
+
+                        def to_img(code):
+                            key = str(code).strip()
+                            rel = img_master.get(key, "")
+                            if not rel:
+                                return ""
+                            return (
+                                f'<img src="{base_url + rel}" width="70">'
+                            )
+
+                        sales_grouped["画像"] = sales_grouped[
+                            "商品基本コード"
+                        ].apply(to_img)
+
+                        cols = sales_grouped.columns.tolist()
+                        cols.insert(0, cols.pop(cols.index("画像")))
+                        sales_grouped = sales_grouped[cols]
+
+                        display_cols = [
+                            "画像",
+                            "商品コード",
+                            "商品基本コード",
+                            "商品名",
+                            "属性1名",
+                            "属性2名",
+                            "売上個数合計",
+                            "現在庫",
+                            "増減値合計",
+                        ]
+                        df_view = sales_grouped[display_cols]
+
+                        st.write(
+                            f"📦 SKU数：{len(df_view):,} ｜ 集計期間：{start_date} ～ {end_date}"
+                        )
+                        st.markdown(
+                            make_html_table(df_view),
+                            unsafe_allow_html=True,
+                        )
+
+    # --------------------------------------------------
+    # タブ2：在庫少商品（発注目安）
+    # --------------------------------------------------
+    with tab2:
+        left, right = st.columns([1, 3])
+
+        # ---- 左カラム：フィルタ ----
+        with left:
+            st.subheader("在庫少商品（発注目安） - 条件")
+            st.text(f"データ最終日：{max_date}")
+
+            f_r = st.session_state["restock_filters"]
+
+            with st.form("restock_form"):
+                keyword_r = st.text_input(
+                    "検索（商品コード / 商品基本コード / 商品名）",
+                    f_r["keyword"],
+                )
+                min_total_sales_r = st.number_input(
+                    "売上個数の下限（プラス値）",
+                    min_value=0,
+                    value=int(f_r["min_total_sales"]),
+                )
+
+                months_choices = [1, 2, 3, 4, 5, 6]
+                default_restock = int(f_r.get("restock_months", 1))
+                if default_restock not in months_choices:
+                    default_restock = 1
+
+                restock_months = st.selectbox(
+                    "在庫少商品の集計期間（直近◯ヶ月）",
+                    months_choices,
+                    index=months_choices.index(default_restock),
+                )
+
+                target_days = st.number_input(
+                    "何日分の在庫を確保するか（発注目安）",
+                    min_value=1,
+                    max_value=365,
+                    value=int(f_r["target_days"]),
+                )
+
+                submit_restock = st.form_submit_button("この条件で表示")
+
+            if submit_restock:
+                st.session_state["restock_filters"] = {
+                    "keyword": keyword_r,
+                    "min_total_sales": int(min_total_sales_r),
+                    "restock_months": int(restock_months),
+                    "target_days": int(target_days),
+                }
+                st.session_state["restock_applied"] = True
+
+        # ---- 右カラム：結果 ----
+        with right:
+            if not st.session_state["restock_applied"]:
+                st.info("左側で条件を設定して『この条件で表示』を押してください。")
+            else:
+                f_r = st.session_state["restock_filters"]
+                keyword_r = f_r["keyword"]
+                min_total_sales_r = f_r["min_total_sales"]
+                restock_months = f_r["restock_months"]
+                target_days = f_r["target_days"]
+
+                # 直近 restock_months ヶ月
+                end_r = max_date
+                start_r = (
+                    pd.Timestamp(max_date)
+                    - pd.DateOffset(months=restock_months)
+                ).date()
+                if start_r < min_date:
+                    start_r = min_date
+
+                restock_files = [
+                    fi for fi in file_infos if start_r <= fi["date"] <= end_r
+                ]
+                if not restock_files:
+                    st.warning(
+                        f"直近{restock_months}ヶ月（{start_r} ～ {end_r}）にCSVがありません。"
+                    )
+                else:
+                    restock_paths = [fi["path"] for fi in restock_files]
+                    df_restock = load_tempostar_data(restock_paths)
+
+                    # キーワード適用
+                    if keyword_r:
+                        cond_r = False
+                        for col in ["商品コード", "商品基本コード", "商品名"]:
+                            if col in df_restock.columns:
+                                cond_r |= df_restock[col].astype(str).str.contains(
+                                    keyword_r, case=False
+                                )
+                        df_restock = df_restock[cond_r]
+
+                    if "更新理由" in df_restock.columns:
+                        df_sales_recent = df_restock[
+                            df_restock["更新理由"] == "受注取込"
+                        ].copy()
+                    else:
+                        df_sales_recent = df_restock.copy()
+
+                    if df_sales_recent.empty:
+                        st.warning(
+                            f"直近{restock_months}ヶ月（{start_r} ～ {end_r}）に売上データがありません。"
+                        )
+                    else:
+                        agg_sales = {
+                            "商品基本コード": "last",
+                            "商品名": "last",
+                            "属性1名": "last",
+                            "属性2名": "last",
+                            "増減値": "sum",
+                        }
+
+                        sales_recent = (
+                            df_sales_recent.groupby(
+                                "商品コード", dropna=False
+                            )
+                            .agg(agg_sales)
+                            .reset_index()
+                            .rename(columns={"増減値": "増減値合計"})
+                        )
+                        sales_recent["売上個数合計"] = -sales_recent["増減値合計"]
+                        sales_recent = sales_recent[
+                            sales_recent["売上個数合計"] > 0
+                        ]
+
+                        # 売上下限
+                        if min_total_sales_r > 0:
+                            sales_recent = sales_recent[
+                                sales_recent["売上個数合計"]
+                                >= min_total_sales_r
+                            ]
+
+                        # 現在庫：直近期間内の最後の変動後
+                        if "変動後" in df_restock.columns:
+                            stock_group_r = (
+                                df_restock.groupby(
+                                    "商品コード", dropna=False
+                                )["変動後"]
+                                .last()
+                                .reset_index()
+                                .rename(columns={"変動後": "現在庫"})
+                            )
+                            stock_group_r["現在庫"] = (
+                                pd.to_numeric(
+                                    stock_group_r["現在庫"], errors="coerce"
+                                )
+                                .fillna(0)
+                                .astype(int)
+                            )
+                            sales_recent = sales_recent.merge(
+                                stock_group_r, on="商品コード", how="left"
+                            )
+                        else:
+                            sales_recent["現在庫"] = 0
+
+                        sales_recent["現在庫"] = (
+                            pd.to_numeric(
+                                sales_recent["現在庫"], errors="coerce"
+                            )
+                            .fillna(0)
+                            .astype(int)
+                        )
+
+                        # 画像列
+                        img_master = load_image_master()
+                        base_url = "https://image.rakuten.co.jp/hype/cabinet"
+
+                        def to_img(code):
+                            key = str(code).strip()
+                            rel = img_master.get(key, "")
+                            if not rel:
+                                return ""
+                            return (
+                                f'<img src="{base_url + rel}" width="70">'
+                            )
+
+                        sales_recent["画像"] = sales_recent[
+                            "商品基本コード"
+                        ].apply(to_img)
+
+                        # 表示順
+                        display_cols = [
+                            "画像",
+                            "商品コード",
+                            "商品基本コード",
+                            "商品名",
+                            "属性1名",
+                            "属性2名",
+                            "売上個数合計",
+                            "現在庫",
+                            "増減値合計",
+                        ]
+                        cols_r = ["画像"] + [
+                            c for c in display_cols if c != "画像"
+                        ]
+                        sales_recent = sales_recent[cols_r]
+
+                        # 発注推奨数計算
+                        period_days = max((end_r - start_r).days + 1, 1)
+                        sales_recent["1日平均売上"] = (
+                            sales_recent["売上個数合計"] / period_days
+                        )
+                        sales_recent["目標在庫"] = (
+                            sales_recent["1日平均売上"] * target_days
+                        )
+
+                        target_qty = pd.to_numeric(
+                            sales_recent["目標在庫"], errors="coerce"
+                        )
+                        current_stock = pd.to_numeric(
+                            sales_recent["現在庫"], errors="coerce"
+                        )
+                        diff = (target_qty - current_stock).fillna(0)
+                        sales_recent["発注推奨数"] = (
+                            diff.where(diff > 0, 0).round().astype(int)
+                        )
+
+                        restock_view = sales_recent[
+                            sales_recent["発注推奨数"] > 0
+                        ]
+                        restock_view = restock_view.sort_values(
+                            "発注推奨数", ascending=False
+                        )
+
+                        st.info(
+                            f"発注目安は直近{restock_months}ヶ月（{start_r} ～ {end_r}）の売上から計算しています。"
+                        )
+
+                        if restock_view.empty:
+                            st.success("発注推奨の商品はありません。")
+                        else:
+                            cols2 = display_cols + [
+                                "1日平均売上",
+                                "目標在庫",
+                                "発注推奨数",
+                            ]
+                            restock_view = restock_view[cols2]
+                            st.write(
+                                f"⚠ 抽出SKU数：{len(restock_view):,} ｜ 目標在庫：平均 {target_days} 日分"
+                            )
+                            st.markdown(
+                                make_html_table(restock_view),
+                                unsafe_allow_html=True,
+                            )
 
 
 if __name__ == "__main__":
