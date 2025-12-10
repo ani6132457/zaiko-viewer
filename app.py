@@ -24,7 +24,11 @@ def load_tempostar_data(file_paths):
     # 数値列を明示的に変換
     for col in ["増減値", "変動後"]:
         if col in all_df.columns:
-            all_df[col] = pd.to_numeric(all_df[col], errors="coerce").fillna(0).astype(int)
+            all_df[col] = (
+                pd.to_numeric(all_df[col], errors="coerce")
+                .fillna(0)
+                .astype(int)
+            )
 
     return all_df
 
@@ -98,7 +102,6 @@ def make_html_table(df):
     """
 
 
-
 # ==========================
 # Main
 # ==========================
@@ -135,13 +138,11 @@ def main():
     # --------------------------
     # フィルタの初期値（1か月前〜最新日）
     # --------------------------
-    # まず「1か月前」の日付を計算（filters の有無に関係なく）
     one_month_ago = (pd.Timestamp(max_date) - pd.DateOffset(months=1)).date()
     if one_month_ago < min_date:
         one_month_ago = min_date
 
     if "filters" not in st.session_state:
-        # 初回起動時
         st.session_state["filters"] = {
             "start_date": one_month_ago,
             "end_date": max_date,
@@ -151,7 +152,7 @@ def main():
             "submitted": False,
         }
     else:
-        # 以前のバージョンのセッションなど、足りないキーを補完
+        # 足りないキーを補完（古いセッション対策）
         defaults = {
             "start_date": one_month_ago,
             "end_date": max_date,
@@ -313,7 +314,7 @@ def main():
             f["target_days"] = int(target_days)
             f["submitted"] = True
 
-    # まだボタンを押していない場合
+    # まだボタンを押していない場合はここで終了
     if not f["submitted"]:
         st.info("左の条件を設定して『この条件で表示』ボタンを押してください。")
         return
@@ -472,58 +473,59 @@ def main():
     ]
     df_view = sales_grouped[display_cols]
 
-    # テーブル用のスタイル
-st.markdown(
-    """
-<style>
-.sku-table {
-    border-collapse: collapse;
-    font-size: 14px;
-    width: 100%;
-    table-layout: fixed;          /* 列幅を均等めに */
-}
+    # ==========================
+    # テーブル用 CSS（sticky ヘッダー）
+    # ==========================
+    st.markdown(
+        """
+    <style>
+    .sku-table {
+        border-collapse: collapse;
+        font-size: 14px;
+        width: 100%;
+        table-layout: fixed;
+    }
 
-.sku-table th {
-    background:#f2f2f2;
-}
+    .sku-table th {
+        background:#f2f2f2;
+    }
 
-.sku-table td,
-.sku-table th {
-    padding:6px 8px;
-    border:1px solid #ccc;
-    vertical-align: top;
-    white-space: normal;          /* 折り返しOKにして横スクロールを減らす */
-    word-break: break-word;       /* 長い商品名も途中で折る */
-}
+    .sku-table td,
+    .sku-table th {
+        padding:6px 8px;
+        border:1px solid #ccc;
+        vertical-align: top;
+        white-space: normal;
+        word-break: break-word;
+    }
 
-.sku-table tbody tr:hover {
-    background:#fafafa;
-}
+    .sku-table tbody tr:hover {
+        background:#fafafa;
+    }
 
-.sku-table img {
-    display:block;
-}
+    .sku-table img {
+        display:block;
+    }
 
-/* ▼ ヘッダー固定（ページ全体スクロールに追従） */
-.sku-table thead th {
-    position: sticky;
-    top: 3.2rem;   /* 上のツールバーとタイトルの分ちょっと下に固定。気になれば 0〜4rem の間で調整 */
-    z-index: 2;
-    background:#f2f2f2;
-}
-</style>
-""",
-    unsafe_allow_html=True,
-)
-
+    /* ヘッダー固定：ページ全体のスクロールに追従 */
+    .sku-table thead th {
+        position: sticky;
+        top: 3.2rem;  /* ヘッダーが上部バーに隠れるようならここを調整 */
+        z-index: 2;
+        background:#f2f2f2;
+    }
+    </style>
+    """,
+        unsafe_allow_html=True,
+    )
 
     # ==========================
     # タブ：①売上集計 ②在庫少商品（発注目安）
     # ==========================
-tab1, tab2 = st.tabs(["SKU別売上集計", "在庫少商品（発注目安）"])
+    tab1, tab2 = st.tabs(["SKU別売上集計", "在庫少商品（発注目安）"])
 
     # ---- タブ1：従来の売上集計 ----
-with tab1:
+    with tab1:
         st.write(
             f"📦 SKU数：{len(df_view):,}　｜　集計期間：{start_date.strftime('%Y/%m/%d')} 〜 {end_date.strftime('%Y/%m/%d')}"
         )
