@@ -431,6 +431,10 @@ def main():
 
     # ---- タブ2：在庫少商品（発注目安）----
     with tab2:
+        end_date = max_date
+        start_date = max_date - timedelta(days=30)
+        if start_date < min_date:
+            start_date = min_date   # データが30日分より短い場合の補正
         period_days = max((end_date - start_date).days + 1, 1)
 
         restock = sales_grouped.copy()
