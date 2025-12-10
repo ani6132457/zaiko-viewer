@@ -106,7 +106,6 @@ def make_html_table(df: pd.DataFrame) -> str:
 # ==========================
 def main():
     st.set_page_config(page_title="Tempostar 売上集計", layout="wide")
-    st.title("Tempostar 在庫変動データ - SKU別集計")
 
     # ---------- CSV 一覧 ----------
     raw_paths = sorted(glob.glob("tempostar_stock_*.csv"))
@@ -160,15 +159,62 @@ def main():
     selected_sku = params.get("sku", [None])[0]
 
     # ==========================
-    # CSS（列幅・3行制限・ヘッダー固定）
+    # CSS（ページ全体＋表デザイン）
     # ==========================
     st.markdown(
         """
 <style>
+/* ページ全体の背景 */
+[data-testid="stAppViewContainer"] {
+    background-color: #f5f5f7;
+}
+
+/* メインコンテナの余白 */
+main.block-container {
+    padding-top: 1.2rem;
+    padding-bottom: 2rem;
+}
+
+/* カード風コンテナ */
+.section-card {
+    background-color: #ffffff;
+    padding: 1.1rem 1.3rem;
+    border-radius: 0.6rem;
+    box-shadow: 0 2px 6px rgba(15, 23, 42, 0.06);
+    margin-bottom: 1.0rem;
+}
+
+/* セクションタイトル */
+.section-title {
+    font-weight: 600;
+    font-size: 1.05rem;
+    margin-bottom: 0.4rem;
+}
+
+/* 補助テキスト */
+.section-help {
+    font-size: 0.85rem;
+    color: #6b7280;
+}
+
+/* バッジ風ラベル */
+.badge {
+    display:inline-block;
+    padding:2px 8px;
+    border-radius:999px;
+    font-size:0.75rem;
+    font-weight:500;
+    background:#e5e7eb;
+    color:#374151;
+    margin-left:0.4rem;
+}
+
+/* テーブル全体 */
 .sku-table {
     border-collapse:collapse;
-    font-size:14px;
+    font-size:13px;
     width:100%;
+    background-color: #ffffff;
 }
 .sku-table th { background:#f2f2f2; }
 .sku-table td, .sku-table th {
@@ -176,7 +222,12 @@ def main():
     border:1px solid #ccc;
     vertical-align:top;
 }
-.sku-table tbody tr:hover { background:#fafafa; }
+.sku-table tbody tr:nth-child(even) {
+    background-color: #fafafa;
+}
+.sku-table tbody tr:hover {
+    background-color:#f1f5f9;
+}
 .sku-table img { max-height:70px; width:auto; display:block; margin:auto; }
 
 /* 1:画像 */
@@ -199,16 +250,14 @@ def main():
     -webkit-box-orient:vertical;
     overflow:hidden;
 }
-/* 5,6:属性 */
-.sku-table td:nth-child(5), .sku-table th:nth-child(5),
-.sku-table td:nth-child(6), .sku-table th:nth-child(6) {
-    width:110px; white-space:nowrap;
-}
-/* 数値列 */
+
+/* 数値列（ざっくり右寄せ） */
 .sku-table td:nth-child(7), .sku-table th:nth-child(7),
 .sku-table td:nth-child(8), .sku-table th:nth-child(8),
-.sku-table td:nth-child(9), .sku-table th:nth-child(9) {
-    width:80px; text-align:right; white-space:nowrap;
+.sku-table td:nth-child(9), .sku-table th:nth-child(9),
+.sku-table td:nth-child(10), .sku-table th:nth-child(10) {
+    text-align:right;
+    white-space:nowrap;
 }
 
 /* ヘッダー固定 */
@@ -227,7 +276,32 @@ def main():
     padding:2px 6px;
     border-radius:4px;
 }
+
+/* 在庫が少ないセル */
+.low-stock {
+    background-color: #fff1f2;
+    color: #b91c1c;
+    font-weight: 600;
+    padding: 0 4px;
+    border-radius: 3px;
+}
 </style>
+""",
+        unsafe_allow_html=True,
+    )
+
+    # ==========================
+    # タイトル・概要
+    # ==========================
+    st.markdown(
+        f"""
+<div style="margin-bottom:0.6rem;">
+  <h1 style="margin-bottom:0.2rem;">Tempostar 在庫変動データ</h1>
+  <div style="color:#6b7280; font-size:0.9rem;">
+    SKU別の売上状況と在庫少商品の発注目安を確認できます。
+    <span class="badge">データ期間: {min_date} ～ {max_date}</span>
+  </div>
+</div>
 """,
         unsafe_allow_html=True,
     )
@@ -241,11 +315,35 @@ def main():
     # タブ1：SKU別売上集計
     # --------------------------------------------------
     with tab1:
+        # タブ説明カード
+        st.markdown(
+            """
+            <div class="section-card">
+              <div class="section-title">SKU別売上集計</div>
+              <div class="section-help">
+                期間内の売上個数と現在庫を SKU 単位で集計します。<br>
+                表の「商品コード」をクリックすると、そのSKUの在庫推移グラフが表示されます。
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
         left, right = st.columns([1, 3])
 
         # ---- 左カラム：フィルタ ----
         with left:
-            st.subheader("SKU別売上集計 - 条件")
+            st.markdown(
+                """
+                <div class="section-card">
+                  <div class="section-title">条件設定</div>
+                  <div class="section-help">
+                    集計期間・キーワード・売上個数の下限で絞り込みできます。
+                  </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
             st.text(f"データ期間：{min_date} ～ {max_date}")
 
             f_sku = st.session_state["sku_filters"]
@@ -286,8 +384,12 @@ def main():
                 }
                 st.session_state["sku_applied"] = True
 
+            st.markdown("</div>", unsafe_allow_html=True)
+
         # ---- 右カラム：結果 ----
         with right:
+            st.markdown('<div class="section-card">', unsafe_allow_html=True)
+
             if not st.session_state["sku_applied"]:
                 st.info("左側で条件を設定して『この条件で表示』を押してください。")
             else:
@@ -384,6 +486,7 @@ def main():
                             .rename(columns={"増減値": "増減値合計"})
                         )
 
+                        # 増減値合計は表示しない（売上個数合計のみ使用）
                         sales_grouped["売上個数合計"] = -sales_grouped["増減値合計"]
                         sales_grouped = sales_grouped[
                             sales_grouped["売上個数合計"] > 0
@@ -445,6 +548,7 @@ def main():
                             "商品基本コード"
                         ].apply(to_img)
 
+                        # 列順
                         cols = sales_grouped.columns.tolist()
                         cols.insert(0, cols.pop(cols.index("画像")))
                         sales_grouped = sales_grouped[cols]
@@ -461,6 +565,16 @@ def main():
                         ]
                         df_view = sales_grouped[display_cols]
 
+                        # --- KPI メトリクス ---
+                        total_sku = len(df_view)
+                        total_qty = int(df_view["売上個数合計"].sum())
+                        total_stock = int(df_view["現在庫"].sum())
+
+                        kcol1, kcol2, kcol3 = st.columns(3)
+                        kcol1.metric("対象SKU数", f"{total_sku:,}")
+                        kcol2.metric("売上個数合計", f"{total_qty:,}")
+                        kcol3.metric("現在庫合計", f"{total_stock:,}")
+
                         st.write(
                             f"📦 SKU数：{len(df_view):,} ｜ 集計期間：{start_date} ～ {end_date}"
                         )
@@ -469,15 +583,40 @@ def main():
                             unsafe_allow_html=True,
                         )
 
+            st.markdown("</div>", unsafe_allow_html=True)
+
     # --------------------------------------------------
     # タブ2：在庫少商品（発注目安）
     # --------------------------------------------------
     with tab2:
+        # タブ説明カード
+        st.markdown(
+            """
+            <div class="section-card">
+              <div class="section-title">在庫少商品（発注目安）</div>
+              <div class="section-help">
+                直近の売上から1日平均売上を計算し、指定日数分の目標在庫と比較して発注推奨数を算出します。
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
         left, right = st.columns([1, 3])
 
         # ---- 左カラム：フィルタ ----
         with left:
-            st.subheader("在庫少商品（発注目安） - 条件")
+            st.markdown(
+                """
+                <div class="section-card">
+                  <div class="section-title">条件設定</div>
+                  <div class="section-help">
+                    売上下限・期間（月数）・目標日数・現在庫上限で、発注候補を絞り込みます。
+                  </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
             st.text(f"データ最終日：{max_date}")
 
             f_r = st.session_state["restock_filters"]
@@ -530,8 +669,12 @@ def main():
                 }
                 st.session_state["restock_applied"] = True
 
+            st.markdown("</div>", unsafe_allow_html=True)
+
         # ---- 右カラム：結果 ----
         with right:
+            st.markdown('<div class="section-card">', unsafe_allow_html=True)
+
             if not st.session_state["restock_applied"]:
                 st.info("左側で条件を設定して『この条件で表示』を押してください。")
             else:
@@ -663,22 +806,6 @@ def main():
                             "商品基本コード"
                         ].apply(to_img)
 
-                        # 表示順
-                        display_cols = [
-                            "画像",
-                            "商品コード",
-                            "商品基本コード",
-                            "商品名",
-                            "属性1名",
-                            "属性2名",
-                            "売上個数合計",
-                            "現在庫",
-                        ]
-                        cols_r = ["画像"] + [
-                            c for c in display_cols if c != "画像"
-                        ]
-                        sales_recent = sales_recent[cols_r]
-
                         # 発注推奨数計算
                         period_days = max((end_r - start_r).days + 1, 1)
                         sales_recent["1日平均売上"] = (
@@ -698,10 +825,13 @@ def main():
                         sales_recent["発注推奨数"] = (
                             diff.where(diff > 0, 0).round().astype(int)
                         )
+                        # 生の発注推奨数も保持（合計などで使用）
+                        sales_recent["発注推奨数_raw"] = sales_recent["発注推奨数"]
 
+                        # 表示対象
                         restock_view = sales_recent[
                             sales_recent["発注推奨数"] > 0
-                        ]
+                        ].copy()
                         restock_view = restock_view.sort_values(
                             "発注推奨数", ascending=False
                         )
@@ -713,6 +843,42 @@ def main():
                         if restock_view.empty:
                             st.success("発注推奨の商品はありません。")
                         else:
+                            # 在庫少セルの色付け（目標在庫の20%未満）
+                            def style_current_stock(row):
+                                try:
+                                    target = float(row["目標在庫"])
+                                    cur = int(row["現在庫"])
+                                except Exception:
+                                    return str(row["現在庫"])
+                                if target > 0 and cur < target * 0.2:
+                                    return f"<span class='low-stock'>{cur}</span>"
+                                else:
+                                    return str(cur)
+
+                            restock_view["現在庫"] = restock_view.apply(
+                                style_current_stock, axis=1
+                            )
+
+                            # KPI メトリクス（HTMLラップ前に raw を使用）
+                            total_restock_sku = len(restock_view)
+                            total_restock_qty = int(
+                                restock_view["発注推奨数_raw"].sum()
+                            )
+
+                            k1, k2 = st.columns(2)
+                            k1.metric("発注推奨SKU数", f"{total_restock_sku:,}")
+                            k2.metric("発注推奨合計数", f"{total_restock_qty:,}")
+
+                            display_cols = [
+                                "画像",
+                                "商品コード",
+                                "商品基本コード",
+                                "商品名",
+                                "属性1名",
+                                "属性2名",
+                                "売上個数合計",
+                                "現在庫",
+                            ]
                             cols2 = display_cols + [
                                 "1日平均売上",
                                 "目標在庫",
@@ -720,7 +886,7 @@ def main():
                             ]
                             restock_view = restock_view[cols2]
 
-                            # 小数点1桁表示
+                            # 小数点1桁表示（このタイミングで文字列化）
                             restock_view["1日平均売上"] = restock_view[
                                 "1日平均売上"
                             ].map(lambda x: f"{x:.1f}")
@@ -730,8 +896,10 @@ def main():
 
                             # 発注推奨数セルを強調用HTMLでラップ
                             restock_view["発注推奨数"] = restock_view[
-                                "発注推奨数"
-                            ].apply(lambda x: f"<span class='order-col'>{x}</span>")
+                                "発注推奨数_raw"
+                            ].apply(
+                                lambda x: f"<span class='order-col'>{x}</span>"
+                            )
 
                             st.write(
                                 f"⚠ 抽出SKU数：{len(restock_view):,} ｜ 目標在庫：平均 {target_days} 日分"
@@ -740,6 +908,8 @@ def main():
                                 make_html_table(restock_view),
                                 unsafe_allow_html=True,
                             )
+
+            st.markdown("</div>", unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
