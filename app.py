@@ -523,7 +523,7 @@ st.markdown(
 tab1, tab2 = st.tabs(["SKU別売上集計", "在庫少商品（発注目安）"])
 
     # ---- タブ1：従来の売上集計 ----
-    with tab1:
+with tab1:
         st.write(
             f"📦 SKU数：{len(df_view):,}　｜　集計期間：{start_date.strftime('%Y/%m/%d')} 〜 {end_date.strftime('%Y/%m/%d')}"
         )
