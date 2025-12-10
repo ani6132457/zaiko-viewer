@@ -70,11 +70,18 @@ def make_html_table(df):
     for _, row in df.iterrows():
         tds = []
         for col in df.columns:
-            v = row[col]
-            if col == "画像":
-                tds.append(f"<td>{v}</td>")
+            val = row[col]
+
+            # ▼ 商品コードだけクリック可能にする
+            if col == "商品コード":
+                code = html.escape(str(val))
+                link = f"<a href='?sku={code}' style='color:#0073e6; text-decoration:none; cursor:pointer;'>{code}</a>"
+                tds.append(f"<td>{link}</td>")
+            elif col == "画像":
+                tds.append(f"<td>{val}</td>")
             else:
-                tds.append(f"<td>{html.escape(str(v))}</td>")
+                tds.append(f"<td>{html.escape(str(val))}</td>")
+
         body_rows.append("<tr>" + "".join(tds) + "</tr>")
 
     tbody = "<tbody>" + "".join(body_rows) + "</tbody>"
