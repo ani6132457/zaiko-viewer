@@ -91,10 +91,13 @@ def make_html_table(df):
 
     tbody = "<tbody>" + "".join(body_rows) + "</tbody>"
 
+    # ★ ここでラッパー(div.table-wrapper) をつける
     return f"""
-    <table border="1" cellspacing="0" cellpadding="4">
+    <div class="table-wrapper">
+      <table class="sku-table" border="1" cellspacing="0" cellpadding="4">
         {thead}{tbody}
-    </table>
+      </table>
+    </div>
     """
 
 
@@ -475,29 +478,49 @@ def main():
     st.markdown(
         """
     <style>
-    table { border-collapse: collapse; font-size: 14px; width: 100%; }
-    th { background:#f2f2f2; }
-    td, th { padding:6px 8px; border:1px solid #ccc; }
-    tr:hover { background:#fafafa; }
-    img { display:block; }
-
-    /* ▼ ヘッダー固定（スクロール追従） */
-    thead th {
-        position: sticky;
-        top: 0;
-        z-index: 2; /* ヘッダーを前面に */
+    /* テーブル全体のスタイル */
+    .table-wrapper {
+        max-height: calc(100vh - 180px);  /* 画面高さからヘッダー分を引いたくらい */
+        overflow-y: auto;                 /* ここで縦スクロール */
+        border: 1px solid #ccc;
     }
 
-    /* ▼ 表をスクロール可能にする（縦方向） */
-    .table-container {
-        max-height: 72vh; /* 画面の約70%高さ以内 */
-        overflow-y: auto;
-        border: 1px solid #ccc;
+    .sku-table {
+        border-collapse: collapse;
+        font-size: 14px;
+        width: 100%;
+    }
+
+    .sku-table th {
+        background:#f2f2f2;
+    }
+
+    .sku-table td,
+    .sku-table th {
+        padding:6px 8px;
+        border:1px solid #ccc;
+        white-space: nowrap;   /* 必要なら折り返し解除。長文が多ければ外してOK */
+    }
+
+    .sku-table tr:hover {
+        background:#fafafa;
+    }
+
+    .sku-table img {
+        display:block;
+    }
+
+    /* ▼ ヘッダー固定（table-wrapper 内でのみスクロールに追従） */
+    .sku-table thead th {
+        position: sticky;
+        top: 0;
+        z-index: 2;
     }
     </style>
     """,
         unsafe_allow_html=True,
     )
+
 
     # ==========================
     # タブ：①売上集計 ②在庫少商品（発注目安）
