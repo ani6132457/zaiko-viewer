@@ -4,6 +4,7 @@ import glob
 import os
 import html
 import re
+import math
 from datetime import datetime, date
 
 
@@ -134,7 +135,6 @@ def main():
     # フィルタの初期値（1か月前〜最新日）
     # --------------------------
     if "filters" not in st.session_state:
-        # 最新日から1か月前
         one_month_ago = (pd.Timestamp(max_date) - pd.DateOffset(months=1)).date()
         if one_month_ago < min_date:
             one_month_ago = min_date
@@ -144,6 +144,7 @@ def main():
             "end_date": max_date,
             "keyword": "",
             "min_total_sales": 0,
+            "target_days": 30,  # 何日分在庫を持ちたいか
             "submitted": False,
         }
 
@@ -160,7 +161,6 @@ def main():
             st.markdown("##### 開始日")
             c1, c2, c3 = st.columns([1.4, 1.0, 1.0])
 
-            # 現在の開始日
             cur_start = f["start_date"]
             cur_end = f["end_date"]
 
@@ -218,7 +218,6 @@ def main():
             st.markdown("##### 終了日")
             c4, c5, c6 = st.columns([1.4, 1.0, 1.0])
 
-            # --- 終了年 ---
             with c4:
                 end_year = st.selectbox(
                     "終了年",
@@ -228,7 +227,6 @@ def main():
                     label_visibility="collapsed",
                 )
 
-            # --- 終了月 ---
             end_month_candidates = sorted(
                 {d.month for d in all_dates if d.year == end_year}
             )
@@ -245,7 +243,6 @@ def main():
                     label_visibility="collapsed",
                 )
 
-            # --- 終了日 ---
             end_day_candidates = sorted(
                 {
                     d.day
@@ -268,7 +265,7 @@ def main():
 
             end_date = date(end_year, end_month, end_day)
 
-            # 日付前後チェック（ここで入れ替え）
+            # 日付前後チェック
             if start_date > end_date:
                 st.warning("開始日が終了日より後でした → 自動で入れ替えます")
                 start_date, end_date = end_date, start_date
@@ -284,26 +281,34 @@ def main():
                 value=int(f["min_total_sales"]),
             )
 
+            target_days = st.number_input(
+                "何日分の在庫を確保するか（発注目安）",
+                min_value=1,
+                max_value=365,
+                value=int(f["target_days"]),
+            )
+
             submitted = st.form_submit_button("この条件で表示")
 
-        # ボタンが押されたら値を保存
         if submitted:
             f["start_date"] = start_date
             f["end_date"] = end_date
             f["keyword"] = keyword
             f["min_total_sales"] = int(min_total_sales)
+            f["target_days"] = int(target_days)
             f["submitted"] = True
 
-    # まだボタンを押していない場合はここで終了
+    # まだボタンを押していない場合
     if not f["submitted"]:
         st.info("左の条件を設定して『この条件で表示』ボタンを押してください。")
         return
 
-    # ここから先は「この条件で表示」押した後だけ動く
+    # ここから先はボタン押下後のみ実行
     start_date = f["start_date"]
     end_date = f["end_date"]
     keyword = f["keyword"]
     min_total_sales = f["min_total_sales"]
+    target_days = f["target_days"]
 
     # 期間内 CSV 抽出
     target = [fi for fi in file_infos if start_date <= fi["date"] <= end_date]
@@ -355,7 +360,6 @@ def main():
         else:
             df_sku = df[df["商品コード"] == selected_sku].copy()
 
-            # 元ファイル名から日付を抽出
             df_sku["日付"] = df_sku["元ファイル"].str.extract(r"(\d{8})")
             df_sku["日付"] = pd.to_datetime(df_sku["日付"], format="%Y%m%d", errors="coerce")
 
@@ -364,7 +368,6 @@ def main():
             if df_plot.empty:
                 st.warning("選択したSKUの在庫データがありません。")
             else:
-                # 日付で index をとってそのまま描画（並びが正しくなる）
                 df_plot2 = df_plot.set_index("日付")["変動後"]
                 st.line_chart(df_plot2)
 
@@ -407,6 +410,12 @@ def main():
         )
         sales_grouped = sales_grouped.merge(stock_group, on="商品コード", how="left")
 
+    # NaN在庫は0扱い
+    if "現在庫" in sales_grouped.columns:
+        sales_grouped["現在庫"] = sales_grouped["現在庫"].fillna(0).astype(int)
+    else:
+        sales_grouped["現在庫"] = 0
+
     # 売上個数の下限フィルタ
     if min_total_sales > 0:
         sales_grouped = sales_grouped[sales_grouped["売上個数合計"] >= min_total_sales]
@@ -434,8 +443,8 @@ def main():
     cols.insert(0, cols.pop(cols.index("画像")))
     sales_grouped = sales_grouped[cols]
 
-    # 表示列
-    display = [
+    # 表示列（共通）
+    display_cols = [
         "画像",
         "商品コード",
         "商品基本コード",
@@ -446,16 +455,9 @@ def main():
         "現在庫",
         "増減値合計",
     ]
-    df_view = sales_grouped[display]
+    df_view = sales_grouped[display_cols]
 
-    # 概要表示
-    st.write(
-        f"📦 SKU数：{len(df_view):,}　｜　集計期間：{start_date.strftime('%Y/%m/%d')} 〜 {end_date.strftime('%Y/%m/%d')}"
-    )
-
-    # テーブル表示（HTML）
-    table_html = make_html_table(df_view)
-
+    # テーブル用のスタイル
     st.markdown(
         """
     <style>
@@ -469,7 +471,71 @@ def main():
         unsafe_allow_html=True,
     )
 
-    st.markdown(table_html, unsafe_allow_html=True)
+    # ==========================
+    # タブ：①売上集計 ②在庫少商品（発注目安）
+    # ==========================
+    tab1, tab2 = st.tabs(["SKU別売上集計", "在庫少商品（発注目安）"])
+
+    # ---- タブ1：従来の売上集計 ----
+    with tab1:
+        st.write(
+            f"📦 SKU数：{len(df_view):,}　｜　集計期間：{start_date.strftime('%Y/%m/%d')} 〜 {end_date.strftime('%Y/%m/%d')}"
+        )
+        table_html = make_html_table(df_view)
+        st.markdown(table_html, unsafe_allow_html=True)
+
+    # ---- タブ2：在庫少商品の発注目安 ----
+    with tab2:
+        # 期間の日数
+        period_days = (end_date - start_date).days + 1
+        if period_days <= 0:
+            period_days = 1
+
+        restock_df = sales_grouped.copy()
+
+        # 1日平均売上
+        restock_df["1日平均売上"] = (restock_df["売上個数合計"] / period_days).round(2)
+
+        # 目標在庫・発注推奨数
+        restock_df["目標在庫"] = (restock_df["1日平均売上"] * target_days).round(0)
+
+        def calc_order(row):
+            need = row["目標在庫"] - row["現在庫"]
+            return max(int(math.ceil(need)), 0)
+
+        restock_df["発注推奨数"] = restock_df.apply(calc_order, axis=1)
+
+        # 発注推奨があるものだけ
+        restock_df = restock_df[restock_df["発注推奨数"] > 0]
+
+        # 発注数降順
+        restock_df = restock_df.sort_values("発注推奨数", ascending=False)
+
+        if restock_df.empty:
+            st.success("発注推奨の商品はありません。")
+        else:
+            show_cols = [
+                "画像",
+                "商品コード",
+                "商品基本コード",
+                "商品名",
+                "属性1名",
+                "属性2名",
+                "売上個数合計",
+                "現在庫",
+                "1日平均売上",
+                "目標在庫",
+                "発注推奨数",
+            ]
+            restock_view = restock_df[show_cols]
+
+            st.write(
+                f"⚠ 抽出SKU数：{len(restock_view):,}　｜　期間：{start_date.strftime('%Y/%m/%d')} 〜 {end_date.strftime('%Y/%m/%d')}　"
+                f"｜　目標在庫：過去平均の **{target_days} 日分**"
+            )
+
+            table_html2 = make_html_table(restock_view)
+            st.markdown(table_html2, unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
