@@ -239,7 +239,7 @@ def main():
     min_date, max_date = min(all_dates), max(all_dates)
 
     if "selected_sku" not in st.session_state:
-    st.session_state["selected_sku"] = None
+        st.session_state["selected_sku"] = None
 
 
     # ---------- 初期フィルタ（セッション） ----------
