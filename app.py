@@ -85,7 +85,7 @@ def make_html_table(df: pd.DataFrame) -> str:
                 # HTMLそのまま
                 tds.append(f"<td>{val}</td>")
 
-            elif col in ["発注推奨数", "指定日売上個数(昨年売上個数)"]:
+            elif col in ["発注推奨数", "指定日売上個数(昨年売上個数)", "現在庫"]:
                 # HTMLをそのまま表示する列
                 tds.append(f"<td>{val}</td>")
 
@@ -668,6 +668,28 @@ def main():
                             restock_view["発注推奨数"] = restock_view["発注推奨数"].apply(
                                 lambda x: f"<span class='order-col'>{x}</span>"
                             )
+
+                            # --- 現在庫の下に状態表示を追加（在庫少商品タブ用）---
+                            # ※ここでは表示用にHTML化するだけ（計算はすでに終わっている前提）
+                            stock_num = pd.to_numeric(restock_view["現在庫"], errors="coerce").fillna(0).astype(int)
+                            sales_num = pd.to_numeric(restock_view["売上個数合計"], errors="coerce").fillna(0).astype(int)
+
+                            status = pd.Series([""] * len(restock_view), index=restock_view.index)
+
+                            status = status.mask(stock_num <= 0, "在庫切れ")
+                            status = status.mask((stock_num > 0) & ((stock_num <= 10) | (stock_num < sales_num)), "在庫が少ない")
+
+                            def stock_html(s, label):
+                                s = int(s)
+                                if label == "在庫切れ":
+                                    return f"{s}<br><span style='color:#c40000;font-size:12px;font-weight:bold;'>在庫切れ</span>"
+                                elif label == "在庫が少ない":
+                                    return f"{s}<br><span style='color:#d35400;font-size:12px;font-weight:bold;'>在庫が少ない</span>"
+                                else:
+                                    return f"{s}"
+
+                            restock_view["現在庫"] = [stock_html(s, l) for s, l in zip(stock_num, status)]
+
 
                             st.write(f"⚠ 抽出SKU数：{len(restock_view):,} ｜ 目標在庫：平均 {target_days} 日分")
                             st.markdown(make_html_table(restock_view), unsafe_allow_html=True)
