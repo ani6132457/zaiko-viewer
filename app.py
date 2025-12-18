@@ -6,6 +6,10 @@ import html
 import re
 from datetime import datetime, timedelta
 from pandas.tseries.offsets import DateOffset
+import base64
+import io
+import matplotlib.pyplot as plt
+import streamlit.components.v1 as components
 
 
 # ==========================
@@ -76,7 +80,7 @@ def make_html_table(df: pd.DataFrame) -> str:
             if col == "商品コード":
                 code = html.escape(str(val))
                 link = (
-                    f"<a href='?sku={code}' "
+                    f"<a href='?sku={code}' target='_self' "
                     f"style='color:#0073e6; text-decoration:none;'>{code}</a>"
                 )
                 tds.append(f"<td>{link}</td>")
@@ -318,6 +322,88 @@ def main():
                     st.error("Tempostar CSV に『商品コード』『商品基本コード』『増減値』が必要です。")
                     return
                 
+                def show_stock_drawer(selected_sku: str, df_main: pd.DataFrame):
+                    if "変動後" not in df_main.columns:
+                        drawer_body = "<p style='margin:0'>『変動後』列がないため表示できません。</p>"
+                    else:
+                        df_sku = df_main[df_main["商品コード"] == selected_sku].copy()
+                        df_sku["日付"] = df_sku["元ファイル"].str.extract(r"(\d{8})")
+                        df_sku["日付"] = pd.to_datetime(df_sku["日付"], format="%Y%m%d", errors="coerce")
+                        df_plot = df_sku[["日付", "変動後"]].dropna().sort_values("日付")
+
+                        if df_plot.empty:
+                            drawer_body = "<p style='margin:0'>在庫データがありません。</p>"
+                        else:
+                            # matplotlibでPNG化→base64埋め込み
+                            fig, ax = plt.subplots(figsize=(7.2, 3.2))
+                            ax.plot(df_plot["日付"], df_plot["変動後"])
+                            ax.set_title(f"SKU: {selected_sku}")
+                            ax.set_xlabel("")
+                            ax.set_ylabel("在庫")
+                            ax.grid(True, alpha=0.3)
+                            fig.autofmt_xdate()
+
+                            buf = io.BytesIO()
+                            fig.savefig(buf, format="png", dpi=160, bbox_inches="tight")
+                            plt.close(fig)
+                            b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+                            drawer_body = f"<img src='data:image/png;base64,{b64}' style='width:100%; height:auto; display:block;'/>"
+
+                    drawer_html = f"""
+                    <style>
+                    .drawer {{
+                        position: fixed;
+                        top: 3.6rem; /* ヘッダー分（必要なら調整） */
+                        right: 0;
+                        width: 520px;
+                        max-width: 92vw;
+                        height: calc(100vh - 3.6rem);
+                        background: #fff;
+                        border-left: 1px solid #ddd;
+                        box-shadow: -8px 0 20px rgba(0,0,0,0.12);
+                        z-index: 9999;
+                        transform: translateX(0);
+                        transition: transform 220ms ease;
+                        padding: 14px 14px 18px 14px;
+                        overflow: auto;
+                    }}
+                    .drawer-header {{
+                        display:flex;
+                        align-items:center;
+                        justify-content:space-between;
+                        gap:8px;
+                        margin-bottom:10px;
+                    }}
+                    .drawer-title {{
+                        font-weight: 700;
+                        font-size: 15px;
+                        margin: 0;
+                    }}
+                    .drawer-close {{
+                        display:inline-block;
+                        padding: 6px 10px;
+                        border: 1px solid #ddd;
+                        border-radius: 8px;
+                        text-decoration: none;
+                        color:#333;
+                        background:#fafafa;
+                        font-size: 13px;
+                        white-space: nowrap;
+                    }}
+                    .drawer-close:hover {{ background:#f0f0f0; }}
+                    </style>
+
+                    <div class="drawer">
+                    <div class="drawer-header">
+                        <p class="drawer-title">📈 在庫推移（{html.escape(str(selected_sku))}）</p>
+                        <a class="drawer-close" href="?" target="_self">閉じる</a>
+                    </div>
+                    {drawer_body}
+                    </div>
+                    """
+                    components.html(drawer_html, height=1)  # 高さは最小でOK（固定表示なので）
+
+                
                 @st.dialog("📈 在庫推移グラフ", width="large")
                 def show_stock_dialog(selected_sku: str, df_main: pd.DataFrame):
                     st.markdown(f"#### SKU：{selected_sku}")
@@ -339,10 +425,10 @@ def main():
                     if st.button("閉じる"):
                         st.query_params.pop("sku", None)
                         st.rerun()
-                        
-                # --- 在庫推移グラフ（ポップアップ表示）---
-                if selected_sku:
-                    show_stock_dialog(selected_sku, df_main)
+
+                    # --- 在庫推移（右から出るドロワー）---
+                    if selected_sku:
+                        show_stock_drawer(selected_sku, df_main)
 
 
                 # --- 売上集計（今年）---
