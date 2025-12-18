@@ -317,10 +317,10 @@ def main():
                 if not required.issubset(df_main.columns):
                     st.error("Tempostar CSV に『商品コード』『商品基本コード』『増減値』が必要です。")
                     return
-
-                # --- 在庫推移グラフ ---
-                if selected_sku:
-                    st.markdown(f"### 📈 在庫推移グラフ：{selected_sku}")
+                
+                @st.dialog("📈 在庫推移グラフ", width="large")
+                def show_stock_dialog(selected_sku: str, df_main: pd.DataFrame):
+                    st.markdown(f"#### SKU：{selected_sku}")
 
                     if "変動後" not in df_main.columns:
                         st.warning("『変動後』列がないため在庫推移グラフを表示できません。")
@@ -329,12 +329,21 @@ def main():
                         df_sku["日付"] = df_sku["元ファイル"].str.extract(r"(\d{8})")
                         df_sku["日付"] = pd.to_datetime(df_sku["日付"], format="%Y%m%d", errors="coerce")
                         df_plot = df_sku[["日付", "変動後"]].dropna().sort_values("日付")
+
                         if df_plot.empty:
                             st.warning("選択したSKUの在庫データがありません。")
                         else:
                             st.line_chart(df_plot.set_index("日付")["変動後"])
 
-                    st.markdown("---")
+                    # 閉じる（= skuを消して再実行）
+                    if st.button("閉じる"):
+                        st.query_params.pop("sku", None)
+                        st.rerun()
+                        
+                # --- 在庫推移グラフ（ポップアップ表示）---
+                if selected_sku:
+                    show_stock_dialog(selected_sku, df_main)
+
 
                 # --- 売上集計（今年）---
                 if "更新理由" in df_main.columns:
