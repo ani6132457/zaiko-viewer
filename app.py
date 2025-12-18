@@ -11,7 +11,6 @@ from pandas.tseries.offsets import DateOffset
 import base64
 import io
 import matplotlib.pyplot as plt
-import streamlit.components.v1 as components
 
 
 # ==========================
@@ -111,8 +110,7 @@ def make_html_table(df: pd.DataFrame) -> str:
 # ==========================
 # オーバーレイ（右ドロワー）表示：matplotlib→PNG→HTML埋め込み
 # ==========================
-def show_stock_overlay(selected_sku: str, df_main: pd.DataFrame):
-    # グラフデータ作成
+def show_stock_drawer(selected_sku: str, df_main: pd.DataFrame):
     msg = ""
     img_html = ""
 
@@ -127,7 +125,6 @@ def show_stock_overlay(selected_sku: str, df_main: pd.DataFrame):
         if df_plot.empty:
             msg = "選択したSKUの在庫データがありません。"
         else:
-            # matplotlibで描画してPNG化
             fig, ax = plt.subplots(figsize=(7.4, 3.4))
             ax.plot(df_plot["日付"], df_plot["変動後"])
             ax.set_title(f"在庫推移（SKU: {selected_sku}）")
@@ -142,17 +139,11 @@ def show_stock_overlay(selected_sku: str, df_main: pd.DataFrame):
             b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
             img_html = f"<img src='data:image/png;base64,{b64}' style='width:100%;height:auto;display:block;' />"
 
-    overlay_html = f"""
+    drawer_html = f"""
     <style>
-      .overlay-bg {{
-        position: fixed;
-        inset: 0;
-        background: rgba(0,0,0,0.28);
-        z-index: 9998;
-      }}
       .drawer {{
         position: fixed;
-        top: 3.6rem; /* ヘッダー分。環境でズレたら調整 */
+        top: 3.6rem; /* ヘッダー分。ズレるなら調整 */
         right: 0;
         width: 560px;
         max-width: 94vw;
@@ -192,9 +183,7 @@ def show_stock_overlay(selected_sku: str, df_main: pd.DataFrame):
         font-size: 13px;
         white-space: nowrap;
       }}
-      .drawer-close:hover {{
-        background: #f0f0f0;
-      }}
+      .drawer-close:hover {{ background: #f0f0f0; }}
       .drawer-msg {{
         margin: 6px 0 0 0;
         color:#444;
@@ -202,19 +191,16 @@ def show_stock_overlay(selected_sku: str, df_main: pd.DataFrame):
       }}
     </style>
 
-    <div class="overlay-bg"></div>
-
     <div class="drawer">
       <div class="drawer-head">
         <p class="drawer-title">📈 在庫推移（{html.escape(str(selected_sku))}）</p>
         <a class="drawer-close" href="?" target="_self">閉じる</a>
       </div>
-
       {f"<p class='drawer-msg'>{html.escape(msg)}</p>" if msg else ""}
       {img_html}
     </div>
     """
-    components.html(overlay_html, height=1)
+    st.markdown(drawer_html, unsafe_allow_html=True)
 
 
 # ==========================
@@ -564,9 +550,10 @@ def main():
                 st.write(f"📦 SKU数：{len(df_view):,}")
                 st.markdown(make_html_table(df_view), unsafe_allow_html=True)
 
-                # ★右からにゅっと：オーバーレイ表示（表の上に出る）
+                # query_paramsは環境により list で来ることがあるので吸収
                 if selected_sku:
-                    show_stock_overlay(str(selected_sku), df_main)
+                    sku = selected_sku[0] if isinstance(selected_sku, list) else str(selected_sku)
+                    show_stock_drawer(sku, df_main)
 
     # --------------------------------------------------
     # タブ2：在庫少商品（発注目安）
