@@ -202,6 +202,11 @@ def show_stock_drawer(selected_sku: str, df_main: pd.DataFrame):
     """
     st.markdown(drawer_html, unsafe_allow_html=True)
 
+    # 閉じる（sessionで制御）
+    if st.button("閉じる", key=f"close_drawer_{selected_sku}"):
+        st.session_state["selected_sku"] = None
+        st.rerun()
+
 
 # ==========================
 # Main
@@ -233,6 +238,10 @@ def main():
     all_dates = sorted({fi["date"] for fi in file_infos})
     min_date, max_date = min(all_dates), max(all_dates)
 
+    if "selected_sku" not in st.session_state:
+    st.session_state["selected_sku"] = None
+
+
     # ---------- 初期フィルタ（セッション） ----------
     default_start = max_date - timedelta(days=30)
     if default_start < min_date:
@@ -257,9 +266,6 @@ def main():
         }
         st.session_state["restock_applied"] = False
 
-    # クエリパラメータ（オーバーレイ表示用）
-    params = st.query_params
-    selected_sku = params.get("sku")
 
     # ==========================
     # CSS
@@ -546,14 +552,50 @@ def main():
                 display_cols = [c for c in display_cols if c in sales_grouped.columns]
                 df_view = sales_grouped[display_cols]
 
-                # ★表は常に表示（これで「グラフページに遷移」感が減ります）
                 st.write(f"📦 SKU数：{len(df_view):,}")
-                st.markdown(make_html_table(df_view), unsafe_allow_html=True)
 
-                # query_paramsは環境により list で来ることがあるので吸収
-                if selected_sku:
-                    sku = selected_sku[0] if isinstance(selected_sku, list) else str(selected_sku)
-                    show_stock_drawer(sku, df_main)
+                # df_view は「指定日売上個数(昨年売上個数)」がHTML文字列なので、
+                # dataframe用に “改行テキスト” にして見やすくする
+                df_grid = df_view.copy()
+                if "指定日売上個数(昨年売上個数)" in df_grid.columns:
+                    df_grid["指定日売上個数(昨年売上個数)"] = (
+                        df_grid["指定日売上個数(昨年売上個数)"]
+                        .astype(str)
+                        .str.replace(r"<br\s*/?>", "\n", regex=True)
+                        .str.replace(r"<.*?>", "", regex=True)  # span等を除去
+                    )
+
+                # 画像列が HTML <img> の場合、dataframeでは画像にならないので「URL」にする
+                # （to_imgをURL返す版に変えるのが一番）
+                # ここでは簡易に <img src="..."> からURLを抜く
+                if "画像" in df_grid.columns:
+                    df_grid["画像"] = (
+                        df_grid["画像"]
+                        .astype(str)
+                        .str.extract(r'src="([^"]+)"', expand=False)
+                        .fillna("")
+                    )
+
+                event = st.dataframe(
+                    df_grid,
+                    hide_index=True,
+                    use_container_width=True,
+                    selection_mode="single-row",
+                    on_select="rerun",
+                    column_config={
+                        "画像": st.column_config.ImageColumn("画像"),
+                    } if "画像" in df_grid.columns else None,
+                )
+
+                # 行クリックでSKU取得 → ドロワー表示
+                sel = event.selection.get("rows", [])
+                if sel:
+                    clicked_row = df_grid.iloc[sel[0]]
+                    st.session_state["selected_sku"] = str(clicked_row["商品コード"]).strip()
+
+                # 右ドロワー（選択されている時だけ）
+                if st.session_state["selected_sku"]:
+                    show_stock_drawer(st.session_state["selected_sku"], df_main)
 
     # --------------------------------------------------
     # タブ2：在庫少商品（発注目安）
