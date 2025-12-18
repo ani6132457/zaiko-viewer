@@ -660,11 +660,9 @@ def main():
                         if restock_view.empty:
                             st.success("発注推奨の商品はありません。")
                         else:
-                            cols2 = display_cols + ["1日平均売上", "目標在庫", "発注推奨数"]
+                            cols2 = display_cols + ["発注推奨数"]
                             restock_view = restock_view[cols2]
 
-                            restock_view["1日平均売上"] = restock_view["1日平均売上"].map(lambda x: f"{x:.1f}")
-                            restock_view["目標在庫"] = restock_view["目標在庫"].map(lambda x: f"{x:.1f}")
                             restock_view["発注推奨数"] = restock_view["発注推奨数"].apply(
                                 lambda x: f"<span class='order-col'>{x}</span>"
                             )
