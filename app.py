@@ -6,6 +6,8 @@ import html
 import re
 from datetime import datetime, timedelta
 from pandas.tseries.offsets import DateOffset
+
+# 追加（オーバーレイ表示用）
 import base64
 import io
 import matplotlib.pyplot as plt
@@ -79,6 +81,7 @@ def make_html_table(df: pd.DataFrame) -> str:
 
             if col == "商品コード":
                 code = html.escape(str(val))
+                # ★同じタブで開く（新規タブにならないように）
                 link = (
                     f"<a href='?sku={code}' target='_self' "
                     f"style='color:#0073e6; text-decoration:none;'>{code}</a>"
@@ -86,11 +89,10 @@ def make_html_table(df: pd.DataFrame) -> str:
                 tds.append(f"<td>{link}</td>")
 
             elif col == "画像":
-                # HTMLそのまま
                 tds.append(f"<td>{val}</td>")
 
+            # ★HTMLをそのまま表示する列（ここに「現在庫」も追加）
             elif col in ["発注推奨数", "指定日売上個数(昨年売上個数)", "現在庫"]:
-                # HTMLをそのまま表示する列
                 tds.append(f"<td>{val}</td>")
 
             else:
@@ -104,6 +106,115 @@ def make_html_table(df: pd.DataFrame) -> str:
       <tbody>{"".join(body_rows)}</tbody>
     </table>
     """
+
+
+# ==========================
+# オーバーレイ（右ドロワー）表示：matplotlib→PNG→HTML埋め込み
+# ==========================
+def show_stock_overlay(selected_sku: str, df_main: pd.DataFrame):
+    # グラフデータ作成
+    msg = ""
+    img_html = ""
+
+    if "変動後" not in df_main.columns:
+        msg = "『変動後』列がないため在庫推移グラフを表示できません。"
+    else:
+        df_sku = df_main[df_main["商品コード"] == selected_sku].copy()
+        df_sku["日付"] = df_sku["元ファイル"].astype(str).str.extract(r"(\d{8})")
+        df_sku["日付"] = pd.to_datetime(df_sku["日付"], format="%Y%m%d", errors="coerce")
+        df_plot = df_sku[["日付", "変動後"]].dropna().sort_values("日付")
+
+        if df_plot.empty:
+            msg = "選択したSKUの在庫データがありません。"
+        else:
+            # matplotlibで描画してPNG化
+            fig, ax = plt.subplots(figsize=(7.4, 3.4))
+            ax.plot(df_plot["日付"], df_plot["変動後"])
+            ax.set_title(f"在庫推移（SKU: {selected_sku}）")
+            ax.set_ylabel("在庫")
+            ax.grid(True, alpha=0.25)
+            fig.autofmt_xdate()
+
+            buf = io.BytesIO()
+            fig.savefig(buf, format="png", dpi=160, bbox_inches="tight")
+            plt.close(fig)
+
+            b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+            img_html = f"<img src='data:image/png;base64,{b64}' style='width:100%;height:auto;display:block;' />"
+
+    overlay_html = f"""
+    <style>
+      .overlay-bg {{
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.28);
+        z-index: 9998;
+      }}
+      .drawer {{
+        position: fixed;
+        top: 3.6rem; /* ヘッダー分。環境でズレたら調整 */
+        right: 0;
+        width: 560px;
+        max-width: 94vw;
+        height: calc(100vh - 3.6rem);
+        background: #fff;
+        border-left: 1px solid #ddd;
+        box-shadow: -10px 0 26px rgba(0,0,0,0.18);
+        z-index: 9999;
+        padding: 14px 14px 18px 14px;
+        overflow: auto;
+        animation: slideIn 180ms ease-out;
+      }}
+      @keyframes slideIn {{
+        from {{ transform: translateX(16px); opacity: 0.6; }}
+        to   {{ transform: translateX(0); opacity: 1; }}
+      }}
+      .drawer-head {{
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:10px;
+        margin-bottom: 10px;
+      }}
+      .drawer-title {{
+        font-weight: 700;
+        font-size: 15px;
+        margin: 0;
+      }}
+      .drawer-close {{
+        display:inline-block;
+        padding: 6px 10px;
+        border: 1px solid #ddd;
+        border-radius: 10px;
+        text-decoration: none;
+        color: #333;
+        background: #fafafa;
+        font-size: 13px;
+        white-space: nowrap;
+      }}
+      .drawer-close:hover {{
+        background: #f0f0f0;
+      }}
+      .drawer-msg {{
+        margin: 6px 0 0 0;
+        color:#444;
+        font-size: 13px;
+      }}
+    </style>
+
+    <div class="overlay-bg"></div>
+
+    <div class="drawer">
+      <div class="drawer-head">
+        <p class="drawer-title">📈 在庫推移（{html.escape(str(selected_sku))}）</p>
+        <a class="drawer-close" href="?" target="_self">閉じる</a>
+      </div>
+
+      {f"<p class='drawer-msg'>{html.escape(msg)}</p>" if msg else ""}
+      {img_html}
+    </div>
+    """
+    components.html(overlay_html, height=1)
 
 
 # ==========================
@@ -160,7 +271,7 @@ def main():
         }
         st.session_state["restock_applied"] = False
 
-    # クエリパラメータ（グラフ用）
+    # クエリパラメータ（オーバーレイ表示用）
     params = st.query_params
     selected_sku = params.get("sku")
 
@@ -295,7 +406,7 @@ def main():
                     if "商品コード" in df_last.columns:
                         df_last["商品コード"] = df_last["商品コード"].astype(str).str.strip()
 
-                # ---- デバッグ表示（原因切り分け用）----
+                # ---- デバッグ表示 ----
                 st.caption(f"集計期間：{start_date} ～ {end_date} ｜ 昨年同期間：{last_start} ～ {last_end}")
                 st.caption(f"今年CSV件数：{len(main_files)} ｜ 昨年CSV件数：{len(last_files)}")
                 if len(last_files) == 0:
@@ -321,115 +432,6 @@ def main():
                 if not required.issubset(df_main.columns):
                     st.error("Tempostar CSV に『商品コード』『商品基本コード』『増減値』が必要です。")
                     return
-                
-                def show_stock_drawer(selected_sku: str, df_main: pd.DataFrame):
-                    if "変動後" not in df_main.columns:
-                        drawer_body = "<p style='margin:0'>『変動後』列がないため表示できません。</p>"
-                    else:
-                        df_sku = df_main[df_main["商品コード"] == selected_sku].copy()
-                        df_sku["日付"] = df_sku["元ファイル"].str.extract(r"(\d{8})")
-                        df_sku["日付"] = pd.to_datetime(df_sku["日付"], format="%Y%m%d", errors="coerce")
-                        df_plot = df_sku[["日付", "変動後"]].dropna().sort_values("日付")
-
-                        if df_plot.empty:
-                            drawer_body = "<p style='margin:0'>在庫データがありません。</p>"
-                        else:
-                            # matplotlibでPNG化→base64埋め込み
-                            fig, ax = plt.subplots(figsize=(7.2, 3.2))
-                            ax.plot(df_plot["日付"], df_plot["変動後"])
-                            ax.set_title(f"SKU: {selected_sku}")
-                            ax.set_xlabel("")
-                            ax.set_ylabel("在庫")
-                            ax.grid(True, alpha=0.3)
-                            fig.autofmt_xdate()
-
-                            buf = io.BytesIO()
-                            fig.savefig(buf, format="png", dpi=160, bbox_inches="tight")
-                            plt.close(fig)
-                            b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
-                            drawer_body = f"<img src='data:image/png;base64,{b64}' style='width:100%; height:auto; display:block;'/>"
-
-                    drawer_html = f"""
-                    <style>
-                    .drawer {{
-                        position: fixed;
-                        top: 3.6rem; /* ヘッダー分（必要なら調整） */
-                        right: 0;
-                        width: 520px;
-                        max-width: 92vw;
-                        height: calc(100vh - 3.6rem);
-                        background: #fff;
-                        border-left: 1px solid #ddd;
-                        box-shadow: -8px 0 20px rgba(0,0,0,0.12);
-                        z-index: 9999;
-                        transform: translateX(0);
-                        transition: transform 220ms ease;
-                        padding: 14px 14px 18px 14px;
-                        overflow: auto;
-                    }}
-                    .drawer-header {{
-                        display:flex;
-                        align-items:center;
-                        justify-content:space-between;
-                        gap:8px;
-                        margin-bottom:10px;
-                    }}
-                    .drawer-title {{
-                        font-weight: 700;
-                        font-size: 15px;
-                        margin: 0;
-                    }}
-                    .drawer-close {{
-                        display:inline-block;
-                        padding: 6px 10px;
-                        border: 1px solid #ddd;
-                        border-radius: 8px;
-                        text-decoration: none;
-                        color:#333;
-                        background:#fafafa;
-                        font-size: 13px;
-                        white-space: nowrap;
-                    }}
-                    .drawer-close:hover {{ background:#f0f0f0; }}
-                    </style>
-
-                    <div class="drawer">
-                    <div class="drawer-header">
-                        <p class="drawer-title">📈 在庫推移（{html.escape(str(selected_sku))}）</p>
-                        <a class="drawer-close" href="?" target="_self">閉じる</a>
-                    </div>
-                    {drawer_body}
-                    </div>
-                    """
-                    components.html(drawer_html, height=1)  # 高さは最小でOK（固定表示なので）
-
-                
-                @st.dialog("📈 在庫推移グラフ", width="large")
-                def show_stock_dialog(selected_sku: str, df_main: pd.DataFrame):
-                    st.markdown(f"#### SKU：{selected_sku}")
-
-                    if "変動後" not in df_main.columns:
-                        st.warning("『変動後』列がないため在庫推移グラフを表示できません。")
-                    else:
-                        df_sku = df_main[df_main["商品コード"] == selected_sku].copy()
-                        df_sku["日付"] = df_sku["元ファイル"].str.extract(r"(\d{8})")
-                        df_sku["日付"] = pd.to_datetime(df_sku["日付"], format="%Y%m%d", errors="coerce")
-                        df_plot = df_sku[["日付", "変動後"]].dropna().sort_values("日付")
-
-                        if df_plot.empty:
-                            st.warning("選択したSKUの在庫データがありません。")
-                        else:
-                            st.line_chart(df_plot.set_index("日付")["変動後"])
-
-                    # 閉じる（= skuを消して再実行）
-                    if st.button("閉じる"):
-                        st.query_params.pop("sku", None)
-                        st.rerun()
-
-                    # --- 在庫推移（右から出るドロワー）---
-                    if selected_sku:
-                        show_stock_drawer(selected_sku, df_main)
-
 
                 # --- 売上集計（今年）---
                 if "更新理由" in df_main.columns:
@@ -454,7 +456,7 @@ def main():
                 sales_grouped["売上個数合計"] = -sales_grouped["増減値合計"]
                 sales_grouped = sales_grouped[sales_grouped["売上個数合計"] > 0]
 
-                # --- 売上集計（昨年：SKU=商品コードで比較）---
+                # --- 売上集計（昨年）---
                 if df_last is not None and {"商品コード", "増減値"}.issubset(df_last.columns):
                     if "更新理由" in df_last.columns:
                         df_sales_last = df_last[
@@ -463,7 +465,6 @@ def main():
                     else:
                         df_sales_last = df_last.copy()
 
-                    # 念のため：商品コードを完全に揃える（型・空白対策）
                     df_sales_last["商品コード"] = df_sales_last["商品コード"].astype(str).str.strip()
                     df_sales_main["商品コード"] = df_sales_main["商品コード"].astype(str).str.strip()
 
@@ -475,10 +476,8 @@ def main():
                     last_grouped["昨年売上個数"] = -last_grouped["増減値"]
                     last_grouped = last_grouped.drop(columns=["増減値"])
 
-                    # ★衝突しないように「昨年売上個数」を後から追加する（merge前に作らない）
                     sales_grouped = sales_grouped.merge(last_grouped, on="商品コード", how="left")
 
-                # 列が無い/NaNでも落ちずに 0 にする
                 sales_grouped["昨年売上個数"] = (
                     pd.to_numeric(
                         sales_grouped["昨年売上個数"]
@@ -489,13 +488,6 @@ def main():
                     .fillna(0)
                     .astype(int)
                 )
-
-
-                # ---- デバッグ表示（昨年売上が0になる原因切り分け）----
-                if df_last is None:
-                    st.caption("（デバッグ）昨年DF：なし（昨年CSVが0件）")
-                else:
-                    st.caption(f"（デバッグ）昨年DF行数：{len(df_last):,} ｜ 昨年売上DF行数：{0 if df_sales_last is None else len(df_sales_last):,}")
 
                 # 在庫（現在庫）
                 if "変動後" in df_main.columns:
@@ -568,8 +560,13 @@ def main():
                 display_cols = [c for c in display_cols if c in sales_grouped.columns]
                 df_view = sales_grouped[display_cols]
 
+                # ★表は常に表示（これで「グラフページに遷移」感が減ります）
                 st.write(f"📦 SKU数：{len(df_view):,}")
                 st.markdown(make_html_table(df_view), unsafe_allow_html=True)
+
+                # ★右からにゅっと：オーバーレイ表示（表の上に出る）
+                if selected_sku:
+                    show_stock_overlay(str(selected_sku), df_main)
 
     # --------------------------------------------------
     # タブ2：在庫少商品（発注目安）
@@ -738,11 +735,12 @@ def main():
                         cols_r = ["画像"] + [c for c in display_cols if c != "画像"]
                         sales_recent = sales_recent[cols_r]
 
+                        # 発注推奨数（計算には 1日平均・目標在庫を内部で使うが、表示はしない）
                         period_days = max((end_r - start_r).days + 1, 1)
-                        sales_recent["1日平均売上"] = (sales_recent["売上個数合計"] / period_days)
-                        sales_recent["目標在庫"] = (sales_recent["1日平均売上"] * target_days)
+                        one_day_avg = (sales_recent["売上個数合計"] / period_days)
+                        target_stock = (one_day_avg * target_days)
 
-                        target_qty = pd.to_numeric(sales_recent["目標在庫"], errors="coerce")
+                        target_qty = pd.to_numeric(target_stock, errors="coerce")
                         current_stock = pd.to_numeric(sales_recent["現在庫"], errors="coerce")
                         diff = (target_qty - current_stock).fillna(0)
                         sales_recent["発注推奨数"] = diff.where(diff > 0, 0).round().astype(int)
@@ -755,22 +753,25 @@ def main():
                         if restock_view.empty:
                             st.success("発注推奨の商品はありません。")
                         else:
+                            # ★表示列：1日平均売上/目標在庫は出さない
                             cols2 = display_cols + ["発注推奨数"]
                             restock_view = restock_view[cols2]
 
+                            # 発注推奨数の強調
                             restock_view["発注推奨数"] = restock_view["発注推奨数"].apply(
                                 lambda x: f"<span class='order-col'>{x}</span>"
                             )
 
-                            # --- 現在庫の下に状態表示を追加（在庫少商品タブ用）---
-                            # ※ここでは表示用にHTML化するだけ（計算はすでに終わっている前提）
+                            # ★現在庫の下に状態表示を追加
                             stock_num = pd.to_numeric(restock_view["現在庫"], errors="coerce").fillna(0).astype(int)
                             sales_num = pd.to_numeric(restock_view["売上個数合計"], errors="coerce").fillna(0).astype(int)
 
                             status = pd.Series([""] * len(restock_view), index=restock_view.index)
-
                             status = status.mask(stock_num <= 0, "在庫切れ")
-                            status = status.mask((stock_num > 0) & ((stock_num <= 10) | (stock_num < sales_num)), "在庫が少ない")
+                            status = status.mask(
+                                (stock_num > 0) & ((stock_num <= 10) | (stock_num < sales_num)),
+                                "在庫が少ない"
+                            )
 
                             def stock_html(s, label):
                                 s = int(s)
@@ -783,8 +784,7 @@ def main():
 
                             restock_view["現在庫"] = [stock_html(s, l) for s, l in zip(stock_num, status)]
 
-
-                            st.write(f"⚠ 抽出SKU数：{len(restock_view):,} ｜ 目標在庫：平均 {target_days} 日分")
+                            st.write(f"⚠ 抽出SKU数：{len(restock_view):,} ｜ 目標在庫：平均 {target_days} 日分（※列表示は省略）")
                             st.markdown(make_html_table(restock_view), unsafe_allow_html=True)
 
 
