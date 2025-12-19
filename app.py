@@ -139,68 +139,70 @@ def show_stock_drawer(selected_sku: str, df_main: pd.DataFrame):
             b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
             img_html = f"<img src='data:image/png;base64,{b64}' style='width:100%;height:auto;display:block;' />"
 
-    drawer_html = f"""
-    <style>
-      .drawer {{
-        position: fixed;
-        top: 3.6rem; /* ヘッダー分。ズレるなら調整 */
-        right: 0;
-        width: 560px;
-        max-width: 94vw;
-        height: calc(100vh - 3.6rem);
-        background: #fff;
-        border-left: 1px solid #ddd;
-        box-shadow: -10px 0 26px rgba(0,0,0,0.18);
-        z-index: 9999;
-        padding: 14px 14px 18px 14px;
-        overflow: auto;
-        animation: slideIn 180ms ease-out;
-      }}
-      @keyframes slideIn {{
-        from {{ transform: translateX(16px); opacity: 0.6; }}
-        to   {{ transform: translateX(0); opacity: 1; }}
-      }}
-      .drawer-head {{
-        display:flex;
-        align-items:center;
-        justify-content:space-between;
-        gap:10px;
-        margin-bottom: 10px;
-      }}
-      .drawer-title {{
-        font-weight: 700;
-        font-size: 15px;
-        margin: 0;
-      }}
-      .drawer-close {{
-        display:inline-block;
-        padding: 6px 10px;
-        border: 1px solid #ddd;
-        border-radius: 10px;
-        text-decoration: none;
-        color: #333;
-        background: #fafafa;
-        font-size: 13px;
-        white-space: nowrap;
-      }}
-      .drawer-close:hover {{ background: #f0f0f0; }}
-      .drawer-msg {{
-        margin: 6px 0 0 0;
-        color:#444;
-        font-size: 13px;
-      }}
-    </style>
+            drawer_html = f"""
+            <style>
+            .drawer {{
+                position: fixed;
+                top: 3.6rem;
+                right: 0;
+                width: 560px;
+                max-width: 94vw;
+                height: calc(100vh - 3.6rem);
+                background: #fff;
+                border-left: 1px solid #ddd;
+                box-shadow: -10px 0 26px rgba(0,0,0,0.18);
+                z-index: 9999;
+                padding: 14px 14px 18px 14px;
+                overflow: auto;
+                animation: slideIn 180ms ease-out;
+            }}
+            @keyframes slideIn {{
+                from {{ transform: translateX(16px); opacity: 0.6; }}
+                to   {{ transform: translateX(0); opacity: 1; }}
+            }}
+            .drawer-head {{
+                display:flex;
+                align-items:center;
+                justify-content:space-between;
+                gap:10px;
+                margin-bottom: 10px;
+            }}
+            .drawer-title {{
+                font-weight: 700;
+                font-size: 15px;
+                margin: 0;
+            }}
+            .drawer-close-btn {{
+                padding: 6px 10px;
+                border: 1px solid #ddd;
+                border-radius: 10px;
+                background: #fafafa;
+                font-size: 13px;
+                cursor: pointer;
+                white-space: nowrap;
+            }}
+            .drawer-close-btn:hover {{ background: #f0f0f0; }}
+            .drawer-msg {{
+                margin: 6px 0 0 0;
+                color:#444;
+                font-size: 13px;
+            }}
+            </style>
 
-    <div class="drawer">
-      <div class="drawer-head">
-        <p class="drawer-title">📈 在庫推移（{html.escape(str(selected_sku))}）</p>
-        <a class="drawer-close" href="?" target="_self">閉じる</a>
-      </div>
-      {f"<p class='drawer-msg'>{html.escape(msg)}</p>" if msg else ""}
-      {img_html}
-    </div>
-    """
-    st.markdown(drawer_html, unsafe_allow_html=True)
+            <div class="drawer" id="stock-drawer">
+            <div class="drawer-head">
+                <p class="drawer-title">📈 在庫推移（{html.escape(str(selected_sku))}）</p>
+                <button class="drawer-close-btn" onclick="
+                const el = window.parent.document.getElementById('stock-drawer');
+                if (el) el.style.display='none';
+                ">閉じる</button>
+            </div>
+
+            {f"<p class='drawer-msg'>{html.escape(msg)}</p>" if msg else ""}
+            {img_html}
+            </div>
+            """
+            st.markdown(drawer_html, unsafe_allow_html=True)
 
     # 閉じる（sessionで制御）
     if st.button("閉じる", key=f"close_drawer_{selected_sku}"):
