@@ -266,7 +266,7 @@ def main():
             "target_days": 30,
             "max_current_stock": 999999,
         }
-        st.session_state["restock_applied"] = False
+        st.session_state["restock_applied"] = True
 
 
     # ==========================
@@ -315,7 +315,7 @@ def main():
     # ==========================
     # タブ
     # ==========================
-    tab1, tab2 = st.tabs(["SKU別売上集計", "在庫少商品（発注目安）"])
+    tab2, tab1 = st.tabs(["在庫少商品（発注目安）", "SKU別売上集計"])
 
     # --------------------------------------------------
     # タブ1：SKU別売上集計
