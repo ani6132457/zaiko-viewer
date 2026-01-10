@@ -215,7 +215,7 @@ def show_stock_drawer(selected_sku: str, df_main: pd.DataFrame):
 # ==========================
 def main():
     st.set_page_config(page_title="Tempostar 売上集計", layout="wide")
-    st.title("Tempostar 在庫変動データ - SKU別集計")
+    st.title("Tempostar 在庫変動データ")
 
     # ---------- CSV 一覧 ----------
     raw_paths = sorted(glob.glob("tempostar_stock_*.csv"))
@@ -320,7 +320,7 @@ def main():
         left, right = st.columns([1, 3])
 
         with left:
-            st.subheader("在庫少商品（発注目安） - 条件")
+            st.subheader("発注推奨一覧 - 条件")
             st.text(f"データ最終日：{max_date}")
 
             f_r = st.session_state["restock_filters"]
@@ -331,7 +331,7 @@ def main():
                     f_r["keyword"],
                 )
                 min_total_sales_r = st.number_input(
-                    "売上個数の下限（プラス値）",
+                    "売上個数",
                     min_value=0,
                     value=int(f_r["min_total_sales"]),
                 )
@@ -342,7 +342,7 @@ def main():
                     default_restock = 1
 
                 restock_months = st.selectbox(
-                    "在庫少商品の集計期間（直近◯ヶ月）",
+                    "期間（直近◯ヶ月）",
                     months_choices,
                     index=months_choices.index(default_restock),
                 )
@@ -355,7 +355,7 @@ def main():
                 )
 
                 max_current_stock = st.number_input(
-                    "現在庫の上限（この数以下を抽出）",
+                    "現在庫（この数以下を抽出）",
                     min_value=0,
                     max_value=999999,
                     value=int(f_r.get("max_current_stock", 999999)),
@@ -537,7 +537,7 @@ def main():
         left, right = st.columns([1, 3])
 
         with left:
-            st.subheader("SKU別売上集計 - 条件")
+            st.subheader("売上個数一覧 - 条件")
             st.text(f"データ期間：{min_date} ～ {max_date}")
 
             f_sku = st.session_state["sku_filters"]
@@ -560,7 +560,7 @@ def main():
                     f_sku["keyword"],
                 )
                 min_total_sales = st.number_input(
-                    "売上個数の下限（プラス値）",
+                    "売上個数",
                     min_value=0,
                     value=int(f_sku["min_total_sales"]),
                 )
@@ -817,7 +817,7 @@ def main():
         # --------------------------------------------------
 
     # タブ順：最初に「在庫少商品（発注目安）」を開く
-    tab_restock, tab_sales = st.tabs(["在庫少商品（発注目安）", "SKU別売上集計"])
+    tab_restock, tab_sales = st.tabs(["発注推奨一覧", "売上個数一覧"])
 
     with tab_restock:
         render_restock_tab(file_infos, min_date, max_date)
