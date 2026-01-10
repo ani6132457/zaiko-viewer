@@ -331,7 +331,7 @@ def main():
                     f_r["keyword"],
                 )
                 min_total_sales_r = st.number_input(
-                    "売上個数",
+                    "売上個数(～以上)",
                     min_value=0,
                     value=int(f_r["min_total_sales"]),
                 )
@@ -560,7 +560,7 @@ def main():
                     f_sku["keyword"],
                 )
                 min_total_sales = st.number_input(
-                    "売上個数",
+                    "売上個数(～以上)",
                     min_value=0,
                     value=int(f_sku["min_total_sales"]),
                 )
