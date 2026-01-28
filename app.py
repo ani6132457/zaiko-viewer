@@ -301,6 +301,12 @@ def main():
 .sku-table td:nth-child(10), .sku-table th:nth-child(10) { width:110px; text-align:right; white-space:nowrap; }
 
 /* 発注推奨一覧：重要数値を強調 */
+
+.sku-table td:nth-child(3) {   /* 商品基本コード */
+    font-size:20px;
+    font-weight:bold;
+}
+
 .sku-table td:nth-child(7) {   /* 売上個数合計 */
     font-size:20px;
     font-weight:bold;
