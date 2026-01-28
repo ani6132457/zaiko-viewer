@@ -300,6 +300,22 @@ def main():
 .sku-table td:nth-child(9), .sku-table th:nth-child(9),
 .sku-table td:nth-child(10), .sku-table th:nth-child(10) { width:110px; text-align:right; white-space:nowrap; }
 
+/* 発注推奨一覧：重要数値を強調 */
+.sku-table td:nth-child(7) {   /* 売上個数合計 */
+    font-size:20px;
+    font-weight:bold;
+}
+
+.sku-table td:nth-child(8) {   /* 現在庫 */
+    font-size:20px;
+    font-weight:bold;
+}
+
+.sku-table td:nth-child(9) {   /* 発注推奨数 */
+    font-size:20px;
+    font-weight:bold;
+}
+
 /* ヘッダー固定 */
 .sku-table thead th { position:sticky; top:3.2rem; z-index:2; background:#f2f2f2; }
 
