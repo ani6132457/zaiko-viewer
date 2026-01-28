@@ -325,6 +325,11 @@ def main():
 }
 
 /* 発注推奨一覧：列名（ヘッダー）を大きく */
+.sku-table th:nth-child(2),
+.sku-table th:nth-child(3),
+.sku-table th:nth-child(4),
+.sku-table th:nth-child(5),
+.sku-table th:nth-child(6),
 .sku-table th:nth-child(7),  /* 売上個数合計 */
 .sku-table th:nth-child(8),  /* 現在庫 */
 .sku-table th:nth-child(9) { /* 発注推奨数 */
