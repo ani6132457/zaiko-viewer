@@ -323,6 +323,15 @@ def main():
 .sku-table td .order-col {
     font-weight:bold; background:#ffe4e1; color:#c40000; padding:2px 6px; border-radius:4px;
 }
+
+/* 発注推奨一覧：列名（ヘッダー）を大きく */
+.sku-table th:nth-child(7),  /* 売上個数合計 */
+.sku-table th:nth-child(8),  /* 現在庫 */
+.sku-table th:nth-child(9) { /* 発注推奨数 */
+    font-size:22px;
+    font-weight:bold;
+}
+
 </style>
 """,
         unsafe_allow_html=True,
