@@ -275,74 +275,129 @@ def main():
     st.markdown(
         """
 <style>
-.sku-table { border-collapse:collapse; font-size:14px; width:100%; }
-.sku-table th { background:#f2f2f2; }
-.sku-table td, .sku-table th { padding:4px 6px; border:1px solid #ccc; vertical-align:top; }
-.sku-table tbody tr:hover { background:#fafafa; }
-.sku-table img { max-height:70px; width:auto; display:block; margin:auto; }
+/* ===== ページ全体 ===== */
+[data-testid="stAppViewContainer"] { background: #f7f8fa; }
+[data-testid="stHeader"] { background: #ffffff; border-bottom: 1px solid #e0e4ea; }
 
-/* 1:画像 */
-.sku-table td:nth-child(1), .sku-table th:nth-child(1) { width:72px; text-align:center; }
-/* 2,3:コード */
-.sku-table td:nth-child(2), .sku-table th:nth-child(2),
-.sku-table td:nth-child(3), .sku-table th:nth-child(3) { width:110px; white-space:nowrap; }
-/* 4:商品名 */
-.sku-table th:nth-child(4) { max-width:420px; }
-.sku-table td:nth-child(4) {
-    max-width:420px; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden;
+/* ===== サイドパネル（フィルター列） ===== */
+.filter-card {
+    background: #ffffff;
+    border: 1px solid #e0e4ea;
+    border-radius: 12px;
+    padding: 20px 18px 24px 18px;
+    margin-bottom: 16px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
 }
-/* 5,6:属性 */
+.filter-card h3 {
+    margin: 0 0 14px 0;
+    font-size: 15px;
+    font-weight: 700;
+    color: #1a1d23;
+    letter-spacing: 0.01em;
+}
+
+/* ===== テーブル共通 ===== */
+.sku-table {
+    border-collapse: collapse;
+    font-size: 13px;
+    width: 100%;
+    background: #ffffff;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 1px 6px rgba(0,0,0,0.07);
+}
+.sku-table th {
+    background: #f0f2f7;
+    color: #444;
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 10px 10px;
+    border-bottom: 2px solid #d8dde8;
+    white-space: nowrap;
+}
+.sku-table td {
+    padding: 9px 10px;
+    border-bottom: 1px solid #eef0f5;
+    vertical-align: middle;
+    color: #222;
+}
+.sku-table tbody tr:hover { background: #f5f7fc; }
+.sku-table img { max-height: 64px; width: auto; display: block; margin: auto; border-radius: 4px; }
+
+/* 列幅 */
+.sku-table td:nth-child(1), .sku-table th:nth-child(1) { width: 76px; text-align: center; }
+.sku-table td:nth-child(2), .sku-table th:nth-child(2),
+.sku-table td:nth-child(3), .sku-table th:nth-child(3) { width: 120px; white-space: nowrap; }
+.sku-table td:nth-child(4) {
+    max-width: 380px;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
 .sku-table td:nth-child(5), .sku-table th:nth-child(5),
-.sku-table td:nth-child(6), .sku-table th:nth-child(6) { width:110px; white-space:nowrap; }
-/* 数値列（増えるので10列くらいまで右寄せ） */
+.sku-table td:nth-child(6), .sku-table th:nth-child(6) { width: 100px; }
 .sku-table td:nth-child(7), .sku-table th:nth-child(7),
 .sku-table td:nth-child(8), .sku-table th:nth-child(8),
 .sku-table td:nth-child(9), .sku-table th:nth-child(9),
-.sku-table td:nth-child(10), .sku-table th:nth-child(10) { width:110px; text-align:right; white-space:nowrap; }
-
-/* 発注推奨一覧：重要数値を強調 */
-
-.sku-table td:nth-child(3) {   /* 商品基本コード */
-    font-size:20px;
-    font-weight:bold;
+.sku-table td:nth-child(10), .sku-table th:nth-child(10) {
+    width: 100px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums;
 }
 
-.sku-table td:nth-child(7) {   /* 売上個数合計 */
-    font-size:20px;
-    font-weight:bold;
-}
+/* 数値強調 */
+.sku-table td:nth-child(3)  { font-weight: 600; font-size: 13px; color: #1a1d23; }
+.sku-table td:nth-child(7),
+.sku-table td:nth-child(8)  { font-weight: 700; font-size: 15px; color: #1a1d23; }
+.sku-table td:nth-child(9)  { font-weight: 700; font-size: 15px; }
 
-.sku-table td:nth-child(8) {   /* 現在庫 */
-    font-size:20px;
-    font-weight:bold;
-}
-
-.sku-table td:nth-child(9) {   /* 発注推奨数 */
-    font-size:20px;
-    font-weight:bold;
-}
+/* 商品コードリンク */
+.sku-table a { color: #3b7de9; text-decoration: none; font-weight: 500; }
+.sku-table a:hover { text-decoration: underline; }
 
 /* ヘッダー固定 */
-.sku-table thead th { position:sticky; top:3.2rem; z-index:2; background:#f2f2f2; }
+.sku-table thead th { position: sticky; top: 0; z-index: 2; }
 
-/* 発注推奨数セルの強調 */
+/* 発注推奨バッジ */
 .sku-table td .order-col {
-    font-weight:bold; background:#ffe4e1; color:#c40000; padding:2px 6px; border-radius:4px;
+    display: inline-block;
+    font-weight: 700;
+    background: #fff0ee;
+    color: #c0392b;
+    padding: 3px 10px;
+    border-radius: 20px;
+    border: 1px solid #f5c6c2;
+    font-size: 14px;
+    min-width: 48px;
+    text-align: center;
 }
 
-/* 発注推奨一覧：列名（ヘッダー）を大きく */
-.sku-table th:nth-child(2),
-.sku-table th:nth-child(3),
-.sku-table th:nth-child(4),
-.sku-table th:nth-child(5),
-.sku-table th:nth-child(6),
-.sku-table th:nth-child(7),  /* 売上個数合計 */
-.sku-table th:nth-child(8),  /* 現在庫 */
-.sku-table th:nth-child(9) { /* 発注推奨数 */
-    font-size:22px;
-    font-weight:bold;
+/* 在庫ステータスラベル */
+.sku-table .stock-danger { color: #c0392b; font-size: 11px; font-weight: 700; }
+.sku-table .stock-warn   { color: #d35400; font-size: 11px; font-weight: 700; }
+
+/* ===== タブ ===== */
+[data-testid="stTabs"] button {
+    font-size: 14px !important;
+    font-weight: 600 !important;
+    padding: 8px 20px !important;
 }
 
+/* ===== メトリクスバー ===== */
+.metric-bar {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+}
+.metric-chip {
+    background: #ffffff;
+    border: 1px solid #e0e4ea;
+    border-radius: 8px;
+    padding: 8px 16px;
+    font-size: 13px;
+    color: #444;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+.metric-chip strong { color: #1a1d23; font-size: 16px; margin-left: 4px; }
 </style>
 """,
         unsafe_allow_html=True,
@@ -352,22 +407,22 @@ def main():
     # タブ（タブ名と中身を一致させる）
     # ==========================
     def render_restock_tab(file_infos, min_date, max_date):
-        # --- ここが「在庫少商品（発注目安）」タブの中身 ---
+        # --- 発注推奨一覧タブ ---
         left, right = st.columns([1, 3])
 
         with left:
-            st.subheader("発注推奨一覧 - 条件")
-            st.text(f"データ最終日：{max_date}")
+            st.markdown('<div class="filter-card"><h3>🔍 絞り込み条件</h3>', unsafe_allow_html=True)
+            st.caption(f"データ最終日：{max_date}")
 
             f_r = st.session_state["restock_filters"]
 
             with st.form("restock_form"):
                 keyword_r = st.text_input(
-                    "検索（商品コード / 商品基本コード / 商品名）",
-                    f_r["keyword"],
+                    "キーワード（商品コード / 商品基本コード / 商品名）",
+                    value=f_r["keyword"],
                 )
                 min_total_sales_r = st.number_input(
-                    "売上個数(～以上)",
+                    "売上個数（この数以上）",
                     min_value=0,
                     value=int(f_r["min_total_sales"]),
                 )
@@ -378,26 +433,28 @@ def main():
                     default_restock = 1
 
                 restock_months = st.selectbox(
-                    "期間（直近◯ヶ月）",
+                    "集計期間（直近◯ヶ月）",
                     months_choices,
                     index=months_choices.index(default_restock),
                 )
 
                 target_days = st.number_input(
-                    "何日分の在庫を確保するか（発注目安）",
+                    "確保したい在庫日数",
                     min_value=1,
                     max_value=365,
                     value=int(f_r["target_days"]),
                 )
 
                 max_current_stock = st.number_input(
-                    "現在庫（この数以下を抽出）",
+                    "現在庫フィルター（この数以下）",
                     min_value=0,
                     max_value=999999,
                     value=int(f_r.get("max_current_stock", 999999)),
                 )
 
-                submit_restock = st.form_submit_button("この条件で表示")
+                submit_restock = st.form_submit_button("🔎 この条件で表示", use_container_width=True)
+
+            st.markdown('</div>', unsafe_allow_html=True)
 
             if submit_restock:
                 st.session_state["restock_filters"] = {
@@ -494,114 +551,105 @@ def main():
                         img_master = load_image_master()
                         base_url = "https://image.rakuten.co.jp/hype/cabinet"
 
-                        def to_img(code):
+                        def to_img_url(code):
                             key = str(code).strip()
                             rel = img_master.get(key, "")
-                            if not rel:
-                                return ""
-                            return f'<img src="{base_url + rel}" width="70">'
+                            return (base_url + rel) if rel else ""
 
-                        sales_recent["画像"] = sales_recent["商品基本コード"].apply(to_img)
+                        sales_recent["画像"] = sales_recent["商品基本コード"].apply(to_img_url)
 
-                        display_cols = [
-                            "画像",
-                            "商品コード",
-                            "商品基本コード",
-                            "商品名",
-                            "属性1名",
-                            "属性2名",
-                            "売上個数合計",
-                            "現在庫",
-                        ]
-                        cols_r = ["画像"] + [c for c in display_cols if c != "画像"]
-                        sales_recent = sales_recent[cols_r]
-
-                        # 発注推奨数（計算には 1日平均・目標在庫を内部で使うが、表示はしない）
+                        # 発注推奨数計算
                         period_days = max((end_r - start_r).days + 1, 1)
-                        one_day_avg = (sales_recent["売上個数合計"] / period_days)
-                        target_stock = (one_day_avg * target_days)
-
+                        one_day_avg = sales_recent["売上個数合計"] / period_days
+                        target_stock = one_day_avg * target_days
                         target_qty = pd.to_numeric(target_stock, errors="coerce")
                         current_stock = pd.to_numeric(sales_recent["現在庫"], errors="coerce")
                         diff = (target_qty - current_stock).fillna(0)
                         sales_recent["発注推奨数"] = diff.where(diff > 0, 0).round().astype(int)
 
-                        restock_view = sales_recent[sales_recent["発注推奨数"] > 0]
+                        restock_view = sales_recent[sales_recent["発注推奨数"] > 0].copy()
                         restock_view = restock_view.sort_values("発注推奨数", ascending=False)
 
-                        st.info(f"発注目安は直近{restock_months}ヶ月（{start_r} ～ {end_r}）の売上から計算しています。")
+                        st.info(f"発注目安：直近 {restock_months} ヶ月（{start_r} ～ {end_r}）の売上から計算 ｜ 目標在庫 {target_days} 日分")
 
                         if restock_view.empty:
-                            st.success("発注推奨の商品はありません。")
+                            st.success("✅ 発注推奨の商品はありません。")
                         else:
-                            # ★表示列：1日平均売上/目標在庫は出さない
-                            cols2 = display_cols + ["発注推奨数"]
-                            restock_view = restock_view[cols2]
+                            display_cols = [
+                                "画像", "商品コード", "商品基本コード", "商品名",
+                                "属性1名", "属性2名", "売上個数合計", "現在庫", "発注推奨数",
+                            ]
+                            display_cols = [c for c in display_cols if c in restock_view.columns]
+                            df_view_r = restock_view[display_cols].copy()
 
-                            # 発注推奨数の強調
-                            restock_view["発注推奨数"] = restock_view["発注推奨数"].apply(
-                                lambda x: f"<span class='order-col'>{x}</span>"
+                            # 在庫ステータス列を追加
+                            stock_num = pd.to_numeric(df_view_r["現在庫"], errors="coerce").fillna(0).astype(int)
+                            sales_num = pd.to_numeric(df_view_r["売上個数合計"], errors="coerce").fillna(0).astype(int)
+                            def _status(s, v):
+                                if s <= 0: return "🔴 在庫切れ"
+                                if s <= 10 or s < v: return "🟡 在庫少"
+                                return ""
+                            df_view_r.insert(
+                                df_view_r.columns.tolist().index("現在庫") + 1,
+                                "状態",
+                                [_status(s, v) for s, v in zip(stock_num, sales_num)]
                             )
 
-                            # ★現在庫の下に状態表示を追加
-                            stock_num = pd.to_numeric(restock_view["現在庫"], errors="coerce").fillna(0).astype(int)
-                            sales_num = pd.to_numeric(restock_view["売上個数合計"], errors="coerce").fillna(0).astype(int)
-
-                            status = pd.Series([""] * len(restock_view), index=restock_view.index)
-                            status = status.mask(stock_num <= 0, "在庫切れ")
-                            status = status.mask(
-                                (stock_num > 0) & ((stock_num <= 10) | (stock_num < sales_num)),
-                                "在庫が少ない"
+                            st.markdown(
+                                f'<div class="metric-bar">'
+                                f'<div class="metric-chip">抽出SKU数<strong>{len(df_view_r):,}</strong></div>'
+                                f'<div class="metric-chip">集計期間<strong>{start_r} ～ {end_r}</strong></div>'
+                                f'</div>',
+                                unsafe_allow_html=True,
                             )
 
-                            def stock_html(s, label):
-                                s = int(s)
-                                if label == "在庫切れ":
-                                    return f"{s}<br><span style='color:#c40000;font-size:12px;font-weight:bold;'>在庫切れ</span>"
-                                elif label == "在庫が少ない":
-                                    return f"{s}<br><span style='color:#d35400;font-size:12px;font-weight:bold;'>在庫が少ない</span>"
-                                else:
-                                    return f"{s}"
+                            col_cfg = {}
+                            if "画像" in df_view_r.columns:
+                                col_cfg["画像"] = st.column_config.ImageColumn("画像", width="small")
 
-                            restock_view["現在庫"] = [stock_html(s, l) for s, l in zip(stock_num, status)]
-
-                            st.write(f"⚠ 抽出SKU数：{len(restock_view):,} ｜ 目標在庫：平均 {target_days} 日分（※列表示は省略）")
-                            st.markdown(make_html_table(restock_view), unsafe_allow_html=True)
+                            st.dataframe(
+                                df_view_r,
+                                hide_index=True,
+                                use_container_width=True,
+                                column_config=col_cfg if col_cfg else None,
+                            )
 
     def render_sales_tab(file_infos, min_date, max_date):
-        # --- ここが「SKU別売上集計」タブの中身 ---
+        # --- 売上個数一覧タブ ---
         left, right = st.columns([1, 3])
 
         with left:
-            st.subheader("売上個数一覧 - 条件")
-            st.text(f"データ期間：{min_date} ～ {max_date}")
+            st.markdown('<div class="filter-card"><h3>🔍 絞り込み条件</h3>', unsafe_allow_html=True)
+            st.caption(f"データ期間：{min_date} ～ {max_date}")
 
             f_sku = st.session_state["sku_filters"]
 
             with st.form("sku_form"):
                 start_date = st.date_input(
                     "開始日",
-                    f_sku["start_date"],
+                    value=f_sku["start_date"],
                     min_value=min_date,
                     max_value=max_date,
                 )
                 end_date = st.date_input(
                     "終了日",
-                    f_sku["end_date"],
+                    value=f_sku["end_date"],
                     min_value=min_date,
                     max_value=max_date,
                 )
                 keyword = st.text_input(
-                    "検索（商品コード / 商品基本コード / 商品名）",
-                    f_sku["keyword"],
+                    "キーワード（商品コード / 商品基本コード / 商品名）",
+                    value=f_sku["keyword"],
                 )
                 min_total_sales = st.number_input(
-                    "売上個数(～以上)",
+                    "売上個数（この数以上）",
                     min_value=0,
                     value=int(f_sku["min_total_sales"]),
                 )
 
-                submit_sku = st.form_submit_button("この条件で表示")
+                submit_sku = st.form_submit_button("🔎 この条件で表示", use_container_width=True)
+
+            st.markdown('</div>', unsafe_allow_html=True)
 
             if submit_sku:
                 if start_date > end_date:
@@ -760,88 +808,60 @@ def main():
 
                 sales_grouped = sales_grouped.sort_values("売上個数合計", ascending=False)
 
-                # 画像列
+                # 画像列（URL形式で直接返す）
                 img_master = load_image_master()
                 base_url = "https://image.rakuten.co.jp/hype/cabinet"
 
-                def to_img(code):
+                def to_img_url_s(code):
                     key = str(code).strip()
                     rel = img_master.get(key, "")
-                    if not rel:
-                        return ""
-                    return f'<img src="{base_url + rel}" width="70">'
+                    return (base_url + rel) if rel else ""
 
-                sales_grouped["画像"] = sales_grouped["商品基本コード"].apply(to_img)
+                sales_grouped["画像"] = sales_grouped["商品基本コード"].apply(to_img_url_s)
 
-                # 表示用：1列にまとめて2行表示（今年 + 前年）
-                sales_grouped["指定日売上個数(昨年売上個数)"] = (
-                    sales_grouped["売上個数合計"].astype(int).astype(str)
-                    + "<br><span style='color:#666;font-size:12px;'>"
-                    + "（前年:" + sales_grouped["昨年売上個数"].astype(int).astype(str) + "）"
-                    + "</span>"
+                # 今年・前年を別列で保持
+                sales_grouped["今年売上"] = sales_grouped["売上個数合計"].astype(int)
+                sales_grouped["前年売上"] = sales_grouped["昨年売上個数"].astype(int)
+
+                # 不要列を落とす
+                sales_grouped = sales_grouped.drop(
+                    columns=["売上個数合計", "昨年売上個数", "増減値合計",
+                             "指定日売上個数(昨年売上個数)"], errors="ignore"
                 )
 
-                # もう要らない列を落とす
-                sales_grouped = sales_grouped.drop(columns=["売上個数合計", "昨年売上個数", "増減値合計"], errors="ignore")
-
-                # 表示順
-                cols = sales_grouped.columns.tolist()
-                if "画像" in cols:
-                    cols.insert(0, cols.pop(cols.index("画像")))
-                sales_grouped = sales_grouped[cols]
-
                 display_cols = [
-                    "画像",
-                    "商品コード",
-                    "商品基本コード",
-                    "商品名",
-                    "属性1名",
-                    "属性2名",
-                    "指定日売上個数(昨年売上個数)",
-                    "現在庫",
+                    "画像", "商品コード", "商品基本コード", "商品名",
+                    "属性1名", "属性2名", "今年売上", "前年売上", "現在庫",
                 ]
                 display_cols = [c for c in display_cols if c in sales_grouped.columns]
                 df_view = sales_grouped[display_cols]
 
-                st.write(f"📦 SKU数：{len(df_view):,}")
-
-                # df_view は「指定日売上個数(昨年売上個数)」がHTML文字列なので、
-                # dataframe用に “改行テキスト” にして見やすくする
-                df_grid = df_view.copy()
-                if "指定日売上個数(昨年売上個数)" in df_grid.columns:
-                    df_grid["指定日売上個数(昨年売上個数)"] = (
-                        df_grid["指定日売上個数(昨年売上個数)"]
-                        .astype(str)
-                        .str.replace(r"<br\s*/?>", "\n", regex=True)
-                        .str.replace(r"<.*?>", "", regex=True)  # span等を除去
-                    )
-
-                # 画像列が HTML <img> の場合、dataframeでは画像にならないので「URL」にする
-                # （to_imgをURL返す版に変えるのが一番）
-                # ここでは簡易に <img src="..."> からURLを抜く
-                if "画像" in df_grid.columns:
-                    df_grid["画像"] = (
-                        df_grid["画像"]
-                        .astype(str)
-                        .str.extract(r'src="([^"]+)"', expand=False)
-                        .fillna("")
-                    )
+                st.markdown(
+                    f'<div class="metric-bar">'
+                    f'<div class="metric-chip">SKU数<strong>{len(df_view):,}</strong></div>'
+                    f'<div class="metric-chip">集計期間<strong>{start_date} ～ {end_date}</strong></div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
 
                 event = st.dataframe(
-                    df_grid,
+                    df_view,
                     hide_index=True,
                     use_container_width=True,
                     selection_mode="single-row",
                     on_select="rerun",
                     column_config={
-                        "画像": st.column_config.ImageColumn("画像"),
-                    } if "画像" in df_grid.columns else None,
+                        "画像":    st.column_config.ImageColumn("画像", width="small"),
+                        "今年売上": st.column_config.NumberColumn("今年売上", format="%d"),
+                        "前年売上": st.column_config.NumberColumn("前年売上", format="%d"),
+                        "現在庫":  st.column_config.NumberColumn("現在庫",   format="%d"),
+                    } if "画像" in df_view.columns else None,
                 )
 
                 # 行クリックでSKU取得 → ドロワー表示
                 sel = event.selection.get("rows", [])
                 if sel:
-                    clicked_row = df_grid.iloc[sel[0]]
+                    clicked_row = df_view.iloc[sel[0]]
                     st.session_state["selected_sku"] = str(clicked_row["商品コード"]).strip()
 
                 # 右ドロワー（選択されている時だけ）
