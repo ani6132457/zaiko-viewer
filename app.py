@@ -249,24 +249,34 @@ def main():
     if default_start < min_date:
         default_start = min_date
 
-    if "sku_filters" not in st.session_state:
-        st.session_state["sku_filters"] = {
-            "start_date": default_start,
-            "end_date": max_date,
-            "keyword": "",
-            "min_total_sales": 0,
-        }
+    # フィルター入力値を session_state のフラットなキーで管理
+    # （st.form 内で key= に渡すことで value= の上書き問題を回避）
+    if "sku_applied" not in st.session_state:
         st.session_state["sku_applied"] = False
-
-    if "restock_filters" not in st.session_state:
-        st.session_state["restock_filters"] = {
-            "keyword": "",
-            "min_total_sales": 0,
-            "restock_months": 1,
-            "target_days": 30,
-            "max_current_stock": 999999,
-        }
+    if "restock_applied" not in st.session_state:
         st.session_state["restock_applied"] = True
+
+    # 売上個数タブ用デフォルト
+    if "sku_keyword" not in st.session_state:
+        st.session_state["sku_keyword"] = ""
+    if "sku_start_date" not in st.session_state:
+        st.session_state["sku_start_date"] = default_start
+    if "sku_end_date" not in st.session_state:
+        st.session_state["sku_end_date"] = max_date
+    if "sku_min_sales" not in st.session_state:
+        st.session_state["sku_min_sales"] = 0
+
+    # 発注推奨タブ用デフォルト
+    if "rs_keyword" not in st.session_state:
+        st.session_state["rs_keyword"] = ""
+    if "rs_min_sales" not in st.session_state:
+        st.session_state["rs_min_sales"] = 0
+    if "rs_months" not in st.session_state:
+        st.session_state["rs_months"] = 1
+    if "rs_target_days" not in st.session_state:
+        st.session_state["rs_target_days"] = 30
+    if "rs_max_stock" not in st.session_state:
+        st.session_state["rs_max_stock"] = 999999
 
 
     # ==========================
@@ -414,42 +424,40 @@ def main():
             st.markdown('<div class="filter-card"><h3>🔍 絞り込み条件</h3>', unsafe_allow_html=True)
             st.caption(f"データ最終日：{max_date}")
 
-            f_r = st.session_state["restock_filters"]
-
             with st.form("restock_form"):
-                keyword_r = st.text_input(
+                st.text_input(
                     "キーワード（商品コード / 商品基本コード / 商品名）",
-                    value=f_r["keyword"],
+                    key="rs_keyword",
                 )
-                min_total_sales_r = st.number_input(
+                st.number_input(
                     "売上個数（この数以上）",
                     min_value=0,
-                    value=int(f_r["min_total_sales"]),
+                    key="rs_min_sales",
                 )
 
                 months_choices = [1, 2, 3, 4, 5, 6]
-                default_restock = int(f_r.get("restock_months", 1))
-                if default_restock not in months_choices:
-                    default_restock = 1
-
-                restock_months = st.selectbox(
+                cur_months = st.session_state["rs_months"]
+                if cur_months not in months_choices:
+                    cur_months = 1
+                st.selectbox(
                     "集計期間（直近◯ヶ月）",
                     months_choices,
-                    index=months_choices.index(default_restock),
+                    index=months_choices.index(cur_months),
+                    key="rs_months",
                 )
 
-                target_days = st.number_input(
+                st.number_input(
                     "確保したい在庫日数",
                     min_value=1,
                     max_value=365,
-                    value=int(f_r["target_days"]),
+                    key="rs_target_days",
                 )
 
-                max_current_stock = st.number_input(
+                st.number_input(
                     "現在庫フィルター（この数以下）",
                     min_value=0,
                     max_value=999999,
-                    value=int(f_r.get("max_current_stock", 999999)),
+                    key="rs_max_stock",
                 )
 
                 submit_restock = st.form_submit_button("🔎 この条件で表示", use_container_width=True)
@@ -457,25 +465,17 @@ def main():
             st.markdown('</div>', unsafe_allow_html=True)
 
             if submit_restock:
-                st.session_state["restock_filters"] = {
-                    "keyword": keyword_r,
-                    "min_total_sales": int(min_total_sales_r),
-                    "restock_months": int(restock_months),
-                    "target_days": int(target_days),
-                    "max_current_stock": int(max_current_stock),
-                }
                 st.session_state["restock_applied"] = True
 
         with right:
             if not st.session_state["restock_applied"]:
                 st.info("左側で条件を設定して『この条件で表示』を押してください。")
             else:
-                f_r = st.session_state["restock_filters"]
-                keyword_r = f_r["keyword"]
-                min_total_sales_r = f_r["min_total_sales"]
-                restock_months = f_r["restock_months"]
-                target_days = f_r["target_days"]
-                max_current_stock = f_r["max_current_stock"]
+                keyword_r       = st.session_state["rs_keyword"]
+                min_total_sales_r = int(st.session_state["rs_min_sales"])
+                restock_months  = int(st.session_state["rs_months"])
+                target_days     = int(st.session_state["rs_target_days"])
+                max_current_stock = int(st.session_state["rs_max_stock"])
 
                 end_r = max_date
                 start_r = (pd.Timestamp(max_date) - pd.DateOffset(months=restock_months)).date()
@@ -622,29 +622,27 @@ def main():
             st.markdown('<div class="filter-card"><h3>🔍 絞り込み条件</h3>', unsafe_allow_html=True)
             st.caption(f"データ期間：{min_date} ～ {max_date}")
 
-            f_sku = st.session_state["sku_filters"]
-
             with st.form("sku_form"):
-                start_date = st.date_input(
+                st.date_input(
                     "開始日",
-                    value=f_sku["start_date"],
+                    key="sku_start_date",
                     min_value=min_date,
                     max_value=max_date,
                 )
-                end_date = st.date_input(
+                st.date_input(
                     "終了日",
-                    value=f_sku["end_date"],
+                    key="sku_end_date",
                     min_value=min_date,
                     max_value=max_date,
                 )
-                keyword = st.text_input(
+                st.text_input(
                     "キーワード（商品コード / 商品基本コード / 商品名）",
-                    value=f_sku["keyword"],
+                    key="sku_keyword",
                 )
-                min_total_sales = st.number_input(
+                st.number_input(
                     "売上個数（この数以上）",
                     min_value=0,
-                    value=int(f_sku["min_total_sales"]),
+                    key="sku_min_sales",
                 )
 
                 submit_sku = st.form_submit_button("🔎 この条件で表示", use_container_width=True)
@@ -652,25 +650,21 @@ def main():
             st.markdown('</div>', unsafe_allow_html=True)
 
             if submit_sku:
-                if start_date > end_date:
-                    start_date, end_date = end_date, start_date
-                st.session_state["sku_filters"] = {
-                    "start_date": start_date,
-                    "end_date": end_date,
-                    "keyword": keyword,
-                    "min_total_sales": int(min_total_sales),
-                }
+                # 開始・終了日の順序を自動補正
+                if st.session_state["sku_start_date"] > st.session_state["sku_end_date"]:
+                    st.session_state["sku_start_date"], st.session_state["sku_end_date"] = (
+                        st.session_state["sku_end_date"], st.session_state["sku_start_date"]
+                    )
                 st.session_state["sku_applied"] = True
 
         with right:
             if not st.session_state["sku_applied"]:
                 st.info("左側で条件を設定して『この条件で表示』を押してください。")
             else:
-                f_sku = st.session_state["sku_filters"]
-                start_date = f_sku["start_date"]
-                end_date = f_sku["end_date"]
-                keyword = f_sku["keyword"]
-                min_total_sales = f_sku["min_total_sales"]
+                start_date     = st.session_state["sku_start_date"]
+                end_date       = st.session_state["sku_end_date"]
+                keyword        = st.session_state["sku_keyword"]
+                min_total_sales = int(st.session_state["sku_min_sales"])
 
                 # 今年ファイル
                 main_files = [fi for fi in file_infos if start_date <= fi["date"] <= end_date]
