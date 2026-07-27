@@ -4,6 +4,8 @@ import glob
 import os
 import html
 import re
+import json
+import streamlit.components.v1 as components
 from datetime import datetime, timedelta
 from pandas.tseries.offsets import DateOffset
 
@@ -62,6 +64,76 @@ def load_image_master():
     merged["商品画像パス1"] = merged["商品画像パス1"].astype(str).str.strip()
 
     return dict(zip(merged["商品管理番号（商品URL）"], merged["商品画像パス1"]))
+
+
+# ==========================
+# SKUマスター自動読み込み（CS品番 ⇔ 弊社SKU）
+# ==========================
+@st.cache_data
+def load_sku_master():
+    """
+    「SKUマスター」フォルダ内のCSV（列: CS品番, SKU）を自動読み込みし、
+    納品推奨数システムに渡すための [{"cs_no":..., "sku":...}, ...] を返す。
+    """
+    folder = "SKUマスター"
+    paths = glob.glob(os.path.join(folder, "*.csv"))
+    if not paths:
+        return []
+
+    dfs = []
+    for p in paths:
+        try:
+            df = pd.read_csv(p, encoding="cp932")
+        except UnicodeDecodeError:
+            df = pd.read_csv(p, encoding="utf-8-sig")
+        if "CS品番" in df.columns and "SKU" in df.columns:
+            dfs.append(df[["CS品番", "SKU"]])
+
+    if not dfs:
+        return []
+
+    merged = pd.concat(dfs, ignore_index=True)
+    merged["CS品番"] = merged["CS品番"].astype(str).str.strip()
+    merged["SKU"] = merged["SKU"].astype(str).str.strip()
+    merged = merged[(merged["CS品番"] != "") & (merged["SKU"] != "")]
+    merged = merged.drop_duplicates(subset=["CS品番"], keep="last")
+
+    return [
+        {"cs_no": row["CS品番"], "sku": row["SKU"]}
+        for _, row in merged.iterrows()
+    ]
+
+
+# ==========================
+# テンポスター現在庫マップ（商品コード＝SKU → 現在庫）
+# ==========================
+@st.cache_data
+def get_tempostar_stock_map(file_paths):
+    """
+    全期間のTempostar CSVから、商品コードごとの最新の「変動後」在庫数を計算する。
+    （フィルター期間に関わらず、常に最新の在庫を反映するため全ファイルを対象にする）
+    """
+    if not file_paths:
+        return {}
+
+    df_all = load_tempostar_data(tuple(sorted(file_paths)))
+
+    if "商品コード" not in df_all.columns or "変動後" not in df_all.columns:
+        return {}
+
+    df_all = df_all.copy()
+    df_all["商品コード"] = df_all["商品コード"].astype(str).str.strip()
+
+    # ファイル名の日付順に並べ替えてから、SKUごとに最後の値（＝最新在庫）を取る
+    df_all["_日付"] = df_all["元ファイル"].astype(str).str.extract(r"(\d{8})")
+    df_all = df_all.sort_values("_日付")
+
+    stock = (
+        df_all.groupby("商品コード", dropna=False)["変動後"]
+        .last()
+        .to_dict()
+    )
+    return {k: int(v) for k, v in stock.items()}
 
 
 # ==========================
@@ -866,14 +938,56 @@ def main():
         # タブ2：在庫少商品（発注目安）
         # --------------------------------------------------
 
+    def render_delivery_tab(file_infos):
+        # --- 納品推奨数システム（HTMLツール埋め込み＋テンポスター在庫連携）---
+        html_path = "納品推奨数システムv5.html"
+        if not os.path.exists(html_path):
+            st.error(
+                f"『{html_path}』が見つかりません。app.py と同じフォルダに配置してください。"
+            )
+            return
+
+        sku_master = load_sku_master()
+        all_paths = [fi["path"] for fi in file_infos]
+        stock_map = get_tempostar_stock_map(all_paths)
+
+        if not sku_master:
+            st.warning(
+                "『SKUマスター』フォルダにCSV（列名: CS品番, SKU）が見つからないため、"
+                "テンポスター在庫との連携なしで表示します。"
+            )
+
+        with open(html_path, "r", encoding="utf-8") as f:
+            html_content = f.read()
+
+        injected_script = (
+            "<script>"
+            f"window.__SKU_MASTER__ = {json.dumps(sku_master, ensure_ascii=False)};"
+            f"window.__TEMPOSTAR_STOCK__ = {json.dumps(stock_map, ensure_ascii=False)};"
+            "</script>"
+        )
+        # 本体スクリプトが動く前に注入データを読み込ませるため、<script>タグの直前に挿入
+        html_content = html_content.replace("<script>", injected_script + "<script>", 1)
+
+        st.caption(
+            f"テンポスター在庫連携：SKUマスター {len(sku_master)}件 ｜ "
+            f"テンポスター在庫データ {len(stock_map)}SKU分"
+        )
+        components.html(html_content, height=1600, scrolling=True)
+
     # タブ順：最初に「在庫少商品（発注目安）」を開く
-    tab_restock, tab_sales = st.tabs(["発注推奨一覧", "売上個数一覧"])
+    tab_restock, tab_sales, tab_delivery = st.tabs(
+        ["発注推奨一覧", "売上個数一覧", "納品推奨数システム"]
+    )
 
     with tab_restock:
         render_restock_tab(file_infos, min_date, max_date)
 
     with tab_sales:
         render_sales_tab(file_infos, min_date, max_date)
+
+    with tab_delivery:
+        render_delivery_tab(file_infos)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,1102 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>納品推奨数システム</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #f7f6f3;
+    --surface: #ffffff;
+    --surface2: #f0efe9;
+    --border: rgba(0,0,0,0.1);
+    --border-md: rgba(0,0,0,0.18);
+    --text: #1a1a18;
+    --text-muted: #6b6b67;
+    --text-hint: #9e9e99;
+    --accent: #1a56db;
+    --accent-bg: #eff4ff;
+    --accent-text: #1e429f;
+    --warn-bg: #fdf3e3;
+    --warn-text: #92400e;
+    --danger-bg: #fef2f2;
+    --danger-text: #991b1b;
+    --ok-bg: #f0fdf4;
+    --ok-text: #166534;
+    --info-bg: #eff6ff;
+    --info-text: #1e429f;
+    --radius: 8px;
+    --radius-lg: 12px;
+  }
+
+  body {
+    font-family: 'Hiragino Sans', 'Yu Gothic UI', 'Meiryo UI', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.6;
+    min-height: 100vh;
+  }
+
+  /* ── ヘッダー ── */
+  header {
+    background: var(--surface);
+    border-bottom: 0.5px solid var(--border);
+    padding: 0 2rem;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .header-left { display: flex; align-items: center; gap: 12px; }
+  .logo { font-size: 15px; font-weight: 600; color: var(--text); letter-spacing: -0.3px; }
+  .header-badge {
+    font-size: 11px; padding: 2px 8px;
+    border-radius: 100px;
+    background: var(--warn-bg); color: var(--warn-text);
+  }
+  .base-date { font-size: 12px; color: var(--text-muted); }
+
+  /* ── メインレイアウト ── */
+  main { max-width: 1400px; margin: 0 auto; padding: 2rem; }
+
+  /* ── アップロードエリア ── */
+  .upload-section {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 2rem;
+  }
+  .upload-card {
+    background: var(--surface);
+    border: 1.5px dashed var(--border-md);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+    position: relative;
+  }
+  .upload-card:hover { border-color: var(--accent); background: var(--accent-bg); }
+  .upload-card.loaded { border-style: solid; border-color: #16a34a; background: var(--ok-bg); }
+  .upload-card.dragging { border-color: var(--accent); background: var(--accent-bg); }
+  .upload-card input[type=file] {
+    position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+  }
+  .upload-label { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+  .upload-desc { font-size: 12px; color: var(--text-muted); }
+  .upload-status { font-size: 12px; margin-top: 8px; font-weight: 500; }
+  .upload-card.loaded .upload-status { color: #16a34a; }
+  .upload-card:not(.loaded) .upload-status { color: var(--text-hint); }
+  .upload-icon { font-size: 24px; margin-bottom: 8px; }
+
+  .run-btn {
+    display: block; width: 100%;
+    background: var(--accent); color: #fff;
+    border: none; border-radius: var(--radius);
+    padding: 12px; font-size: 14px; font-weight: 600;
+    cursor: pointer; transition: opacity 0.15s;
+    margin-bottom: 2rem;
+  }
+  .run-btn:hover { opacity: 0.88; }
+  .run-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* ── メトリクス ── */
+  .metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+    margin-bottom: 1.5rem;
+  }
+  .metric {
+    background: var(--surface);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1rem 1.25rem;
+  }
+  .metric-label { font-size: 11px; color: var(--text-muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .metric-value { font-size: 26px; font-weight: 700; color: var(--text); }
+  .metric-sub { font-size: 11px; color: var(--text-hint); margin-top: 3px; }
+
+  /* ── インフォバー ── */
+  .info-bar {
+    background: var(--info-bg);
+    border-radius: var(--radius);
+    padding: 10px 14px;
+    font-size: 12px;
+    color: var(--info-text);
+    margin-bottom: 1.25rem;
+    line-height: 1.7;
+  }
+
+  /* ── コントロール ── */
+  .controls {
+    display: flex; gap: 8px; flex-wrap: wrap;
+    align-items: center; margin-bottom: 1rem;
+  }
+  .controls input[type=text] {
+    flex: 1; min-width: 200px;
+    border: 0.5px solid var(--border-md);
+    border-radius: var(--radius);
+    padding: 7px 12px;
+    font-size: 13px;
+    background: var(--surface);
+    color: var(--text);
+    outline: none;
+  }
+  .controls input[type=text]:focus { border-color: var(--accent); }
+  .controls select {
+    border: 0.5px solid var(--border-md);
+    border-radius: var(--radius);
+    padding: 7px 12px;
+    font-size: 13px;
+    background: var(--surface);
+    color: var(--text);
+    cursor: pointer;
+    outline: none;
+  }
+  .export-btn {
+    background: var(--surface); border: 0.5px solid var(--border-md);
+    border-radius: var(--radius); padding: 7px 14px;
+    font-size: 13px; cursor: pointer; color: var(--text);
+    white-space: nowrap; transition: background 0.12s;
+  }
+  .export-btn:hover { background: var(--surface2); }
+
+  /* ── タブ ── */
+  .tabs { display: flex; gap: 4px; margin-bottom: 1rem; }
+  .tab {
+    font-size: 13px; padding: 5px 16px;
+    border-radius: 100px;
+    cursor: pointer;
+    border: 0.5px solid var(--border-md);
+    background: var(--surface);
+    color: var(--text-muted);
+    transition: all 0.12s;
+  }
+  .tab:hover { background: var(--surface2); }
+  .tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+  /* ── テーブル ── */
+  .table-wrap {
+    background: var(--surface);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    overflow-x: auto;
+    max-height: calc(100vh - 280px);
+    overflow-y: auto;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 860px; }
+  thead th {
+    background: var(--surface2);
+    padding: 9px 12px;
+    text-align: left;
+    font-weight: 600;
+    font-size: 11px;
+    color: var(--text-muted);
+    border-bottom: 0.5px solid var(--border);
+    white-space: nowrap;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  thead th.r { text-align: right; }
+  thead th { cursor: pointer; }
+  thead th:hover { background: #e8e7e0; color: var(--text); }
+  thead th .sort-icon { margin-left: 4px; opacity: 0.35; font-style: normal; }
+  thead th.sort-active { color: var(--accent); }
+  thead th.sort-active .sort-icon { opacity: 1; }
+  tbody tr { border-bottom: 0.5px solid var(--border); transition: background 0.08s; }
+  tbody tr:last-child { border-bottom: none; }
+  tbody tr:hover { background: var(--surface2); }
+  td { padding: 8px 12px; color: var(--text); vertical-align: middle; }
+  td.r { text-align: right; }
+  td.name { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  td.bold { font-weight: 600; }
+  td.warn { font-weight: 600; color: #d97706; }
+  td.info { font-weight: 600; color: var(--accent); }
+
+  .chip {
+    display: inline-block; font-size: 11px; padding: 2px 8px;
+    border-radius: 100px; font-weight: 600; white-space: nowrap;
+  }
+  .chip-danger { background: var(--danger-bg); color: var(--danger-text); }
+  .chip-unlisted { background: #f3f0ff; color: #5b21b6; }
+  .chip-warn   { background: var(--warn-bg);   color: var(--warn-text); }
+  .chip-ok     { background: var(--ok-bg);     color: var(--ok-text); }
+  .chip-info   { background: var(--info-bg);   color: var(--info-text); }
+
+  /* ── ページネーション ── */
+  .pagination {
+    display: flex; align-items: center; justify-content: flex-end;
+    gap: 8px; margin-top: 1rem; font-size: 13px; color: var(--text-muted);
+  }
+  .pagination button {
+    border: 0.5px solid var(--border-md); border-radius: var(--radius);
+    background: var(--surface); padding: 4px 12px; cursor: pointer;
+    font-size: 12px; color: var(--text);
+  }
+  .pagination button:hover:not(:disabled) { background: var(--surface2); }
+  .pagination button:disabled { opacity: 0.35; cursor: not-allowed; }
+
+  /* ── 空状態 ── */
+  .empty {
+    text-align: center; padding: 4rem 2rem;
+    color: var(--text-hint); font-size: 14px;
+  }
+  .empty-icon { font-size: 40px; margin-bottom: 12px; }
+
+  /* ── 設定パネル ── */
+  .settings-row {
+    display: flex; gap: 16px; margin-bottom: 1.5rem; flex-wrap: wrap;
+  }
+  .setting-item {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--surface);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius);
+    padding: 8px 14px;
+    font-size: 13px;
+  }
+  .setting-item label { color: var(--text-muted); }
+  .setting-item input[type=number] {
+    width: 56px; border: 0.5px solid var(--border-md);
+    border-radius: 4px; padding: 3px 6px; font-size: 13px;
+    text-align: right; color: var(--text); background: var(--bg);
+    outline: none;
+  }
+
+  #results { display: none; }
+
+  /* ── ステータスフィルター ── */
+  .status-filter {
+    display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+  }
+  .status-check {
+    display: flex; align-items: center; gap: 6px;
+    padding: 5px 12px;
+    border-radius: 100px;
+    border: 1.5px solid var(--border-md);
+    background: var(--surface);
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--text-muted);
+    transition: all 0.12s;
+    user-select: none;
+  }
+  .status-check input[type=checkbox] { display: none; }
+  .status-check .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: currentColor; opacity: 0.4; flex-shrink: 0;
+  }
+  .status-check.active { color: var(--text); font-weight: 600; border-color: currentColor; }
+  .status-check.active .dot { opacity: 1; }
+  .status-check[data-status="欠品"]       { --c: #991b1b; }
+  .status-check[data-status="要発注"]     { --c: #92400e; }
+  .status-check[data-status="発注推奨"]   { --c: #1e429f; }
+  .status-check[data-status="適正"]       { --c: #166534; }
+  .status-check { color: var(--text-muted); }
+  .status-check[data-status="欠品"].active       { color: #991b1b; border-color: #991b1b; background: var(--danger-bg); }
+  .status-check[data-status="要発注"].active     { color: #92400e; border-color: #d97706; background: var(--warn-bg); }
+  .status-check[data-status="発注推奨"].active   { color: #1e429f; border-color: #3b82f6; background: var(--info-bg); }
+  .status-check[data-status="適正"].active       { color: #166534; border-color: #16a34a; background: var(--ok-bg); }
+  .status-check[data-status="未出品"].active     { color: #5b21b6; border-color: #7c3aed; background: #f3f0ff; }
+  .filter-reset {
+    font-size: 12px; color: var(--text-hint); cursor: pointer;
+    padding: 5px 8px; border-radius: var(--radius);
+    border: none; background: none;
+  }
+  .filter-reset:hover { color: var(--text-muted); background: var(--surface2); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-left">
+    <span class="logo">📦 納品推奨数システム</span>
+    <span class="header-badge" id="base-date-badge">基準日: —</span>
+  </div>
+  <span class="base-date">在庫日報 + 直近5日以内の未反映納品を加味</span>
+</header>
+
+<main>
+
+  <!-- アップロード -->
+  <div class="upload-section" style="grid-template-columns:1fr 1fr 1fr 1fr 1fr">
+    <div class="upload-card" id="card-inv" ondragover="onDrag(event,'inv')" ondragleave="offDrag('inv')" ondrop="onDrop(event,'inv')">
+      <input type="file" accept=".csv" id="file-inv" onchange="loadFile('inv', this.files[0])">
+      <div class="upload-icon">📊</div>
+      <div class="upload-label">① 在庫日報 CSV</div>
+      <div class="upload-desc">在庫日報_YYYY_MM_DD.csv</div>
+      <div class="upload-status" id="status-inv">ファイルを選択またはドロップ</div>
+    </div>
+    <div class="upload-card" id="card-del" ondragover="onDrag(event,'del')" ondragleave="offDrag('del')" ondrop="onDrop(event,'del')">
+      <input type="file" accept=".csv" id="file-del" onchange="loadFile('del', this.files[0])">
+      <div class="upload-icon">🚚</div>
+      <div class="upload-label">② 納品書 CSV</div>
+      <div class="upload-desc">納品書_N_.csv</div>
+      <div class="upload-status" id="status-del">ファイルを選択またはドロップ</div>
+    </div>
+    <div class="upload-card" id="card-ord" ondragover="onDrag(event,'ord')" ondragleave="offDrag('ord')" ondrop="onDrop(event,'ord')">
+      <input type="file" accept=".csv" id="file-ord" onchange="loadFile('ord', this.files[0])">
+      <div class="upload-icon">🛒</div>
+      <div class="upload-label">③ 注文 CSV <span style="font-size:11px;color:var(--text-hint);font-weight:400">（任意）</span></div>
+      <div class="upload-desc">YYYY_MM_DD.csv（Shift-JIS）</div>
+      <div class="upload-status" id="status-ord">ファイルを選択またはドロップ</div>
+    </div>
+    <div class="upload-card" id="card-items" ondragover="onDrag(event,'items')" ondragleave="offDrag('items')" ondrop="onDrop(event,'items')">
+      <input type="file" accept=".csv" id="file-items" onchange="loadFile('items', this.files[0])">
+      <div class="upload-icon">📋</div>
+      <div class="upload-label">④ 商品一覧 CSV <span style="font-size:11px;color:var(--text-hint);font-weight:400">（任意）</span></div>
+      <div class="upload-desc">商品一覧.csv（未出品判定用）</div>
+      <div class="upload-status" id="status-items">ファイルを選択またはドロップ</div>
+    </div>
+    <div class="upload-card" id="card-master" ondragover="onDrag(event,'master')" ondragleave="offDrag('master')" ondrop="onDrop(event,'master')">
+      <input type="file" accept=".csv" id="file-master" onchange="loadMasterFile(this.files[0])">
+      <div class="upload-icon">🔗</div>
+      <div class="upload-label">⑤ SKUマスター CSV <span style="font-size:11px;color:var(--text-hint);font-weight:400">（任意）</span></div>
+      <div class="upload-desc">CS品番,SKU（在庫下げCSV用）</div>
+      <div class="upload-status" id="status-master">ファイルを選択またはドロップ</div>
+    </div>
+  </div>
+
+  <!-- 設定 -->
+  <div class="settings-row">
+    <div class="setting-item">
+      <label>基準日</label>
+      <input type="date" id="base-date" style="border:0.5px solid var(--border-md);border-radius:4px;padding:3px 6px;font-size:13px;color:var(--text);background:var(--bg);outline:none;" value="">
+    </div>
+    <div class="setting-item">
+      <label>未反映とみなす日数</label>
+      <input type="number" id="recent-days" value="5" min="1" max="30">
+      <span style="color:var(--text-muted)">日以内</span>
+    </div>
+    <div class="setting-item">
+      <label>目標在庫日数</label>
+      <input type="number" id="target-days" value="30" min="1" max="90">
+      <span style="color:var(--text-muted)">日分</span>
+    </div>
+    <div class="setting-item">
+      <label>自社に残す最低在庫数</label>
+      <input type="number" id="keep-stock" value="0" min="0" max="999999" onchange="render()">
+      <span style="color:var(--text-muted)">個</span>
+    </div>
+  </div>
+
+  <button class="run-btn" id="run-btn" onclick="runAnalysis()" disabled>
+    ▶ 分析を実行
+  </button>
+
+  <!-- 結果 -->
+  <div id="results">
+    <div class="metrics" id="metrics"></div>
+    <div class="info-bar" id="info-bar"></div>
+
+    <div class="tabs">
+      <span class="tab active" id="tab-all" onclick="switchTab('all')">全件</span>
+      <span class="tab" id="tab-delivery" onclick="switchTab('delivery')">納品数入力済み <span id="tab-delivery-count"></span></span>
+      <span class="tab" id="tab-master" onclick="switchTab('master')">SKUマスター管理</span>
+    </div>
+
+    <div id="panel-list">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:1rem;">
+        <div class="status-filter">
+          <span style="font-size:12px;color:var(--text-muted);white-space:nowrap">ステータス：</span>
+          <label class="status-check" data-status="欠品">
+            <input type="checkbox" onchange="toggleStatus('欠品',this)"><span class="dot"></span>欠品
+          </label>
+          <label class="status-check" data-status="要発注">
+            <input type="checkbox" onchange="toggleStatus('要発注',this)"><span class="dot"></span>要発注
+          </label>
+          <label class="status-check" data-status="発注推奨">
+            <input type="checkbox" onchange="toggleStatus('発注推奨',this)"><span class="dot"></span>発注推奨
+          </label>
+          <label class="status-check" data-status="適正">
+            <input type="checkbox" onchange="toggleStatus('適正',this)"><span class="dot"></span>適正
+          </label>
+          <label class="status-check" data-status="未出品">
+            <input type="checkbox" onchange="toggleStatus('未出品',this)"><span class="dot"></span>未出品
+          </label>
+          <button class="filter-reset" onclick="resetStatus()">✕ すべて表示</button>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button class="export-btn" onclick="exportCSV()">⬇ CSVエクスポート</button>
+          <button class="export-btn" style="border-color:#1a56db;color:#1a56db" onclick="exportStockDownCSV()">⬇ 在庫を下げるCSV</button>
+        </div>
+      </div>
+
+      <div class="controls">
+        <input type="text" id="search" placeholder="商品名・CS品番・カラー・メーカー品番で検索..." oninput="render()">
+        <select id="cat-filter" onchange="render()"><option value="">カテゴリ（全て）</option></select>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr id="thead-row"></tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+      <div class="pagination" id="pagination"></div>
+    </div>
+
+    <div id="panel-master" style="display:none">
+      <div class="info-bar">
+        📌 SKUマスターは画面上部の「⑤ SKUマスター CSV」から読み込みます。ここでは内容の確認・追加・編集・削除ができます。
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;gap:8px;">
+        <div style="font-size:12px;color:var(--text-muted)">登録件数: <b id="master-count">0</b> 件（編集内容はブラウザ上のみに保持されます。保存するには下のボタンでCSVをダウンロードし、同じファイル名で元のファイルを上書きしてください）</div>
+        <div style="display:flex;gap:8px;">
+          <button class="export-btn" onclick="addMasterRow()">＋ 行を追加</button>
+          <button class="export-btn" style="border-color:#1a56db;color:#1a56db" onclick="exportMasterCSV()">⬇ マスターCSVをダウンロード</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:45%" onclick="sortMaster('cs_no')">CS品番<i class="sort-icon" id="micon-cs_no">⇅</i></th>
+              <th style="width:45%" onclick="sortMaster('sku')">SKU<i class="sort-icon" id="micon-sku">⇅</i></th>
+              <th style="width:10%">操作</th>
+            </tr>
+          </thead>
+          <tbody id="master-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+
+<script>
+// ── 状態 ──
+let rawInv = null, rawDel = null, rawOrd = null, rawItems = null;
+let data = [];
+let selectedStatuses = new Set();
+let currentPage = 1;
+const PER_PAGE = 100;
+let sortKey = 'recommend', sortDir = -1; // デフォルト: 推奨納品数 降順
+let viewMode = 'all'; // 'all' | 'delivery'
+let masterMap = []; // [{cs_no, sku}]
+let masterIdSeq = 0;
+let masterSortKey = 'cs_no', masterSortDir = 1;
+let tempostarStockMap = {}; // { SKU: 現在庫 }（Streamlit側から自動注入）
+let tempostarInjected = false;
+
+// ── Streamlit連携: 自動注入データの反映 ──
+(function applyInjectedData() {
+  if (typeof window.__TEMPOSTAR_STOCK__ === 'object' && window.__TEMPOSTAR_STOCK__) {
+    tempostarStockMap = window.__TEMPOSTAR_STOCK__;
+    tempostarInjected = true;
+  }
+  if (Array.isArray(window.__SKU_MASTER__) && window.__SKU_MASTER__.length > 0) {
+    masterMap = window.__SKU_MASTER__.map(r => ({
+      _id: 'm' + (masterIdSeq++),
+      cs_no: r.cs_no || '',
+      sku: r.sku || '',
+    }));
+    const card = document.getElementById('card-master');
+    const status = document.getElementById('status-master');
+    if (card) card.classList.add('loaded');
+    if (status) status.textContent = `✓ 自動読み込み（${masterMap.length}件・テンポスター連携）`;
+  }
+})();
+
+function switchTab(mode) {
+  viewMode = mode;
+  document.getElementById('tab-all').classList.toggle('active', mode === 'all');
+  document.getElementById('tab-delivery').classList.toggle('active', mode === 'delivery');
+  document.getElementById('tab-master').classList.toggle('active', mode === 'master');
+  document.getElementById('panel-list').style.display = mode === 'master' ? 'none' : 'block';
+  document.getElementById('panel-master').style.display = mode === 'master' ? 'block' : 'none';
+  if (mode === 'master') { renderMaster(); return; }
+  currentPage = 1;
+  render();
+}
+
+function updateDelivery(id, val) {
+  const row = data.find(r => r._id === id);
+  if (!row) return;
+  const n = val === '' ? null : Math.max(0, parseInt(val) || 0);
+  row.deliveryQty = n;
+  updateDeliveryCount();
+}
+
+function updateDeliveryCount() {
+  const n = data.filter(r => r.deliveryQty !== null && r.deliveryQty !== undefined && r.deliveryQty > 0).length;
+  const el = document.getElementById('tab-delivery-count');
+  if (el) el.textContent = n > 0 ? `(${n})` : '';
+}
+
+// ── 今日の日付をデフォルトにセット ──
+(function() {
+  const today = new Date();
+  const y = today.getFullYear();
+  const m = String(today.getMonth()+1).padStart(2,'0');
+  const d = String(today.getDate()).padStart(2,'0');
+  document.getElementById('base-date').value = `${y}-${m}-${d}`;
+})();
+
+// ── ファイルロード ──
+function loadFile(type, file) {
+  if (!file) return;
+  // 注文CSVはShift-JIS、他はUTF-8
+  const encoding = type === 'ord' ? 'Shift-JIS' : 'UTF-8';
+  const reader = new FileReader();
+  reader.onload = e => {
+    if (type === 'inv')   rawInv   = e.target.result;
+    else if (type === 'del')   rawDel   = e.target.result;
+    else if (type === 'ord')   rawOrd   = e.target.result;
+    else if (type === 'items') rawItems = e.target.result;
+    document.getElementById('card-'+type).classList.add('loaded');
+    document.getElementById('status-'+type).textContent = '✓ ' + file.name;
+    checkReady();
+  };
+  reader.readAsText(file, encoding);
+}
+function checkReady() {
+  // 在庫日報と納品書の2つがあれば実行可能（注文CSVは任意）
+  document.getElementById('run-btn').disabled = !(rawInv && rawDel);
+}
+function onDrag(e, type) { e.preventDefault(); document.getElementById('card-'+type).classList.add('dragging'); }
+function offDrag(type)   { document.getElementById('card-'+type).classList.remove('dragging'); }
+function onDrop(e, type) {
+  e.preventDefault();
+  offDrag(type);
+  const file = e.dataTransfer.files[0];
+  if (!file) return;
+  if (type === 'master') loadMasterFile(file);
+  else loadFile(type, file);
+}
+
+// ── CSV パース（BOM対応） ──
+function parseCSV(text) {
+  text = text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const lines = text.trim().split('\n');
+  const strip = s => s.trim().replace(/^"(.*)"$/, '$1').trim();
+  const headers = lines[0].split(',').map(h => strip(h));
+  return lines.slice(1).filter(l => l.trim()).map(line => {
+    const vals = line.split(',');
+    const obj = {};
+    headers.forEach((h, i) => obj[h] = strip(vals[i] || ''));
+    return obj;
+  });
+}
+
+function parseDate(s) {
+  if (!s) return null;
+  const d = s.split(' ')[0];
+  const parts = d.split('/');
+  if (parts.length < 3) return null;
+  return new Date(parts[0], parts[1]-1, parts[2]);
+}
+
+// ── SKUマスター管理（CS品番 ⇔ SKU） ──
+function loadMasterFile(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const buffer = e.target.result;
+    let text = new TextDecoder('utf-8').decode(buffer);
+    if (text.indexOf('\uFFFD') !== -1) {
+      // UTF-8として文字化けする場合はShift-JISとして再デコード
+      try { text = new TextDecoder('shift_jis').decode(buffer); } catch (err) {}
+    }
+    const rows = parseCSV(text);
+    if (rows.length > 0 && rows[0]['CS品番'] === undefined) {
+      const actualHeaders = Object.keys(rows[0]).join(' , ');
+      alert(`SKUマスターCSVの列名が「CS品番」「SKU」と一致しませんでした。\n検出された列名: ${actualHeaders}\n\n1行目のヘッダーを「CS品番,SKU」にして再度読み込んでください。`);
+    }
+    masterMap = rows.map(r => ({
+      _id: 'm' + (masterIdSeq++),
+      cs_no: r['CS品番'] || '',
+      sku: r['SKU'] || '',
+    }));
+    document.getElementById('card-master').classList.add('loaded');
+    document.getElementById('status-master').textContent = '✓ ' + file.name + `（${masterMap.length}件）`;
+    renderMaster();
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function addMasterRow() {
+  masterMap.push({ _id: 'm' + (masterIdSeq++), cs_no: '', sku: '' });
+  renderMaster();
+}
+
+function updateMasterCell(id, field, value) {
+  const row = masterMap.find(m => m._id === id);
+  if (row) row[field] = value;
+}
+
+function deleteMasterRow(id) {
+  masterMap = masterMap.filter(m => m._id !== id);
+  renderMaster();
+}
+
+function sortMaster(key) {
+  if (masterSortKey === key) { masterSortDir *= -1; }
+  else { masterSortKey = key; masterSortDir = 1; }
+  renderMaster();
+}
+
+function renderMaster() {
+  const tbody = document.getElementById('master-tbody');
+  document.getElementById('master-count').textContent = masterMap.length;
+
+  ['cs_no','sku'].forEach(k => {
+    const icon = document.getElementById('micon-'+k);
+    if (!icon) return;
+    icon.textContent = masterSortKey === k ? (masterSortDir === 1 ? '▲' : '▼') : '⇅';
+    icon.parentElement.classList.toggle('sort-active', masterSortKey === k);
+  });
+
+  if (masterMap.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="3"><div class="empty"><div class="empty-icon">🔗</div>マスターCSVを読み込むか、「＋ 行を追加」で登録してください</div></td></tr>`;
+    return;
+  }
+  const list = [...masterMap].sort((a, b) =>
+    (a[masterSortKey] || '').localeCompare((b[masterSortKey] || ''), 'ja', { numeric: true }) * masterSortDir
+  );
+  tbody.innerHTML = list.map(m => `
+    <tr>
+      <td><input type="text" value="${esc(m.cs_no)}" style="width:100%;border:0.5px solid var(--border-md);border-radius:4px;padding:4px 8px;font-size:13px;background:var(--surface);color:var(--text);outline:none;" oninput="updateMasterCell('${m._id}','cs_no',this.value)"></td>
+      <td><input type="text" value="${esc(m.sku)}" style="width:100%;border:0.5px solid var(--border-md);border-radius:4px;padding:4px 8px;font-size:13px;background:var(--surface);color:var(--text);outline:none;" oninput="updateMasterCell('${m._id}','sku',this.value)"></td>
+      <td><button class="filter-reset" onclick="deleteMasterRow('${m._id}')">✕ 削除</button></td>
+    </tr>`).join('');
+}
+
+function exportMasterCSV() {
+  const header = 'CS品番,SKU\n';
+  const body = masterMap.map(m => `"${m.cs_no}","${m.sku}"`).join('\n');
+  const blob = new Blob(['\uFEFF'+header+body], {type:'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `SKUマスター.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// ── 在庫を下げるCSV（納品数入力済み行から生成） ──
+function exportStockDownCSV() {
+  const rows = data.filter(r => r.deliveryQty !== null && r.deliveryQty !== undefined && r.deliveryQty > 0);
+  if (rows.length === 0) {
+    alert('納品数が入力された行がありません。先に「納品数」欄に数値を入力してください。');
+    return;
+  }
+  // CS品番 → SKU のマスター引き当てマップを作成
+  const skuByCS = {};
+  const existingCS = new Set();
+  masterMap.forEach(m => {
+    const key = (m.cs_no || '').trim();
+    if (key) { skuByCS[key] = (m.sku || '').trim(); existingCS.add(key); }
+  });
+
+  const unmatched = [];
+  let addedCount = 0;
+  const header = '商品コード,想定在庫数\n';
+  const body = rows.map(r => {
+    const cs = (r.cs_no || '').trim();
+    const sku = skuByCS[cs];
+    if (!sku) {
+      unmatched.push(`${r.name}（CS品番: ${cs || '空欄'}）`);
+      if (cs && !existingCS.has(cs)) {
+        masterMap.push({ _id: 'm' + (masterIdSeq++), cs_no: cs, sku: '' });
+        existingCS.add(cs);
+        addedCount++;
+      }
+    }
+    return `${sku || ''},-${r.deliveryQty}`;
+  }).join('\n');
+
+  if (unmatched.length > 0) {
+    renderMaster(); // 追加した行をSKUマスター管理タブに反映
+    alert(
+      '以下の商品はSKUマスターに一致するCS品番が見つかりませんでした。商品コードが空欄のまま出力されます。\n\n' +
+      unmatched.slice(0,20).join('\n') + (unmatched.length>20 ? `\n...他 ${unmatched.length-20} 件` : '') +
+      (addedCount > 0 ? `\n\n※ 該当する${addedCount}件のCS品番を「SKUマスター管理」にSKU未入力の状態で自動追加しました。SKUをご入力のうえ、再度CSVを出力してください。` : '')
+    );
+  }
+
+  const blob = new Blob(['\uFEFF'+header+body], {type:'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  const now = new Date();
+  a.download = `在庫下げ_${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// ── 分析実行 ──
+function runAnalysis() {
+  const baseDateStr = document.getElementById('base-date').value;
+  const recentDays  = parseInt(document.getElementById('recent-days').value) || 5;
+  const targetDays  = parseInt(document.getElementById('target-days').value) || 14;
+
+  const [y,m,d] = baseDateStr.split('-').map(Number);
+  const baseDate = new Date(y, m-1, d);
+  const fromDate = new Date(baseDate);
+  fromDate.setDate(baseDate.getDate() - (recentDays - 1));
+
+  document.getElementById('base-date-badge').textContent =
+    `基準日: ${y}/${String(m).padStart(2,'0')}/${String(d).padStart(2,'0')}`;
+
+  const invRows = parseCSV(rawInv);
+  const delRows = parseCSV(rawDel);
+
+  // CS品番 → SKU（SKUマスターより）
+  const csSkuMap = new Map(masterMap.filter(m => m.cs_no && m.sku).map(m => [m.cs_no, m.sku]));
+  const keepStockNum = parseInt(document.getElementById('keep-stock').value) || 0;
+  const getTempostarInfo = (csNo) => {
+    const sku = csSkuMap.get(csNo) || '';
+    const stock = sku && tempostarStockMap[sku] !== undefined ? tempostarStockMap[sku] : null;
+    const sendable = stock !== null ? Math.max(0, stock - keepStockNum) : null;
+    return { sku, tempostarStock: stock, sendable };
+  };
+
+  // 未反映納品を集計（出荷日が fromDate〜baseDate の全行）
+  const recentDelivery = {};
+  delRows.forEach(r => {
+    const dt = parseDate(r['出荷日']);
+    if (!dt || dt < fromDate || dt > baseDate) return;
+    const key = r['CS品番'];
+    const qty = parseInt(r['納品数']) || 0;
+    recentDelivery[key] = (recentDelivery[key] || 0) + qty;
+  });
+
+  // 注文数を集計（CS品番=列7、注文数=列17）
+  const orderQty = {};
+  if (rawOrd) {
+    const ordLines = rawOrd.replace(/\r\n/g,'\n').replace(/\r/g,'\n').trim().split('\n');
+    ordLines.slice(1).forEach(line => {
+      const cols = line.split(',');
+      const key = (cols[7] || '').replace(/^"|"$/g,'').trim();
+      const qty = parseInt((cols[17] || '').replace(/^"|"$/g,'').trim()) || 0;
+      if (key) orderQty[key] = (orderQty[key] || 0) + qty;
+    });
+  }
+
+  let _idSeq = 0;
+  data = invRows.map(r => {
+    const key = r['CS品番'];
+    const currentStock = parseInt(r['販売可能数合計']) || 0;
+    const unref = recentDelivery[key] || 0;
+    const orders = orderQty[key] || 0;
+    const realStock = Math.max(0, currentStock + unref - orders);
+    const sold30 = parseInt(r['直近30日販売数']) || 0;
+    const sold7  = parseInt(r['直近7日販売数'])  || 0;
+    const dailyRate = sold7 > 0 ? sold7/7 : sold30/30;
+    const targetStock = Math.ceil(dailyRate * targetDays);
+    const recommend = Math.max(0, targetStock - realStock);
+    const stockDays = dailyRate > 0 ? Math.floor(realStock / dailyRate) : null;
+    const { sku, tempostarStock, sendable } = getTempostarInfo(key);
+    return {
+      _id: 'r' + (_idSeq++),
+      name: r['商品名'] || '', brand_no: r['ブランド品番'] || '',
+      color: r['カラー'] || '', size: r['サイズ'] || '',
+      cs_no: key || '', category: r['親商品タイプ'] || '',
+      maker_no: r['メーカー品番'] || '',
+      firstSaleDate: r['初回販売開始設定日'] || '',
+      currentStock, unref, orders, realStock, sold30, sold7, dailyRate, recommend, stockDays,
+      sku, tempostarStock, sendable,
+      deliveryQty: null,
+      fromDateStr: `${fromDate.getFullYear()}/${fromDate.getMonth()+1}/${fromDate.getDate()}`,
+      baseDateStr: `${baseDate.getFullYear()}/${baseDate.getMonth()+1}/${baseDate.getDate()}`,
+    };
+  });
+
+  // カテゴリ select を更新
+  const cats = [...new Set(data.map(r => r.category))].filter(Boolean).sort();
+  const catSel = document.getElementById('cat-filter');
+  catSel.innerHTML = '<option value="">カテゴリ（全て）</option>';
+  cats.forEach(c => { const o = document.createElement('option'); o.value=c; o.textContent=c; catSel.appendChild(o); });
+
+  // 未出品行を生成（商品一覧CSVにあり、納品書CSVに一度も登場しないCS品番）
+  if (rawItems) {
+    const itemRows = parseCSV(rawItems);
+    // 納品書CSVに登場したCS品番の全セットを構築
+    const deliveredKeys = new Set(delRows.map(r => (r['CS品番'] || '').trim()).filter(Boolean));
+    // 在庫日報にあるCS品番セット（重複除外用）
+    const invKeys = new Set(data.map(r => r.cs_no));
+
+    itemRows.forEach(r => {
+      const key = (r['CS品番'] || '').trim();
+      if (!key) return;
+      if (deliveredKeys.has(key)) return; // 納品書に登場 → 出品済
+      if (invKeys.has(key)) return;       // 在庫日報にも存在する場合は重複しない
+      const { sku: unlistedSku, tempostarStock: unlistedTempoStock, sendable: unlistedSendable } = getTempostarInfo(key);
+      data.push({
+        _id: 'r' + (_idSeq++),
+        name:     r['商品名']    || '',
+        brand_no: r['ブランド品番'] || '',
+        color:    r['カラー']    || '',
+        size:     r['サイズ']    || '',
+        cs_no:    key,
+        category: r['商品タイプ'] || r['親商品タイプ'] || '',
+        maker_no: r['メーカー品番'] || '',
+        firstSaleDate: r['初回販売開始設定日'] || '',
+        currentStock: null, unref: 0, orders: 0, realStock: null,
+        sold30: null, sold7: null, dailyRate: 0, recommend: null, stockDays: null,
+        sku: unlistedSku, tempostarStock: unlistedTempoStock, sendable: unlistedSendable,
+        deliveryQty: null,
+        unlisted: true,
+        fromDateStr: `${fromDate.getFullYear()}/${fromDate.getMonth()+1}/${fromDate.getDate()}`,
+        baseDateStr: `${baseDate.getFullYear()}/${baseDate.getMonth()+1}/${baseDate.getDate()}`,
+      });
+    });
+  }
+
+  selectedStatuses.clear();
+  document.querySelectorAll('.status-check').forEach(el => el.classList.remove('active'));
+  currentPage = 1;
+
+  document.getElementById('results').style.display = 'block';
+  render();
+
+  // スクロール
+  setTimeout(() => document.getElementById('results').scrollIntoView({behavior:'smooth', block:'start'}), 100);
+}
+
+// ── ヘッダー定義 ──
+const COLS = [
+  { key:'name',         label:'商品名',      width:'15%', align:'l', type:'str' },
+  { key:'cs_no',        label:'CS品番',      width:'10%', align:'l', type:'str' },
+  { key:'color',        label:'カラー/サイズ', width:'7%',  align:'l', type:'str' },
+  { key:'maker_no',     label:'メーカー品番', width:'8%',  align:'l', type:'str' },
+  { key:'firstSaleDate',label:'初回販売開始日', width:'6%', align:'l', type:'str' },
+  { key:'deliveryQty',  label:'納品数',       width:'5%',  align:'r', type:'num' },
+  { key:'currentStock', label:'ZOZO在庫',     width:'5%',  align:'r', type:'num' },
+  { key:'tempostarStock', label:'テンポスター在庫', width:'6%', align:'r', type:'num' },
+  { key:'sendable',     label:'送付可能目安', width:'6%',  align:'r', type:'num' },
+  { key:'unref',        label:'未反映納品',   width:'6%',  align:'r', type:'num' },
+  { key:'orders',       label:'注文数',       width:'5%',  align:'r', type:'num' },
+  { key:'realStock',    label:'実質在庫',     width:'6%',  align:'r', type:'num' },
+  { key:'sold30',       label:'30日販売',     width:'5%',  align:'r', type:'num' },
+  { key:'sold7',        label:'7日販売',      width:'5%',  align:'r', type:'num' },
+  { key:'recommend',    label:'推奨納品数',   width:'6%',  align:'r', type:'num' },
+  { key:'status',       label:'ステータス',   width:'8%',  align:'l', type:'str' },
+  { key:'dailyRate',    label:'日販速度',     width:'5%',  align:'r', type:'num' },
+  { key:'stockDays',    label:'在庫日数',     width:'5%',  align:'r', type:'num' },
+];
+
+function buildHeader() {
+  const tr = document.getElementById('thead-row');
+  tr.innerHTML = COLS.map(c => {
+    const active = sortKey === c.key;
+    const icon = active ? (sortDir === 1 ? '▲' : '▼') : '⇅';
+    return `<th style="width:${c.width}"${c.align==='r'?' class="r"':''} onclick="sortBy('${c.key}')" ${active?'class="sort-active'+(c.align==='r'?' r':'') +'"':''}>
+      ${c.label}<i class="sort-icon">${icon}</i>
+    </th>`;
+  }).join('');
+}
+
+function sortBy(key) {
+  if (sortKey === key) { sortDir *= -1; }
+  else { sortKey = key; sortDir = key === 'name' || key === 'cs_no' || key === 'maker_no' || key === 'color' ? 1 : -1; }
+  currentPage = 1;
+  render();
+}
+
+// ── フィルタ & ソート ──
+function getStatusLabel(r) {
+  if (r.unlisted)          return '未出品';
+  if (r.realStock === 0)   return '欠品';
+  if (r.recommend >= 10)   return '要発注';
+  if (r.recommend > 0)     return '発注推奨';
+  return '適正';
+}
+
+function getFiltered() {
+  const q   = document.getElementById('search').value.toLowerCase();
+  const cat = document.getElementById('cat-filter').value;
+
+  let rows = data.filter(r => {
+    if (q && !r.name.toLowerCase().includes(q) && !r.cs_no.toLowerCase().includes(q) && !r.color.toLowerCase().includes(q) && !r.maker_no.toLowerCase().includes(q)) return false;
+    if (cat && r.category !== cat) return false;
+    if (selectedStatuses.size > 0 && !selectedStatuses.has(getStatusLabel(r))) return false;
+    if (viewMode === 'delivery' && !(r.deliveryQty > 0)) return false;
+    return true;
+  });
+
+  const col = COLS.find(c => c.key === sortKey);
+  rows.sort((a, b) => {
+    let av, bv;
+    if (sortKey === 'status') { av = getStatusLabel(a); bv = getStatusLabel(b); }
+    else if (sortKey === 'color') { av = a.color + a.size; bv = b.color + b.size; }
+    else { av = a[sortKey]; bv = b[sortKey]; }
+    if (col && col.type === 'str') {
+      return sortDir * String(av ?? '').localeCompare(String(bv ?? ''), 'ja');
+    }
+    const an = av ?? -Infinity, bn = bv ?? -Infinity;
+    return sortDir * (an < bn ? -1 : an > bn ? 1 : 0);
+  });
+  return rows;
+}
+
+function toggleStatus(status, checkbox) {
+  const label = checkbox.closest('.status-check');
+  if (checkbox.checked) {
+    selectedStatuses.add(status);
+    label.classList.add('active');
+  } else {
+    selectedStatuses.delete(status);
+    label.classList.remove('active');
+  }
+  currentPage = 1;
+  render();
+}
+
+function resetStatus() {
+  selectedStatuses.clear();
+  document.querySelectorAll('.status-check').forEach(el => {
+    el.classList.remove('active');
+    el.querySelector('input').checked = false;
+  });
+  currentPage = 1;
+  render();
+}
+
+function statusChip(r) {
+  if (r.unlisted)
+    return '<span class="chip chip-unlisted">未出品</span>';
+  if (r.realStock === 0)
+    return '<span class="chip chip-danger">欠品</span>';
+  if (r.recommend >= 10)
+    return '<span class="chip chip-warn">要発注</span>';
+  if (r.recommend > 0)
+    return '<span class="chip chip-info">発注推奨</span>';
+  return '<span class="chip chip-ok">適正</span>';
+}
+
+function render() {
+  buildHeader();
+  updateDeliveryCount();
+  const rows = getFiltered();
+  const total = rows.length;
+  const pages = Math.ceil(total / PER_PAGE) || 1;
+  currentPage = Math.min(currentPage, pages);
+  const slice = rows.slice((currentPage-1)*PER_PAGE, currentPage*PER_PAGE);
+
+  const tbody = document.getElementById('tbody');
+  if (slice.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="18"><div class="empty"><div class="empty-icon">🔍</div>該当する商品がありません</div></td></tr>`;
+  } else {
+    tbody.innerHTML = slice.map(r => `
+      <tr ${r.unlisted ? 'style="background:#faf8ff"' : ''}>
+        <td class="name" title="${esc(r.name)}">${esc(r.name)}</td>
+        <td style="font-size:12px">${esc(r.cs_no)}</td>
+        <td>${esc(r.color)}${r.size && r.size!=='FREE' ? ' / '+esc(r.size) : ''}</td>
+        <td style="font-size:12px;color:var(--text-muted)">${esc(r.maker_no)}</td>
+        <td style="font-size:12px;color:var(--text-muted)">${esc(r.firstSaleDate)}</td>
+        <td class="r"><input type="number" min="0" step="1" value="${r.deliveryQty !== null && r.deliveryQty !== undefined ? r.deliveryQty : ''}" placeholder="—" style="width:64px;text-align:right;border:0.5px solid var(--border-md);border-radius:4px;padding:3px 6px;font-size:13px;background:var(--surface);color:var(--text);outline:none;" oninput="updateDelivery('${r._id}', this.value)"></td>
+        <td class="r">${r.currentStock !== null ? r.currentStock : '—'}</td>
+        <td class="r bold" style="color:var(--accent)">${r.tempostarStock !== null && r.tempostarStock !== undefined ? r.tempostarStock : '—'}</td>
+        <td class="r ${r.sendable>0?'info':''}">${r.sendable !== null && r.sendable !== undefined ? r.sendable : '—'}</td>
+        <td class="r ${r.unref>0?'info':''}">${r.unref>0?'+'+r.unref:'—'}</td>
+        <td class="r ${r.orders>0?'warn':''}">${r.orders>0?'-'+r.orders:'—'}</td>
+        <td class="r bold">${r.realStock !== null ? r.realStock : '—'}</td>
+        <td class="r">${r.sold30 !== null ? r.sold30 : '—'}</td>
+        <td class="r">${r.sold7  !== null ? r.sold7  : '—'}</td>
+        <td class="r ${r.recommend>0?'warn':''}">${r.recommend !== null && r.recommend > 0 ? r.recommend : '—'}</td>
+        <td>${statusChip(r)}</td>
+        <td class="r">${r.dailyRate>0?r.dailyRate.toFixed(1):'—'}</td>
+        <td class="r">${r.stockDays!==null?r.stockDays+'日':'—'}</td>
+      </tr>`).join('');
+  }
+
+  // ページネーション
+  const pg = document.getElementById('pagination');
+  if (pages > 1) {
+    pg.innerHTML = `
+      <span>${total}件中 ${(currentPage-1)*PER_PAGE+1}〜${Math.min(currentPage*PER_PAGE,total)}件</span>
+      <button onclick="changePage(-1)" ${currentPage===1?'disabled':''}>← 前へ</button>
+      <span>${currentPage} / ${pages}</span>
+      <button onclick="changePage(1)"  ${currentPage===pages?'disabled':''}>次へ →</button>`;
+  } else {
+    pg.innerHTML = `<span>${total}件</span>`;
+  }
+
+  const urgent     = data.filter(r => !r.unlisted && r.recommend > 0).length;
+  const outOfStock = data.filter(r => !r.unlisted && r.realStock === 0).length;
+  const withUnref  = data.filter(r => r.unref > 0).length;
+  const totalUnref = data.reduce((s,r) => s+r.unref, 0);
+  const withOrders = data.filter(r => r.orders > 0).length;
+  const totalOrders = data.reduce((s,r) => s+r.orders, 0);
+  const unlistedCount = data.filter(r => r.unlisted).length;
+  const d0 = data.find(r => r.fromDateStr);
+  const periodStr = d0 ? `${d0.fromDateStr} 〜 ${d0.baseDateStr}` : '—';
+
+  document.getElementById('metrics').innerHTML = `
+    <div class="metric">
+      <div class="metric-label">総 SKU 数</div>
+      <div class="metric-value">${data.filter(r=>!r.unlisted).length.toLocaleString()}</div>
+      <div class="metric-sub">在庫日報より</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">発注推奨 SKU</div>
+      <div class="metric-value" style="color:#d97706">${urgent.toLocaleString()}</div>
+      <div class="metric-sub">うち欠品 ${outOfStock} 件</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">未反映納品あり</div>
+      <div class="metric-value" style="color:var(--accent)">${withUnref.toLocaleString()}</div>
+      <div class="metric-sub">合計 +${totalUnref.toLocaleString()} 点</div>
+    </div>
+    ${rawOrd ? `
+    <div class="metric">
+      <div class="metric-label">注文数（差引済）</div>
+      <div class="metric-value" style="color:#d97706">${totalOrders.toLocaleString()}</div>
+      <div class="metric-sub">${withOrders} SKU に注文あり</div>
+    </div>` : ''}
+    ${rawItems ? `
+    <div class="metric">
+      <div class="metric-label">未出品 SKU</div>
+      <div class="metric-value" style="color:#5b21b6">${unlistedCount.toLocaleString()}</div>
+      <div class="metric-sub">納品書に記録なし</div>
+    </div>` : ''}
+    <div class="metric">
+      <div class="metric-label">未反映集計期間</div>
+      <div class="metric-value" style="font-size:14px;font-weight:600">${periodStr}</div>
+      <div class="metric-sub">出荷日ベースで判定</div>
+    </div>`;
+
+  const targetDays = document.getElementById('target-days').value;
+  const keepStockLabel = document.getElementById('keep-stock').value || '0';
+  document.getElementById('info-bar').innerHTML =
+    `📌 実質在庫 ＝ 現在庫 ＋ 未反映納品${rawOrd ? ' － 注文数（注文CSV）' : ''}。推奨納品数 ＝ 目標在庫（日販速度 × ${targetDays}日）－ 実質在庫。
+     未反映納品は出荷日が ${periodStr} の納品書全行を対象。${tempostarInjected ? `<br>📦 テンポスター在庫＝Tempostarの最新在庫（SKUマスターでCS品番と紐付け）。送付可能目安 ＝ テンポスター在庫 － 自社に残す最低在庫数（現在 ${keepStockLabel} 個）。` : ''}`;
+}
+
+function changePage(d) { currentPage += d; render(); }
+
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── CSVエクスポート ──
+function exportCSV() {
+  const rows = getFiltered();
+  const header = '商品名,CS品番,カラー,サイズ,メーカー品番,初回販売開始日,カテゴリ,ZOZO在庫,テンポスター在庫,送付可能目安,未反映納品数,注文数,実質在庫,直近30日販売数,直近7日販売数,推奨納品数,納品数(入力),日販速度,在庫日数,ステータス\n';
+  const body = rows.map(r =>
+    `"${r.name}",${r.cs_no},"${r.color}",${r.size},"${r.maker_no}","${r.firstSaleDate}","${r.category}",${r.currentStock!==null?r.currentStock:''},${r.tempostarStock!==null&&r.tempostarStock!==undefined?r.tempostarStock:''},${r.sendable!==null&&r.sendable!==undefined?r.sendable:''},${r.unref},${r.orders},${r.realStock!==null?r.realStock:''},${r.sold30!==null?r.sold30:''},${r.sold7!==null?r.sold7:''},${r.recommend!==null?r.recommend:''},${r.deliveryQty!==null&&r.deliveryQty!==undefined?r.deliveryQty:''},${r.dailyRate>0?r.dailyRate.toFixed(2):''},${r.stockDays!==null?r.stockDays:''},${getStatusLabel(r)}`
+  ).join('\n');
+  const blob = new Blob(['\uFEFF'+header+body], {type:'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  const now = new Date();
+  a.download = `納品推奨数_${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+</script>
+</body>
+</html>
