@@ -137,6 +137,54 @@ def get_tempostar_stock_map(file_paths):
 
 
 # ==========================
+# テンポスター日別売上マップ（SKU → [{d:'YYYYMMDD', q:数量}, ...]）
+# ==========================
+@st.cache_data
+def get_tempostar_sales_map(file_paths):
+    """
+    全期間のTempostar CSVから、商品コード（SKU）×日付ごとの売上個数を集計する。
+    納品推奨数システム側で任意の期間を選んで自社売上個数を合算できるようにするため、
+    日別の時系列データとして返す。
+    """
+    if not file_paths:
+        return {}
+
+    df_all = load_tempostar_data(tuple(sorted(file_paths)))
+
+    required = {"商品コード", "増減値"}
+    if not required.issubset(df_all.columns):
+        return {}
+
+    df_all = df_all.copy()
+    df_all["商品コード"] = df_all["商品コード"].astype(str).str.strip()
+    df_all["_日付"] = df_all["元ファイル"].astype(str).str.extract(r"(\d{8})")
+
+    if "更新理由" in df_all.columns:
+        df_sales = df_all[df_all["更新理由"].astype(str).str.contains("受注取込", na=False)].copy()
+    else:
+        df_sales = df_all.copy()
+
+    df_sales["売上個数"] = -df_sales["増減値"]
+    df_sales = df_sales[df_sales["売上個数"] > 0]
+
+    grouped = (
+        df_sales.groupby(["商品コード", "_日付"], dropna=False)["売上個数"]
+        .sum()
+        .reset_index()
+    )
+
+    sales_map = {}
+    for sku, sub in grouped.groupby("商品コード"):
+        sub = sub.sort_values("_日付")
+        sales_map[sku] = [
+            {"d": row["_日付"], "q": int(row["売上個数"])}
+            for _, row in sub.iterrows()
+            if pd.notna(row["_日付"])
+        ]
+    return sales_map
+
+
+# ==========================
 # HTML テーブル生成（商品コードクリック対応）
 # ==========================
 def make_html_table(df: pd.DataFrame) -> str:
@@ -950,6 +998,7 @@ def main():
         sku_master = load_sku_master()
         all_paths = [fi["path"] for fi in file_infos]
         stock_map = get_tempostar_stock_map(all_paths)
+        sales_map = get_tempostar_sales_map(all_paths)
 
         if not sku_master:
             st.warning(
@@ -964,6 +1013,7 @@ def main():
             "<script>"
             f"window.__SKU_MASTER__ = {json.dumps(sku_master, ensure_ascii=False)};"
             f"window.__TEMPOSTAR_STOCK__ = {json.dumps(stock_map, ensure_ascii=False)};"
+            f"window.__TEMPOSTAR_SALES__ = {json.dumps(sales_map, ensure_ascii=False)};"
             "</script>"
         )
         # 本体スクリプトが動く前に注入データを読み込ませるため、<script>タグの直前に挿入
@@ -971,7 +1021,8 @@ def main():
 
         st.caption(
             f"テンポスター在庫連携：SKUマスター {len(sku_master)}件 ｜ "
-            f"テンポスター在庫データ {len(stock_map)}SKU分"
+            f"テンポスター在庫データ {len(stock_map)}SKU分 ｜ "
+            f"売上データ {len(sales_map)}SKU分（期間は画面上部で指定可）"
         )
         components.html(html_content, height=1600, scrolling=True)
 

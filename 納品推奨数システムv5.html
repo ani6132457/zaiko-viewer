@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>納品推奨数システム</title>
+<script src="https://cdn.jsdelivr.net/npm/encoding-japanese@2.2.0/encoding.min.js"></script>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -384,9 +385,12 @@
       <span style="color:var(--text-muted)">日分</span>
     </div>
     <div class="setting-item">
-      <label>自社に残す最低在庫数</label>
-      <input type="number" id="keep-stock" value="0" min="0" max="999999" onchange="render()">
-      <span style="color:var(--text-muted)">個</span>
+      <label>自社売上 集計開始日</label>
+      <input type="date" id="sales-start-date" onchange="updateCompanySales()">
+    </div>
+    <div class="setting-item">
+      <label>自社売上 集計終了日</label>
+      <input type="date" id="sales-end-date" onchange="updateCompanySales()">
     </div>
   </div>
 
@@ -427,6 +431,10 @@
           <button class="filter-reset" onclick="resetStatus()">✕ すべて表示</button>
         </div>
         <div style="display:flex;gap:8px;">
+          <span id="delivery-delete-buttons" style="display:none;gap:8px;">
+            <button class="export-btn" style="border-color:#c0392b;color:#c0392b" onclick="deleteSelectedDelivery()">🗑 選択削除</button>
+            <button class="export-btn" style="border-color:#c0392b;color:#c0392b" onclick="deleteAllDelivery()">🗑 一括削除（全件）</button>
+          </span>
           <button class="export-btn" onclick="exportCSV()">⬇ CSVエクスポート</button>
           <button class="export-btn" style="border-color:#1a56db;color:#1a56db" onclick="exportStockDownCSV()">⬇ 在庫を下げるCSV</button>
         </div>
@@ -489,7 +497,9 @@ let viewMode = 'all'; // 'all' | 'delivery'
 let masterMap = []; // [{cs_no, sku}]
 let masterIdSeq = 0;
 let masterSortKey = 'cs_no', masterSortDir = 1;
+let selectedForDelete = new Set(); // 納品数入力済みタブの選択削除用
 let tempostarStockMap = {}; // { SKU: 現在庫 }（Streamlit側から自動注入）
+let salesMap = {}; // { SKU: [{d:'YYYYMMDD', q:数量}, ...] }（Streamlit側から自動注入・日付昇順）
 let tempostarInjected = false;
 
 // ── Streamlit連携: 自動注入データの反映 ──
@@ -497,6 +507,9 @@ let tempostarInjected = false;
   if (typeof window.__TEMPOSTAR_STOCK__ === 'object' && window.__TEMPOSTAR_STOCK__) {
     tempostarStockMap = window.__TEMPOSTAR_STOCK__;
     tempostarInjected = true;
+  }
+  if (typeof window.__TEMPOSTAR_SALES__ === 'object' && window.__TEMPOSTAR_SALES__) {
+    salesMap = window.__TEMPOSTAR_SALES__;
   }
   if (Array.isArray(window.__SKU_MASTER__) && window.__SKU_MASTER__.length > 0) {
     masterMap = window.__SKU_MASTER__.map(r => ({
@@ -511,6 +524,30 @@ let tempostarInjected = false;
   }
 })();
 
+// ── 自社売上個数（期間指定・テンポスター連携）──
+function sumSales(sku, startStr, endStr) {
+  if (!sku || !salesMap[sku]) return null;
+  const s = startStr.replace(/-/g, '');
+  const e = endStr.replace(/-/g, '');
+  let total = 0;
+  let found = false;
+  salesMap[sku].forEach(({ d, q }) => {
+    if (d >= s && d <= e) { total += q; found = true; }
+  });
+  return found || total > 0 ? total : 0;
+}
+
+function updateCompanySales(doRender = true) {
+  if (!data || data.length === 0) return;
+  const startStr = document.getElementById('sales-start-date').value;
+  const endStr = document.getElementById('sales-end-date').value;
+  if (!startStr || !endStr) return;
+  data.forEach(r => {
+    r.companySales = r.sku ? sumSales(r.sku, startStr, endStr) : null;
+  });
+  if (doRender) render();
+}
+
 function switchTab(mode) {
   viewMode = mode;
   document.getElementById('tab-all').classList.toggle('active', mode === 'all');
@@ -518,8 +555,50 @@ function switchTab(mode) {
   document.getElementById('tab-master').classList.toggle('active', mode === 'master');
   document.getElementById('panel-list').style.display = mode === 'master' ? 'none' : 'block';
   document.getElementById('panel-master').style.display = mode === 'master' ? 'block' : 'none';
+  document.getElementById('delivery-delete-buttons').style.display = mode === 'delivery' ? 'flex' : 'none';
+  selectedForDelete.clear();
   if (mode === 'master') { renderMaster(); return; }
   currentPage = 1;
+  render();
+}
+
+// ── 納品数入力済み: 選択削除・一括削除 ──
+function toggleDeliverySelect(id, checkbox) {
+  if (checkbox.checked) selectedForDelete.add(id);
+  else selectedForDelete.delete(id);
+}
+
+function toggleSelectAllDelivery(checkbox) {
+  const rows = getFiltered();
+  rows.forEach(r => {
+    if (checkbox.checked) selectedForDelete.add(r._id);
+    else selectedForDelete.delete(r._id);
+  });
+  render();
+}
+
+function deleteSelectedDelivery() {
+  if (selectedForDelete.size === 0) {
+    alert('削除する行が選択されていません。');
+    return;
+  }
+  if (!confirm(`選択した${selectedForDelete.size}件の納品数入力を削除します。よろしいですか？`)) return;
+  data.forEach(r => {
+    if (selectedForDelete.has(r._id)) r.deliveryQty = null;
+  });
+  selectedForDelete.clear();
+  render();
+}
+
+function deleteAllDelivery() {
+  const targets = data.filter(r => r.deliveryQty !== null && r.deliveryQty !== undefined && r.deliveryQty > 0);
+  if (targets.length === 0) {
+    alert('納品数が入力された行がありません。');
+    return;
+  }
+  if (!confirm(`「納品数入力済み」の${targets.length}件をすべて削除します。よろしいですか？`)) return;
+  targets.forEach(r => { r.deliveryQty = null; });
+  selectedForDelete.clear();
   render();
 }
 
@@ -544,6 +623,12 @@ function updateDeliveryCount() {
   const m = String(today.getMonth()+1).padStart(2,'0');
   const d = String(today.getDate()).padStart(2,'0');
   document.getElementById('base-date').value = `${y}-${m}-${d}`;
+
+  const toStr = dt => `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+  const oneMonthAgo = new Date(today);
+  oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
+  document.getElementById('sales-end-date').value = toStr(today);
+  document.getElementById('sales-start-date').value = toStr(oneMonthAgo);
 })();
 
 // ── ファイルロード ──
@@ -727,7 +812,7 @@ function exportStockDownCSV() {
     );
   }
 
-  const blob = new Blob(['\uFEFF'+header+body], {type:'text/csv'});
+  const blob = toShiftJisCsvBlob(header + body);
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   const now = new Date();
@@ -755,12 +840,10 @@ function runAnalysis() {
 
   // CS品番 → SKU（SKUマスターより）
   const csSkuMap = new Map(masterMap.filter(m => m.cs_no && m.sku).map(m => [m.cs_no, m.sku]));
-  const keepStockNum = parseInt(document.getElementById('keep-stock').value) || 0;
   const getTempostarInfo = (csNo) => {
     const sku = csSkuMap.get(csNo) || '';
     const stock = sku && tempostarStockMap[sku] !== undefined ? tempostarStockMap[sku] : null;
-    const sendable = stock !== null ? Math.max(0, stock - keepStockNum) : null;
-    return { sku, tempostarStock: stock, sendable };
+    return { sku, tempostarStock: stock };
   };
 
   // 未反映納品を集計（出荷日が fromDate〜baseDate の全行）
@@ -798,7 +881,7 @@ function runAnalysis() {
     const targetStock = Math.ceil(dailyRate * targetDays);
     const recommend = Math.max(0, targetStock - realStock);
     const stockDays = dailyRate > 0 ? Math.floor(realStock / dailyRate) : null;
-    const { sku, tempostarStock, sendable } = getTempostarInfo(key);
+    const { sku, tempostarStock } = getTempostarInfo(key);
     return {
       _id: 'r' + (_idSeq++),
       name: r['商品名'] || '', brand_no: r['ブランド品番'] || '',
@@ -807,7 +890,7 @@ function runAnalysis() {
       maker_no: r['メーカー品番'] || '',
       firstSaleDate: r['初回販売開始設定日'] || '',
       currentStock, unref, orders, realStock, sold30, sold7, dailyRate, recommend, stockDays,
-      sku, tempostarStock, sendable,
+      sku, tempostarStock, companySales: null,
       deliveryQty: null,
       fromDateStr: `${fromDate.getFullYear()}/${fromDate.getMonth()+1}/${fromDate.getDate()}`,
       baseDateStr: `${baseDate.getFullYear()}/${baseDate.getMonth()+1}/${baseDate.getDate()}`,
@@ -833,7 +916,7 @@ function runAnalysis() {
       if (!key) return;
       if (deliveredKeys.has(key)) return; // 納品書に登場 → 出品済
       if (invKeys.has(key)) return;       // 在庫日報にも存在する場合は重複しない
-      const { sku: unlistedSku, tempostarStock: unlistedTempoStock, sendable: unlistedSendable } = getTempostarInfo(key);
+      const { sku: unlistedSku, tempostarStock: unlistedTempoStock } = getTempostarInfo(key);
       data.push({
         _id: 'r' + (_idSeq++),
         name:     r['商品名']    || '',
@@ -846,7 +929,7 @@ function runAnalysis() {
         firstSaleDate: r['初回販売開始設定日'] || '',
         currentStock: null, unref: 0, orders: 0, realStock: null,
         sold30: null, sold7: null, dailyRate: 0, recommend: null, stockDays: null,
-        sku: unlistedSku, tempostarStock: unlistedTempoStock, sendable: unlistedSendable,
+        sku: unlistedSku, tempostarStock: unlistedTempoStock, companySales: null,
         deliveryQty: null,
         unlisted: true,
         fromDateStr: `${fromDate.getFullYear()}/${fromDate.getMonth()+1}/${fromDate.getDate()}`,
@@ -860,6 +943,7 @@ function runAnalysis() {
   currentPage = 1;
 
   document.getElementById('results').style.display = 'block';
+  updateCompanySales(false);
   render();
 
   // スクロール
@@ -876,7 +960,7 @@ const COLS = [
   { key:'deliveryQty',  label:'納品数',       width:'5%',  align:'r', type:'num' },
   { key:'currentStock', label:'ZOZO在庫',     width:'5%',  align:'r', type:'num' },
   { key:'tempostarStock', label:'テンポスター在庫', width:'6%', align:'r', type:'num' },
-  { key:'sendable',     label:'送付可能目安', width:'6%',  align:'r', type:'num' },
+  { key:'companySales', label:'自社売上個数', width:'6%',  align:'r', type:'num' },
   { key:'unref',        label:'未反映納品',   width:'6%',  align:'r', type:'num' },
   { key:'orders',       label:'注文数',       width:'5%',  align:'r', type:'num' },
   { key:'realStock',    label:'実質在庫',     width:'6%',  align:'r', type:'num' },
@@ -890,7 +974,11 @@ const COLS = [
 
 function buildHeader() {
   const tr = document.getElementById('thead-row');
-  tr.innerHTML = COLS.map(c => {
+  let checkboxTh = '';
+  if (viewMode === 'delivery') {
+    checkboxTh = `<th style="width:34px;text-align:center"><input type="checkbox" id="select-all-delivery" onchange="toggleSelectAllDelivery(this)"></th>`;
+  }
+  tr.innerHTML = checkboxTh + COLS.map(c => {
     const active = sortKey === c.key;
     const icon = active ? (sortDir === 1 ? '▲' : '▼') : '⇅';
     return `<th style="width:${c.width}"${c.align==='r'?' class="r"':''} onclick="sortBy('${c.key}')" ${active?'class="sort-active'+(c.align==='r'?' r':'') +'"':''}>
@@ -987,11 +1075,13 @@ function render() {
   const slice = rows.slice((currentPage-1)*PER_PAGE, currentPage*PER_PAGE);
 
   const tbody = document.getElementById('tbody');
+  const colCount = COLS.length + (viewMode === 'delivery' ? 1 : 0);
   if (slice.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="18"><div class="empty"><div class="empty-icon">🔍</div>該当する商品がありません</div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="${colCount}"><div class="empty"><div class="empty-icon">🔍</div>該当する商品がありません</div></td></tr>`;
   } else {
     tbody.innerHTML = slice.map(r => `
       <tr ${r.unlisted ? 'style="background:#faf8ff"' : ''}>
+        ${viewMode === 'delivery' ? `<td style="text-align:center"><input type="checkbox" class="delivery-select" data-id="${r._id}" ${selectedForDelete.has(r._id)?'checked':''} onchange="toggleDeliverySelect('${r._id}', this)"></td>` : ''}
         <td class="name" title="${esc(r.name)}">${esc(r.name)}</td>
         <td style="font-size:12px">${esc(r.cs_no)}</td>
         <td>${esc(r.color)}${r.size && r.size!=='FREE' ? ' / '+esc(r.size) : ''}</td>
@@ -1000,7 +1090,7 @@ function render() {
         <td class="r"><input type="number" min="0" step="1" value="${r.deliveryQty !== null && r.deliveryQty !== undefined ? r.deliveryQty : ''}" placeholder="—" style="width:64px;text-align:right;border:0.5px solid var(--border-md);border-radius:4px;padding:3px 6px;font-size:13px;background:var(--surface);color:var(--text);outline:none;" oninput="updateDelivery('${r._id}', this.value)"></td>
         <td class="r">${r.currentStock !== null ? r.currentStock : '—'}</td>
         <td class="r bold" style="color:var(--accent)">${r.tempostarStock !== null && r.tempostarStock !== undefined ? r.tempostarStock : '—'}</td>
-        <td class="r ${r.sendable>0?'info':''}">${r.sendable !== null && r.sendable !== undefined ? r.sendable : '—'}</td>
+        <td class="r">${r.companySales !== null && r.companySales !== undefined ? r.companySales : '—'}</td>
         <td class="r ${r.unref>0?'info':''}">${r.unref>0?'+'+r.unref:'—'}</td>
         <td class="r ${r.orders>0?'warn':''}">${r.orders>0?'-'+r.orders:'—'}</td>
         <td class="r bold">${r.realStock !== null ? r.realStock : '—'}</td>
@@ -1070,10 +1160,11 @@ function render() {
     </div>`;
 
   const targetDays = document.getElementById('target-days').value;
-  const keepStockLabel = document.getElementById('keep-stock').value || '0';
+  const salesStartLabel = document.getElementById('sales-start-date').value;
+  const salesEndLabel = document.getElementById('sales-end-date').value;
   document.getElementById('info-bar').innerHTML =
     `📌 実質在庫 ＝ 現在庫 ＋ 未反映納品${rawOrd ? ' － 注文数（注文CSV）' : ''}。推奨納品数 ＝ 目標在庫（日販速度 × ${targetDays}日）－ 実質在庫。
-     未反映納品は出荷日が ${periodStr} の納品書全行を対象。${tempostarInjected ? `<br>📦 テンポスター在庫＝Tempostarの最新在庫（SKUマスターでCS品番と紐付け）。送付可能目安 ＝ テンポスター在庫 － 自社に残す最低在庫数（現在 ${keepStockLabel} 個）。` : ''}`;
+     未反映納品は出荷日が ${periodStr} の納品書全行を対象。${tempostarInjected ? `<br>📦 テンポスター在庫＝Tempostarの最新在庫（SKUマスターでCS品番と紐付け）。自社売上個数＝${salesStartLabel} 〜 ${salesEndLabel} の期間集計（上部の日付で変更可）。` : ''}`;
 }
 
 function changePage(d) { currentPage += d; render(); }
@@ -1082,12 +1173,23 @@ function esc(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+// ── Shift-JIS変換（在庫を下げるCSV用） ──
+function toShiftJisCsvBlob(text) {
+  if (typeof Encoding === 'undefined') {
+    // ライブラリが読み込めなかった場合はUTF-8(BOM付)にフォールバック
+    return new Blob(['\uFEFF' + text], { type: 'text/csv' });
+  }
+  const unicodeArray = Encoding.stringToCode(text);
+  const sjisArray = Encoding.convert(unicodeArray, { to: 'SJIS', from: 'UNICODE' });
+  return new Blob([new Uint8Array(sjisArray)], { type: 'text/csv' });
+}
+
 // ── CSVエクスポート ──
 function exportCSV() {
   const rows = getFiltered();
-  const header = '商品名,CS品番,カラー,サイズ,メーカー品番,初回販売開始日,カテゴリ,ZOZO在庫,テンポスター在庫,送付可能目安,未反映納品数,注文数,実質在庫,直近30日販売数,直近7日販売数,推奨納品数,納品数(入力),日販速度,在庫日数,ステータス\n';
+  const header = '商品名,CS品番,カラー,サイズ,メーカー品番,初回販売開始日,カテゴリ,ZOZO在庫,テンポスター在庫,自社売上個数,未反映納品数,注文数,実質在庫,直近30日販売数,直近7日販売数,推奨納品数,納品数(入力),日販速度,在庫日数,ステータス\n';
   const body = rows.map(r =>
-    `"${r.name}",${r.cs_no},"${r.color}",${r.size},"${r.maker_no}","${r.firstSaleDate}","${r.category}",${r.currentStock!==null?r.currentStock:''},${r.tempostarStock!==null&&r.tempostarStock!==undefined?r.tempostarStock:''},${r.sendable!==null&&r.sendable!==undefined?r.sendable:''},${r.unref},${r.orders},${r.realStock!==null?r.realStock:''},${r.sold30!==null?r.sold30:''},${r.sold7!==null?r.sold7:''},${r.recommend!==null?r.recommend:''},${r.deliveryQty!==null&&r.deliveryQty!==undefined?r.deliveryQty:''},${r.dailyRate>0?r.dailyRate.toFixed(2):''},${r.stockDays!==null?r.stockDays:''},${getStatusLabel(r)}`
+    `"${r.name}",${r.cs_no},"${r.color}",${r.size},"${r.maker_no}","${r.firstSaleDate}","${r.category}",${r.currentStock!==null?r.currentStock:''},${r.tempostarStock!==null&&r.tempostarStock!==undefined?r.tempostarStock:''},${r.companySales!==null&&r.companySales!==undefined?r.companySales:''},${r.unref},${r.orders},${r.realStock!==null?r.realStock:''},${r.sold30!==null?r.sold30:''},${r.sold7!==null?r.sold7:''},${r.recommend!==null?r.recommend:''},${r.deliveryQty!==null&&r.deliveryQty!==undefined?r.deliveryQty:''},${r.dailyRate>0?r.dailyRate.toFixed(2):''},${r.stockDays!==null?r.stockDays:''},${getStatusLabel(r)}`
   ).join('\n');
   const blob = new Blob(['\uFEFF'+header+body], {type:'text/csv'});
   const a = document.createElement('a');
