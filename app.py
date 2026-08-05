@@ -624,13 +624,20 @@ def main():
     padding-top: 1rem;
 }
 
-/* タブの見出し部分をスクロールしても常に表示・押せるように固定 */
+/* タブの見出し部分を画面上部に完全固定（sticky はStreamlitの内部構造で効かないことがあるため fixed を使用） */
 [data-testid="stTabs"] [data-baseweb="tab-list"] {
-    position: sticky;
+    position: fixed;
     top: 0;
-    z-index: 999;
+    left: 0;
+    right: 0;
+    z-index: 9999;
     background: #ffffff;
     box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+    padding: 6px 3rem;
+}
+/* fixedにした分、タブの中身が隠れないよう本来あった位置に空白を確保 */
+[data-testid="stTabs"] {
+    margin-top: 56px;
 }
 
 /* ===== メトリクスバー ===== */
