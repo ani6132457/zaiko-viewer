@@ -616,18 +616,18 @@ def main():
     padding: 8px 20px !important;
 }
 
-/* Streamlit標準ヘッダーの高さを固定（タブの固定位置とズレないように） */
+/* Streamlit標準ヘッダーを非表示にして、タブの固定表示と被らないようにする */
 [data-testid="stHeader"] {
-    height: 2.5rem;
+    display: none;
 }
 [data-testid="stAppViewContainer"] > .main {
-    padding-top: 2.5rem;
+    padding-top: 1rem;
 }
 
 /* タブの見出し部分をスクロールしても常に表示・押せるように固定 */
 [data-testid="stTabs"] [data-baseweb="tab-list"] {
     position: sticky;
-    top: 5.0rem;
+    top: 0;
     z-index: 999;
     background: #ffffff;
     box-shadow: 0 2px 6px rgba(0,0,0,0.08);
