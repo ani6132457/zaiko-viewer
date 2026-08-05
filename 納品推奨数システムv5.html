@@ -1324,7 +1324,7 @@ function downloadGroupCSV(name) {
   const now = new Date();
   const dateStr = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}`;
   const label = name === '__none__' ? '未グループ' : name;
-  downloadCsvString(buildGroupCsvString(rows), `納品グループ_${label}_${dateStr}.csv`);
+  downloadCsvString(buildGroupCsvString(rows), `通常_納品グループ_${label}_${dateStr}.csv`);
 }
 
 function renderGroupPanel() {
