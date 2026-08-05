@@ -610,9 +610,11 @@ def main():
 .sku-table .stock-warn   { color: #d35400; font-size: 11px; font-weight: 700; }
 
 /* ===== タブ ===== */
-[data-testid="stTabs"] button {
+[data-testid="stTab"] p {
     font-size: 14px !important;
     font-weight: 600 !important;
+}
+[data-testid="stTab"] {
     padding: 8px 20px !important;
 }
 
@@ -624,8 +626,8 @@ def main():
     padding-top: 1rem;
 }
 
-/* タブの見出し部分を画面上部に完全固定（sticky はStreamlitの内部構造で効かないことがあるため fixed を使用） */
-[data-testid="stTabs"] [data-baseweb="tab-list"] {
+/* タブの見出し部分を画面上部に完全固定 */
+[data-testid="stTabs"] [role="tablist"] {
     position: fixed;
     top: 0;
     left: 0;
