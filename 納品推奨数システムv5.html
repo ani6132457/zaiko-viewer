@@ -440,6 +440,19 @@
         </div>
       </div>
 
+      <div id="group-panel" style="display:none;flex-direction:column;gap:8px;background:var(--surface2);border:1px solid var(--border-md);border-radius:8px;padding:10px 12px;margin-bottom:1rem;">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <span style="font-size:12px;color:var(--text-muted);white-space:nowrap">📦 グループ：</span>
+          <input type="text" id="new-group-name" placeholder="新しいグループ名" style="border:0.5px solid var(--border-md);border-radius:4px;padding:5px 8px;font-size:13px;background:var(--surface);color:var(--text);outline:none;width:160px;">
+          <button class="export-btn" onclick="createGroup()">＋ グループ追加</button>
+          <span style="color:var(--border-md)">｜</span>
+          <span style="font-size:12px;color:var(--text-muted);white-space:nowrap">チェックした行を</span>
+          <select id="assign-group-select" style="border:0.5px solid var(--border-md);border-radius:4px;padding:5px 8px;font-size:13px;background:var(--surface);color:var(--text);outline:none;"></select>
+          <button class="export-btn" onclick="assignSelectedToGroup()">選択行を割り当て</button>
+        </div>
+        <div id="group-chips" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
+      </div>
+
       <div class="controls">
         <input type="text" id="search" placeholder="商品名・CS品番・カラー・メーカー品番で検索..." oninput="render()">
         <select id="cat-filter" onchange="render()"><option value="">カテゴリ（全て）</option></select>
@@ -497,7 +510,21 @@ let viewMode = 'all'; // 'all' | 'delivery'
 let masterMap = []; // [{cs_no, sku}]
 let masterIdSeq = 0;
 let masterSortKey = 'cs_no', masterSortDir = 1;
-let selectedForDelete = new Set(); // 納品数入力済みタブの選択削除用
+let selectedForDelete = new Set(); // 納品数入力済みタブの選択削除・グループ割当用
+let groupList = []; // ['グループA', 'グループB', ...]
+let groupFilter = null; // null=全て表示 / '__none__'=未グループ / それ以外=グループ名
+const GROUP_COLORS = ['#2563eb', '#059669', '#d97706', '#dc2626', '#7c3aed', '#0891b2', '#c2410c', '#4338ca', '#be185d', '#65a30d'];
+function getGroupColor(name) {
+  if (!name) return '#9ca3af';
+  let idx = groupList.indexOf(name);
+  if (idx < 0) idx = 0;
+  return GROUP_COLORS[idx % GROUP_COLORS.length];
+}
+function hexToRgba(hex, alpha) {
+  const h = hex.replace('#', '');
+  const r = parseInt(h.substring(0,2), 16), g = parseInt(h.substring(2,4), 16), b = parseInt(h.substring(4,6), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
 let tempostarStockMap = {}; // { SKU: 現在庫 }（Streamlit側から自動注入）
 let salesMap = {}; // { SKU: [{d:'YYYYMMDD', q:数量}, ...] }（Streamlit側から自動注入・日付昇順）
 let tempostarInjected = false;
@@ -560,7 +587,10 @@ function switchTab(mode) {
   document.getElementById('panel-list').style.display = mode === 'master' ? 'none' : 'block';
   document.getElementById('panel-master').style.display = mode === 'master' ? 'block' : 'none';
   document.getElementById('delivery-delete-buttons').style.display = mode === 'delivery' ? 'flex' : 'none';
+  document.getElementById('group-panel').style.display = mode === 'delivery' ? 'flex' : 'none';
+  groupFilter = null;
   selectedForDelete.clear();
+  if (mode === 'delivery') renderGroupPanel();
   if (mode === 'master') { renderMaster(); return; }
   currentPage = 1;
   render();
@@ -570,6 +600,16 @@ function switchTab(mode) {
 function toggleDeliverySelect(id, checkbox) {
   if (checkbox.checked) selectedForDelete.add(id);
   else selectedForDelete.delete(id);
+}
+
+function handleRowClick(event, id) {
+  const tag = event.target.tagName;
+  // チェックボックス自身・入力欄への操作はそのまま素通しする
+  if (tag === 'INPUT' || tag === 'SELECT' || tag === 'BUTTON' || tag === 'A' || tag === 'OPTION') return;
+  const checkbox = document.querySelector(`.delivery-select[data-id="${id}"]`);
+  if (!checkbox) return;
+  checkbox.checked = !checkbox.checked;
+  toggleDeliverySelect(id, checkbox);
 }
 
 function toggleSelectAllDelivery(checkbox) {
@@ -591,6 +631,7 @@ function deleteSelectedDelivery() {
     if (selectedForDelete.has(r._id)) r.deliveryQty = null;
   });
   selectedForDelete.clear();
+  renderGroupPanel();
   render();
 }
 
@@ -603,6 +644,7 @@ function deleteAllDelivery() {
   if (!confirm(`「納品数入力済み」の${targets.length}件をすべて削除します。よろしいですか？`)) return;
   targets.forEach(r => { r.deliveryQty = null; });
   selectedForDelete.clear();
+  renderGroupPanel();
   render();
 }
 
@@ -618,6 +660,7 @@ function updateDeliveryCount() {
   const n = data.filter(r => r.deliveryQty !== null && r.deliveryQty !== undefined && r.deliveryQty > 0).length;
   const el = document.getElementById('tab-delivery-count');
   if (el) el.textContent = n > 0 ? `(${n})` : '';
+  if (viewMode === 'delivery') renderGroupPanel();
 }
 
 // ── 今日の日付をデフォルトにセット ──
@@ -827,6 +870,10 @@ function exportStockDownCSV() {
 
 // ── 分析実行 ──
 function runAnalysis() {
+  groupList = ['グループA', 'グループB', 'グループC', 'グループD', 'グループE'];
+  groupFilter = null;
+  selectedForDelete.clear();
+
   const baseDateStr = document.getElementById('base-date').value;
   const recentDays  = parseInt(document.getElementById('recent-days').value) || 5;
   const targetDays  = parseInt(document.getElementById('target-days').value) || 14;
@@ -895,7 +942,7 @@ function runAnalysis() {
       firstSaleDate: r['初回販売開始設定日'] || '',
       currentStock, unref, orders, realStock, sold30, sold7, dailyRate, recommend, stockDays,
       sku, tempostarStock, companySales: null,
-      deliveryQty: null,
+      deliveryQty: null, group: null,
       fromDateStr: `${fromDate.getFullYear()}/${fromDate.getMonth()+1}/${fromDate.getDate()}`,
       baseDateStr: `${baseDate.getFullYear()}/${baseDate.getMonth()+1}/${baseDate.getDate()}`,
     };
@@ -934,7 +981,7 @@ function runAnalysis() {
         currentStock: null, unref: 0, orders: 0, realStock: null,
         sold30: null, sold7: null, dailyRate: 0, recommend: null, stockDays: null,
         sku: unlistedSku, tempostarStock: unlistedTempoStock, companySales: null,
-        deliveryQty: null,
+        deliveryQty: null, group: null,
         unlisted: true,
         fromDateStr: `${fromDate.getFullYear()}/${fromDate.getMonth()+1}/${fromDate.getDate()}`,
         baseDateStr: `${baseDate.getFullYear()}/${baseDate.getMonth()+1}/${baseDate.getDate()}`,
@@ -948,6 +995,7 @@ function runAnalysis() {
 
   document.getElementById('results').style.display = 'block';
   updateCompanySales(false);
+  renderGroupPanel();
   render();
 
   // スクロール
@@ -976,10 +1024,12 @@ const COLS = [
 function buildHeader() {
   const tr = document.getElementById('thead-row');
   let checkboxTh = '';
+  let groupTh = '';
   if (viewMode === 'delivery') {
     checkboxTh = `<th style="width:34px;text-align:center"><input type="checkbox" id="select-all-delivery" onchange="toggleSelectAllDelivery(this)"></th>`;
+    groupTh = `<th style="width:90px">グループ</th>`;
   }
-  tr.innerHTML = checkboxTh + COLS.map(c => {
+  tr.innerHTML = checkboxTh + groupTh + COLS.map(c => {
     const active = sortKey === c.key;
     const icon = active ? (sortDir === 1 ? '▲' : '▼') : '⇅';
     return `<th style="width:${c.width}"${c.align==='r'?' class="r"':''} onclick="sortBy('${c.key}')" ${active?'class="sort-active'+(c.align==='r'?' r':'') +'"':''}>
@@ -1013,6 +1063,10 @@ function getFiltered() {
     if (cat && r.category !== cat) return false;
     if (selectedStatuses.size > 0 && !selectedStatuses.has(getStatusLabel(r))) return false;
     if (viewMode === 'delivery' && !(r.deliveryQty > 0)) return false;
+    if (viewMode === 'delivery' && groupFilter !== null) {
+      if (groupFilter === '__none__') { if (r.group) return false; }
+      else if (r.group !== groupFilter) return false;
+    }
     return true;
   });
 
@@ -1076,13 +1130,14 @@ function render() {
   const slice = rows.slice((currentPage-1)*PER_PAGE, currentPage*PER_PAGE);
 
   const tbody = document.getElementById('tbody');
-  const colCount = COLS.length + (viewMode === 'delivery' ? 1 : 0);
+  const colCount = COLS.length + (viewMode === 'delivery' ? 2 : 0);
   if (slice.length === 0) {
     tbody.innerHTML = `<tr><td colspan="${colCount}"><div class="empty"><div class="empty-icon">🔍</div>該当する商品がありません</div></td></tr>`;
   } else {
     tbody.innerHTML = slice.map(r => `
-      <tr ${r.unlisted ? 'style="background:#faf8ff"' : ''}>
+      <tr ${viewMode === 'delivery' ? `style="cursor:pointer;${r.unlisted ? 'background:#faf8ff' : ''}" onclick="handleRowClick(event, '${r._id}')"` : (r.unlisted ? 'style="background:#faf8ff"' : '')}>
         ${viewMode === 'delivery' ? `<td style="text-align:center"><input type="checkbox" class="delivery-select" data-id="${r._id}" ${selectedForDelete.has(r._id)?'checked':''} onchange="toggleDeliverySelect('${r._id}', this)"></td>` : ''}
+        ${viewMode === 'delivery' ? `<td style="font-size:11px">${r.group ? `<span style="background:${getGroupColor(r.group)};color:#fff;border-radius:10px;padding:2px 8px;white-space:nowrap;">${esc(r.group)}</span>` : `<span style="color:var(--text-muted)">未グループ</span>`}</td>` : ''}
         <td class="name" title="${esc(r.name)}">${esc(r.name)}</td>
         <td style="font-size:12px">${esc(r.cs_no)}</td>
         <td>${esc(r.color)}${r.size && r.size!=='FREE' ? ' / '+esc(r.size) : ''}</td>
@@ -1183,19 +1238,132 @@ function toShiftJisCsvBlob(text) {
 }
 
 // ── CSVエクスポート ──
-function exportCSV() {
-  const rows = getFiltered();
+function buildCsvString(rows) {
   const header = `商品名,CS品番,カラー,サイズ,メーカー品番,初回販売開始日,カテゴリ,ZOZO在庫,${stockSourceLabel}在庫,自社売上個数,未反映納品数,実質在庫,直近30日販売数,直近7日販売数,推奨納品数,納品数(入力),ステータス\n`;
   const body = rows.map(r =>
     `"${r.name}",${r.cs_no},"${r.color}",${r.size},"${r.maker_no}","${r.firstSaleDate}","${r.category}",${r.currentStock!==null?r.currentStock:''},${r.tempostarStock!==null&&r.tempostarStock!==undefined?r.tempostarStock:''},${r.companySales!==null&&r.companySales!==undefined?r.companySales:''},${r.unref},${r.realStock!==null?r.realStock:''},${r.sold30!==null?r.sold30:''},${r.sold7!==null?r.sold7:''},${r.recommend!==null?r.recommend:''},${r.deliveryQty!==null&&r.deliveryQty!==undefined?r.deliveryQty:''},${getStatusLabel(r)}`
   ).join('\n');
-  const blob = new Blob(['\uFEFF'+header+body], {type:'text/csv'});
+  return header + body;
+}
+
+function downloadCsvString(csvString, filename) {
+  const blob = new Blob(['\uFEFF'+csvString], {type:'text/csv'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  const now = new Date();
-  a.download = `納品推奨数_${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}.csv`;
+  a.download = filename;
   a.click();
   URL.revokeObjectURL(a.href);
+}
+
+function exportCSV() {
+  const rows = getFiltered();
+  const now = new Date();
+  const dateStr = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}`;
+  downloadCsvString(buildCsvString(rows), `納品推奨数_${dateStr}.csv`);
+}
+
+// ── グループ管理（納品数入力済みタブ）──
+function createGroup() {
+  const input = document.getElementById('new-group-name');
+  const name = input.value.trim();
+  if (!name) { alert('グループ名を入力してください。'); return; }
+  if (name === '__none__') { alert('その名前は使用できません。'); return; }
+  if (/['"]/.test(name)) { alert('グループ名に引用符（\' や "）は使用できません。'); return; }
+  if (groupList.includes(name)) { alert('同じ名前のグループが既にあります。'); return; }
+  groupList.push(name);
+  input.value = '';
+  renderGroupPanel();
+}
+
+function deleteGroupDef(name) {
+  if (!confirm(`グループ「${name}」を削除します（所属する行は未グループに戻ります）。よろしいですか？`)) return;
+  data.forEach(r => { if (r.group === name) r.group = null; });
+  groupList = groupList.filter(g => g !== name);
+  if (groupFilter === name) groupFilter = null;
+  renderGroupPanel();
+  render();
+}
+
+function assignSelectedToGroup() {
+  if (selectedForDelete.size === 0) {
+    alert('割り当てる行が選択されていません。チェックボックスで対象行を選んでください。');
+    return;
+  }
+  const target = document.getElementById('assign-group-select').value;
+  const groupValue = target === '__none__' ? null : target;
+  data.forEach(r => {
+    if (selectedForDelete.has(r._id)) r.group = groupValue;
+  });
+  selectedForDelete.clear();
+  renderGroupPanel();
+  render();
+}
+
+function toggleGroupFilter(name) {
+  groupFilter = (groupFilter === name) ? null : name;
+  currentPage = 1;
+  renderGroupPanel();
+  render();
+}
+
+function buildGroupCsvString(rows) {
+  const header = 'CS品番,納品数\n';
+  const body = rows.map(r => `${r.cs_no},${r.deliveryQty !== null && r.deliveryQty !== undefined ? r.deliveryQty : ''}`).join('\n');
+  return header + body;
+}
+
+function downloadGroupCSV(name) {
+  const rows = data.filter(r => {
+    if (!(r.deliveryQty > 0)) return false;
+    return name === '__none__' ? !r.group : r.group === name;
+  });
+  if (rows.length === 0) {
+    alert('このグループに該当する行がありません。');
+    return;
+  }
+  const now = new Date();
+  const dateStr = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}`;
+  const label = name === '__none__' ? '未グループ' : name;
+  downloadCsvString(buildGroupCsvString(rows), `納品グループ_${label}_${dateStr}.csv`);
+}
+
+function renderGroupPanel() {
+  const sel = document.getElementById('assign-group-select');
+  if (sel) {
+    sel.innerHTML =
+      `<option value="__none__">－ 未グループに戻す－</option>` +
+      groupList.map(g => `<option value="${esc(g)}">${esc(g)}</option>`).join('');
+  }
+
+  const chipsEl = document.getElementById('group-chips');
+  if (!chipsEl) return;
+
+  const deliveryRows = data.filter(r => r.deliveryQty > 0);
+  const noneCount = deliveryRows.filter(r => !r.group).length;
+
+  const chip = (key, label, count, deletable) => {
+    const color = key === '__none__' ? '#9ca3af' : getGroupColor(key);
+    const active = groupFilter === key;
+    return `
+    <span style="display:inline-flex;align-items:center;gap:6px;background:${active?color:hexToRgba(color,0.12)};color:${active?'#fff':color};border:1px solid ${color};border-radius:16px;padding:4px 6px 4px 12px;font-size:12px;">
+      <span style="cursor:pointer;" onclick="toggleGroupFilter('${key}')">${esc(label)} (${count})</span>
+      <button title="このグループをCSVダウンロード" onclick="downloadGroupCSV('${key}')" style="border:none;background:transparent;cursor:pointer;color:inherit;font-size:13px;">⬇</button>
+      ${deletable ? `<button title="グループを削除" onclick="deleteGroupDef('${key}')" style="border:none;background:transparent;cursor:pointer;color:inherit;font-size:13px;">✕</button>` : ''}
+    </span>`;
+  };
+
+  let html = '';
+  if (deliveryRows.length > 0) {
+    html += chip('__none__', '未グループ', noneCount, false);
+  }
+  groupList.forEach(g => {
+    const count = deliveryRows.filter(r => r.group === g).length;
+    html += chip(g, g, count, true);
+  });
+  if (groupFilter !== null) {
+    html += `<span style="cursor:pointer;font-size:12px;color:var(--text-muted);align-self:center;text-decoration:underline;" onclick="toggleGroupFilter(null)">すべて表示に戻す</span>`;
+  }
+  chipsEl.innerHTML = html;
 }
 </script>
 </body>
