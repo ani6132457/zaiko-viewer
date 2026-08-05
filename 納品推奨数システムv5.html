@@ -450,7 +450,7 @@
           <select id="assign-group-select" style="border:0.5px solid var(--border-md);border-radius:4px;padding:5px 8px;font-size:13px;background:var(--surface);color:var(--text);outline:none;"></select>
           <button class="export-btn" onclick="assignSelectedToGroup()">選択行を割り当て</button>
         </div>
-        <div id="group-chips" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
+        <div id="group-chips" style="display:flex;flex-direction:column;"></div>
       </div>
 
       <div class="controls">
@@ -1345,14 +1345,17 @@ function renderGroupPanel() {
     const color = key === '__none__' ? '#9ca3af' : getGroupColor(key);
     const active = groupFilter === key;
     return `
-    <span style="display:inline-flex;align-items:center;gap:6px;background:${active?color:hexToRgba(color,0.12)};color:${active?'#fff':color};border:1px solid ${color};border-radius:16px;padding:4px 6px 4px 12px;font-size:12px;">
-      <span style="cursor:pointer;" onclick="toggleGroupFilter('${key}')">${esc(label)} (${count})</span>
-      <button title="このグループをCSVダウンロード" onclick="downloadGroupCSV('${key}')" style="border:none;background:transparent;cursor:pointer;color:inherit;font-size:13px;">⬇</button>
-      ${deletable ? `<button title="グループを削除" onclick="deleteGroupDef('${key}')" style="border:none;background:transparent;cursor:pointer;color:inherit;font-size:13px;">✕</button>` : ''}
-    </span>`;
+    <div style="display:flex;align-items:center;gap:10px;border:1px solid ${color};border-radius:8px;padding:8px 10px;background:${active?hexToRgba(color,0.15):'var(--surface)'};">
+      <span style="width:10px;height:10px;border-radius:50%;background:${color};flex-shrink:0;"></span>
+      <span onclick="toggleGroupFilter('${key}')" title="クリックでこのグループだけ表示/解除" style="cursor:pointer;flex:1;font-size:13px;font-weight:600;color:${active?color:'var(--text)'};padding:4px 0;">
+        ${esc(label)} <span style="font-weight:400;color:var(--text-muted)">（${count}件）</span>${active ? ' ✓ 表示中' : ''}
+      </span>
+      <button onclick="downloadGroupCSV('${key}')" style="border:1px solid ${color};background:${color};color:#fff;border-radius:6px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;">⬇ CSVダウンロード</button>
+      ${deletable ? `<button onclick="deleteGroupDef('${key}')" title="グループを削除" style="border:none;background:transparent;color:var(--text-muted);cursor:pointer;font-size:12px;padding:6px 8px;margin-left:4px;">削除</button>` : `<span style="width:52px;flex-shrink:0;"></span>`}
+    </div>`;
   };
 
-  let html = '';
+  let html = '<div style="display:flex;flex-direction:column;gap:6px;">';
   if (deliveryRows.length > 0) {
     html += chip('__none__', '未グループ', noneCount, false);
   }
@@ -1360,8 +1363,9 @@ function renderGroupPanel() {
     const count = deliveryRows.filter(r => r.group === g).length;
     html += chip(g, g, count, true);
   });
+  html += '</div>';
   if (groupFilter !== null) {
-    html += `<span style="cursor:pointer;font-size:12px;color:var(--text-muted);align-self:center;text-decoration:underline;" onclick="toggleGroupFilter(null)">すべて表示に戻す</span>`;
+    html += `<div style="margin-top:8px;"><span style="cursor:pointer;font-size:12px;color:var(--text-muted);text-decoration:underline;" onclick="toggleGroupFilter(null)">すべて表示に戻す</span></div>`;
   }
   chipsEl.innerHTML = html;
 }
