@@ -5,6 +5,7 @@ import os
 import html
 import re
 import json
+import requests
 import streamlit.components.v1 as components
 from datetime import datetime, timedelta
 from pandas.tseries.offsets import DateOffset
@@ -182,6 +183,102 @@ def get_tempostar_sales_map(file_paths):
             if pd.notna(row["_日付"])
         ]
     return sales_map
+
+
+# ==========================
+# 楽天RMS 在庫API 2.0 連携
+# ==========================
+# ※ manageNumber（商品管理番号）＝ Tempostarの「商品基本コード」
+#    variantId（楽天SKU）＝ Tempostarの「商品コード」 と同一の運用であることを前提にしています。
+# ※ エンドポイント/リクエスト形式は在庫更新用の bulk-upsert と対になる一括取得APIを想定しています。
+#    実際にRMSの管理画面（WEB APIサービス配下のAPIドキュメント）で最終確認のうえご利用ください。
+RAKUTEN_INVENTORY_BULK_GET_URL = "https://api.rms.rakuten.co.jp/es/2.0/inventories/bulk-get"
+RAKUTEN_BATCH_SIZE = 100
+
+
+@st.cache_data
+def get_rakuten_sku_pairs(file_paths):
+    """
+    Tempostar CSV全体から (商品基本コード=manageNumber, 商品コード=variantId) の
+    重複なしペア一覧を作る。楽天APIへ問い合わせる対象リストとして使う。
+    """
+    if not file_paths:
+        return tuple()
+
+    df_all = load_tempostar_data(tuple(sorted(file_paths)))
+    required = {"商品コード", "商品基本コード"}
+    if not required.issubset(df_all.columns):
+        return tuple()
+
+    pairs = (
+        df_all[["商品基本コード", "商品コード"]]
+        .astype(str)
+        .apply(lambda s: s.str.strip())
+        .drop_duplicates()
+    )
+    pairs = pairs[(pairs["商品基本コード"] != "") & (pairs["商品コード"] != "")]
+    return tuple(
+        (row["商品基本コード"], row["商品コード"]) for _, row in pairs.iterrows()
+    )
+
+
+def _rakuten_auth_header():
+    try:
+        rakuten_secrets = st.secrets.get("rakuten", {})
+    except Exception:
+        rakuten_secrets = {}
+    service_secret = rakuten_secrets.get("service_secret")
+    license_key = rakuten_secrets.get("license_key")
+    if not service_secret or not license_key:
+        return None
+    token = base64.b64encode(f"{service_secret}:{license_key}".encode("utf-8")).decode("utf-8")
+    return f"ESA {token}"
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def get_rakuten_stock_map(pairs):
+    """
+    楽天RMS 在庫API 2.0 から在庫数を一括取得する。
+    戻り値: { variantId(=商品コード): 在庫数 }
+    認証情報は .streamlit/secrets.toml に以下の形式で設定してください。
+
+        [rakuten]
+        service_secret = "..."
+        license_key = "..."
+    """
+    auth_header = _rakuten_auth_header()
+    if not auth_header or not pairs:
+        return {}, []
+
+    headers = {
+        "Authorization": auth_header,
+        "Content-Type": "application/json; charset=utf-8",
+    }
+
+    stock_map = {}
+    errors = []
+    for i in range(0, len(pairs), RAKUTEN_BATCH_SIZE):
+        batch = pairs[i:i + RAKUTEN_BATCH_SIZE]
+        body = {
+            "inventories": [
+                {"manageNumber": mn, "variantId": vid} for mn, vid in batch
+            ]
+        }
+        try:
+            resp = requests.post(
+                RAKUTEN_INVENTORY_BULK_GET_URL, headers=headers, json=body, timeout=15
+            )
+            resp.raise_for_status()
+            res_json = resp.json()
+            for item in res_json.get("inventories", []):
+                vid = item.get("variantId")
+                qty = item.get("quantity")
+                if vid is not None and qty is not None:
+                    stock_map[str(vid)] = int(qty)
+        except Exception as e:
+            errors.append(f"{i // RAKUTEN_BATCH_SIZE + 1}件目バッチ: {e}")
+
+    return stock_map, errors
 
 
 # ==========================
@@ -363,6 +460,14 @@ def main():
     if "selected_sku" not in st.session_state:
         st.session_state["selected_sku"] = None
 
+    # ---------- 楽天在庫（RMS 在庫API 2.0）----------
+    all_paths_for_rakuten = tuple(sorted(fi["path"] for fi in file_infos))
+    if _rakuten_auth_header() is None:
+        rakuten_stock_map, rakuten_errors = {}, []
+    else:
+        rakuten_pairs = get_rakuten_sku_pairs(all_paths_for_rakuten)
+        rakuten_stock_map, rakuten_errors = get_rakuten_stock_map(rakuten_pairs)
+
 
     # ---------- 初期フィルタ（セッション） ----------
     default_start = max_date - timedelta(days=30)
@@ -536,7 +641,7 @@ def main():
         # ==========================
     # タブ（タブ名と中身を一致させる）
     # ==========================
-    def render_restock_tab(file_infos, min_date, max_date):
+    def render_restock_tab(file_infos, min_date, max_date, rakuten_stock_map):
         # --- 発注推奨一覧タブ ---
         left, right = st.columns([1, 3])
 
@@ -668,6 +773,11 @@ def main():
 
                         sales_recent = sales_recent[sales_recent["現在庫"] <= max_current_stock]
 
+                        # 楽天在庫（RMS 在庫API 2.0・リアルタイム取得）
+                        sales_recent["楽天在庫"] = (
+                            sales_recent["商品コード"].astype(str).str.strip().map(rakuten_stock_map)
+                        )
+
                         img_master = load_image_master()
                         base_url = "https://image.rakuten.co.jp/hype/cabinet"
 
@@ -697,7 +807,7 @@ def main():
                         else:
                             display_cols = [
                                 "画像", "商品コード", "商品基本コード", "商品名",
-                                "属性1名", "属性2名", "売上個数合計", "現在庫", "発注推奨数",
+                                "属性1名", "属性2名", "売上個数合計", "現在庫", "楽天在庫", "発注推奨数",
                             ]
                             display_cols = [c for c in display_cols if c in restock_view.columns]
                             df_view_r = restock_view[display_cols].copy()
@@ -710,7 +820,7 @@ def main():
                                 if s <= 10 or s < v: return "🟡 在庫少"
                                 return ""
                             df_view_r.insert(
-                                df_view_r.columns.tolist().index("現在庫") + 1,
+                                df_view_r.columns.tolist().index("楽天在庫") + 1,
                                 "状態",
                                 [_status(s, v) for s, v in zip(stock_num, sales_num)]
                             )
@@ -726,6 +836,10 @@ def main():
                             col_cfg = {}
                             if "画像" in df_view_r.columns:
                                 col_cfg["画像"] = st.column_config.ImageColumn("画像", width="small")
+                            if "楽天在庫" in df_view_r.columns:
+                                col_cfg["楽天在庫"] = st.column_config.NumberColumn("楽天在庫", format="%d")
+                            if not rakuten_stock_map:
+                                st.caption("ℹ️ 楽天在庫が空欄の場合は、`.streamlit/secrets.toml` に楽天APIの認証情報が未設定か、取得エラーが発生しています。")
 
                             st.dataframe(
                                 df_view_r,
@@ -734,7 +848,7 @@ def main():
                                 column_config=col_cfg if col_cfg else None,
                             )
 
-    def render_sales_tab(file_infos, min_date, max_date):
+    def render_sales_tab(file_infos, min_date, max_date, rakuten_stock_map):
         # --- 売上個数一覧タブ ---
         left, right = st.columns([1, 3])
 
@@ -917,6 +1031,11 @@ def main():
                     .astype(int)
                 )
 
+                # 楽天在庫（RMS 在庫API 2.0・リアルタイム取得）
+                sales_grouped["楽天在庫"] = (
+                    sales_grouped["商品コード"].astype(str).str.strip().map(rakuten_stock_map)
+                )
+
                 if min_total_sales > 0:
                     sales_grouped = sales_grouped[sales_grouped["売上個数合計"] >= min_total_sales]
 
@@ -945,7 +1064,7 @@ def main():
 
                 display_cols = [
                     "画像", "商品コード", "商品基本コード", "商品名",
-                    "属性1名", "属性2名", "今年売上", "前年売上", "現在庫",
+                    "属性1名", "属性2名", "今年売上", "前年売上", "現在庫", "楽天在庫",
                 ]
                 display_cols = [c for c in display_cols if c in sales_grouped.columns]
                 df_view = sales_grouped[display_cols]
@@ -958,6 +1077,9 @@ def main():
                     unsafe_allow_html=True,
                 )
 
+                if not rakuten_stock_map:
+                    st.caption("ℹ️ 楽天在庫が空欄の場合は、`.streamlit/secrets.toml` に楽天APIの認証情報が未設定か、取得エラーが発生しています。")
+
                 event = st.dataframe(
                     df_view,
                     hide_index=True,
@@ -969,6 +1091,7 @@ def main():
                         "今年売上": st.column_config.NumberColumn("今年売上", format="%d"),
                         "前年売上": st.column_config.NumberColumn("前年売上", format="%d"),
                         "現在庫":  st.column_config.NumberColumn("現在庫",   format="%d"),
+                        "楽天在庫": st.column_config.NumberColumn("楽天在庫", format="%d"),
                     } if "画像" in df_view.columns else None,
                 )
 
@@ -986,7 +1109,7 @@ def main():
         # タブ2：在庫少商品（発注目安）
         # --------------------------------------------------
 
-    def render_delivery_tab(file_infos):
+    def render_delivery_tab(file_infos, rakuten_stock_map, rakuten_errors):
         # --- 納品推奨数システム（HTMLツール埋め込み＋テンポスター在庫連携）---
         html_path = "納品推奨数システムv5.html"
         if not os.path.exists(html_path):
@@ -997,13 +1120,29 @@ def main():
 
         sku_master = load_sku_master()
         all_paths = [fi["path"] for fi in file_infos]
-        stock_map = get_tempostar_stock_map(all_paths)
         sales_map = get_tempostar_sales_map(all_paths)
+
+        if rakuten_stock_map:
+            stock_map = rakuten_stock_map
+            stock_source_label = "楽天(リアルタイム)"
+        else:
+            stock_map = get_tempostar_stock_map(all_paths)
+            stock_source_label = "テンポスター(フォールバック)"
+            if rakuten_errors:
+                st.warning(
+                    "楽天在庫の取得に失敗したため、テンポスターの在庫データで表示しています。"
+                    f"（エラー: {rakuten_errors[0]}）"
+                )
+            elif _rakuten_auth_header() is None:
+                st.info(
+                    "楽天APIの認証情報（`.streamlit/secrets.toml`）が未設定のため、"
+                    "テンポスターの在庫データで表示しています。"
+                )
 
         if not sku_master:
             st.warning(
                 "『SKUマスター』フォルダにCSV（列名: CS品番, SKU）が見つからないため、"
-                "テンポスター在庫との連携なしで表示します。"
+                "在庫連携なしで表示します。"
             )
 
         with open(html_path, "r", encoding="utf-8") as f:
@@ -1013,6 +1152,7 @@ def main():
             "<script>"
             f"window.__SKU_MASTER__ = {json.dumps(sku_master, ensure_ascii=False)};"
             f"window.__TEMPOSTAR_STOCK__ = {json.dumps(stock_map, ensure_ascii=False)};"
+            f"window.__STOCK_SOURCE_LABEL__ = {json.dumps(stock_source_label, ensure_ascii=False)};"
             f"window.__TEMPOSTAR_SALES__ = {json.dumps(sales_map, ensure_ascii=False)};"
             "</script>"
         )
@@ -1020,8 +1160,8 @@ def main():
         html_content = html_content.replace("<script>", injected_script + "<script>", 1)
 
         st.caption(
-            f"テンポスター在庫連携：SKUマスター {len(sku_master)}件 ｜ "
-            f"テンポスター在庫データ {len(stock_map)}SKU分 ｜ "
+            f"在庫データソース：{stock_source_label} ｜ SKUマスター {len(sku_master)}件 ｜ "
+            f"在庫データ {len(stock_map)}SKU分 ｜ "
             f"売上データ {len(sales_map)}SKU分（期間は画面上部で指定可）"
         )
         components.html(html_content, height=1600, scrolling=True)
@@ -1032,13 +1172,13 @@ def main():
     )
 
     with tab_restock:
-        render_restock_tab(file_infos, min_date, max_date)
+        render_restock_tab(file_infos, min_date, max_date, rakuten_stock_map)
 
     with tab_sales:
-        render_sales_tab(file_infos, min_date, max_date)
+        render_sales_tab(file_infos, min_date, max_date, rakuten_stock_map)
 
     with tab_delivery:
-        render_delivery_tab(file_infos)
+        render_delivery_tab(file_infos, rakuten_stock_map, rakuten_errors)
 
 
 if __name__ == "__main__":

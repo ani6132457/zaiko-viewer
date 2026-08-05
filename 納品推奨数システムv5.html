@@ -501,12 +501,16 @@ let selectedForDelete = new Set(); // 納品数入力済みタブの選択削除
 let tempostarStockMap = {}; // { SKU: 現在庫 }（Streamlit側から自動注入）
 let salesMap = {}; // { SKU: [{d:'YYYYMMDD', q:数量}, ...] }（Streamlit側から自動注入・日付昇順）
 let tempostarInjected = false;
+let stockSourceLabel = '自社'; // Streamlit側から注入（例: "楽天(リアルタイム)"）
 
 // ── Streamlit連携: 自動注入データの反映 ──
 (function applyInjectedData() {
   if (typeof window.__TEMPOSTAR_STOCK__ === 'object' && window.__TEMPOSTAR_STOCK__) {
     tempostarStockMap = window.__TEMPOSTAR_STOCK__;
     tempostarInjected = true;
+  }
+  if (typeof window.__STOCK_SOURCE_LABEL__ === 'string' && window.__STOCK_SOURCE_LABEL__) {
+    stockSourceLabel = window.__STOCK_SOURCE_LABEL__;
   }
   if (typeof window.__TEMPOSTAR_SALES__ === 'object' && window.__TEMPOSTAR_SALES__) {
     salesMap = window.__TEMPOSTAR_SALES__;
@@ -520,7 +524,7 @@ let tempostarInjected = false;
     const card = document.getElementById('card-master');
     const status = document.getElementById('status-master');
     if (card) card.classList.add('loaded');
-    if (status) status.textContent = `✓ 自動読み込み（${masterMap.length}件・テンポスター連携）`;
+    if (status) status.textContent = `✓ 自動読み込み（${masterMap.length}件・自動連携）`;
   }
 })();
 
@@ -959,7 +963,7 @@ const COLS = [
   { key:'firstSaleDate',label:'初回販売開始日', width:'6%', align:'l', type:'str' },
   { key:'deliveryQty',  label:'納品数',       width:'5%',  align:'r', type:'num' },
   { key:'currentStock', label:'ZOZO在庫',     width:'5%',  align:'r', type:'num' },
-  { key:'tempostarStock', label:'テンポスター在庫', width:'6%', align:'r', type:'num' },
+  { key:'tempostarStock', label:`${stockSourceLabel}在庫`, width:'6%', align:'r', type:'num' },
   { key:'companySales', label:'自社売上個数', width:'6%',  align:'r', type:'num' },
   { key:'unref',        label:'未反映納品',   width:'6%',  align:'r', type:'num' },
   { key:'realStock',    label:'実質在庫',     width:'6%',  align:'r', type:'num' },
@@ -1158,7 +1162,7 @@ function render() {
   const salesEndLabel = document.getElementById('sales-end-date').value;
   document.getElementById('info-bar').innerHTML =
     `📌 実質在庫 ＝ 現在庫 ＋ 未反映納品${rawOrd ? ' － 注文数（注文CSV）' : ''}。推奨納品数 ＝ 目標在庫（日販速度 × ${targetDays}日）－ 実質在庫。
-     未反映納品は出荷日が ${periodStr} の納品書全行を対象。${tempostarInjected ? `<br>📦 テンポスター在庫＝Tempostarの最新在庫（SKUマスターでCS品番と紐付け）。自社売上個数＝${salesStartLabel} 〜 ${salesEndLabel} の期間集計（上部の日付で変更可）。` : ''}`;
+     未反映納品は出荷日が ${periodStr} の納品書全行を対象。${tempostarInjected ? `<br>📦 ${stockSourceLabel}在庫＝${stockSourceLabel}の最新在庫（SKUマスターでCS品番と紐付け）。自社売上個数＝${salesStartLabel} 〜 ${salesEndLabel} の期間集計（上部の日付で変更可）。` : ''}`;
 }
 
 function changePage(d) { currentPage += d; render(); }
@@ -1181,7 +1185,7 @@ function toShiftJisCsvBlob(text) {
 // ── CSVエクスポート ──
 function exportCSV() {
   const rows = getFiltered();
-  const header = '商品名,CS品番,カラー,サイズ,メーカー品番,初回販売開始日,カテゴリ,ZOZO在庫,テンポスター在庫,自社売上個数,未反映納品数,実質在庫,直近30日販売数,直近7日販売数,推奨納品数,納品数(入力),ステータス\n';
+  const header = `商品名,CS品番,カラー,サイズ,メーカー品番,初回販売開始日,カテゴリ,ZOZO在庫,${stockSourceLabel}在庫,自社売上個数,未反映納品数,実質在庫,直近30日販売数,直近7日販売数,推奨納品数,納品数(入力),ステータス\n`;
   const body = rows.map(r =>
     `"${r.name}",${r.cs_no},"${r.color}",${r.size},"${r.maker_no}","${r.firstSaleDate}","${r.category}",${r.currentStock!==null?r.currentStock:''},${r.tempostarStock!==null&&r.tempostarStock!==undefined?r.tempostarStock:''},${r.companySales!==null&&r.companySales!==undefined?r.companySales:''},${r.unref},${r.realStock!==null?r.realStock:''},${r.sold30!==null?r.sold30:''},${r.sold7!==null?r.sold7:''},${r.recommend!==null?r.recommend:''},${r.deliveryQty!==null&&r.deliveryQty!==undefined?r.deliveryQty:''},${getStatusLabel(r)}`
   ).join('\n');
