@@ -627,7 +627,7 @@ def main():
 /* タブの見出し部分をスクロールしても常に表示・押せるように固定 */
 [data-testid="stTabs"] [data-baseweb="tab-list"] {
     position: sticky;
-    top: 2.5rem;
+    top: 5.0rem;
     z-index: 999;
     background: #ffffff;
     box-shadow: 0 2px 6px rgba(0,0,0,0.08);
