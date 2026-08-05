@@ -1121,12 +1121,20 @@ def main():
         sku_master = load_sku_master()
         all_paths = [fi["path"] for fi in file_infos]
         sales_map = get_tempostar_sales_map(all_paths)
+        tempostar_stock_map = get_tempostar_stock_map(all_paths)
 
         if rakuten_stock_map:
-            stock_map = rakuten_stock_map
+            # SKUごとに楽天在庫を優先し、楽天側にデータがないSKUだけテンポスター在庫で補完する
+            stock_map = dict(tempostar_stock_map)
+            stock_map.update(rakuten_stock_map)
+            fallback_count = len(set(tempostar_stock_map) - set(rakuten_stock_map))
             stock_source_label = "楽天(リアルタイム)"
+            if fallback_count > 0:
+                st.caption(
+                    f"ℹ️ 楽天側に在庫データがない{fallback_count}SKUは、テンポスターの在庫で補完しています。"
+                )
         else:
-            stock_map = get_tempostar_stock_map(all_paths)
+            stock_map = tempostar_stock_map
             stock_source_label = "テンポスター(フォールバック)"
             if rakuten_errors:
                 st.warning(
