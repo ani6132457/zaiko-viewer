@@ -616,10 +616,18 @@ def main():
     padding: 8px 20px !important;
 }
 
+/* Streamlit標準ヘッダーの高さを固定（タブの固定位置とズレないように） */
+[data-testid="stHeader"] {
+    height: 2.5rem;
+}
+[data-testid="stAppViewContainer"] > .main {
+    padding-top: 2.5rem;
+}
+
 /* タブの見出し部分をスクロールしても常に表示・押せるように固定 */
 [data-testid="stTabs"] [data-baseweb="tab-list"] {
     position: sticky;
-    top: 0;
+    top: 2.5rem;
     z-index: 999;
     background: #ffffff;
     box-shadow: 0 2px 6px rgba(0,0,0,0.08);
@@ -1181,7 +1189,9 @@ def main():
             f"在庫データ {len(stock_map)}SKU分 ｜ "
             f"売上データ {len(sales_map)}SKU分（期間は画面上部で指定可）"
         )
-        components.html(html_content, height=1600, scrolling=True)
+        # iframe自体のスクロールバーは出さず、アプリ全体のスクロールと
+        # テーブル内（商品行）のスクロールの2つだけになるようにする
+        components.html(html_content, height=1700, scrolling=False)
 
     # タブ順：最初に「在庫少商品（発注目安）」を開く
     tab_restock, tab_sales, tab_delivery = st.tabs(
