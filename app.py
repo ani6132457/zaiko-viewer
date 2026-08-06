@@ -246,7 +246,6 @@ def _rakuten_auth_header():
 # 注意: 通常のモジュール直下の変数（例: _state = {...}）は、Streamlitが
 # スクリプトを再実行するたびに再代入されて中身が消えてしまう。
 # st.cache_resource を使うことで、rerunをまたいでプロセス内に持続させている。
-RAKUTEN_TTL_SECONDS = 900  # 15分
 
 
 @st.cache_resource
@@ -308,6 +307,9 @@ def get_rakuten_stock_state(pairs, force=False):
     楽天RMS 在庫API 2.0 の在庫データを取得する（非ブロッキング）。
     ・裏側のスレッドで取得し、取得中もその場では待たずに現在キャッシュされている値を返す
     ・取得が完了すると、次にこの関数が呼ばれた（＝次の画面操作でrerunされた）タイミングで新しい値に切り替わる
+    ・時間経過による自動再取得は行わない。force=Trueの時だけ取得を開始する
+      （呼び出し側で「このセッションでまだ取得していない＝ページ再読み込み直後」または
+      「手動更新ボタンが押された」場合にforce=Trueを渡す想定）
     戻り値: (stock_map, errors, fetched_at表示文字列, fetching中かどうか)
 
     認証情報は .streamlit/secrets.toml に以下の形式で設定してください。
@@ -328,9 +330,8 @@ def get_rakuten_stock_state(pairs, force=False):
             state["fetching"] = False
             state["errors"] = ["前回の取得が完了しないまま長時間経過したため、状態をリセットしました。"]
 
-        is_stale = (time.time() - state["fetched_ts"]) > RAKUTEN_TTL_SECONDS
         already_fetching = state["fetching"]
-        should_start = (force or is_stale) and not already_fetching
+        should_start = force and not already_fetching
 
         if should_start:
             state["fetching"] = True
@@ -361,7 +362,7 @@ def render_rakuten_refresh_control(fetched_at, fetching, errors, key):
         if fetching:
             st.caption("📦 楽天在庫を裏で取得中…（そのまま操作を続けられます。完了後、次の操作で反映されます）")
         elif fetched_at:
-            st.caption(f"📦 楽天在庫 最終取得: {fetched_at}（15分ごとに自動更新）")
+            st.caption(f"📦 楽天在庫 最終取得: {fetched_at}（ページ再読み込みまで自動更新しません。最新を見たい時は右のボタンを押してください）")
         else:
             st.caption("📦 楽天在庫：未取得")
         if errors:
@@ -552,14 +553,19 @@ def main():
         st.session_state["selected_sku"] = None
 
     # ---------- 楽天在庫（RMS 在庫API 2.0・非ブロッキング背景取得） ----------
+    # 自動取得は「このブラウザセッションでまだ取得していない時（＝開いた直後やF5直後）」のみ。
+    # それ以外は手動更新ボタンを押さない限り、取得済みの値をそのまま使い続ける。
     all_paths_for_rakuten = tuple(sorted(fi["path"] for fi in file_infos))
-    force_rakuten_refresh = st.session_state.pop("rakuten_force_refresh", False)
+    manual_refresh = st.session_state.pop("rakuten_force_refresh", False)
+    need_session_fetch = not st.session_state.get("rakuten_session_fetched", False)
+    st.session_state["rakuten_session_fetched"] = True
+
     if _rakuten_auth_header() is None:
         rakuten_stock_map, rakuten_errors, rakuten_fetched_at, rakuten_fetching = {}, [], None, False
     else:
         rakuten_pairs = get_rakuten_sku_pairs(all_paths_for_rakuten)
         rakuten_stock_map, rakuten_errors, rakuten_fetched_at, rakuten_fetching = get_rakuten_stock_state(
-            rakuten_pairs, force=force_rakuten_refresh
+            rakuten_pairs, force=(manual_refresh or need_session_fetch)
         )
 
 
