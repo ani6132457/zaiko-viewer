@@ -258,26 +258,26 @@ def _get_rakuten_bg_container():
         "fetched_at": None,   # 表示用の "HH:MM:SS"
         "fetched_ts": 0.0,    # TTL判定用のUNIX時刻
         "fetching": False,
+        "fetching_started_ts": 0.0,
     }
 
 
-def _rakuten_fetch_worker(pairs, auth_header):
-    state = _get_rakuten_bg_container()
-    headers = {
-        "Authorization": auth_header,
-        "Content-Type": "application/json; charset=utf-8",
-    }
-    batches = [pairs[i:i + RAKUTEN_BATCH_SIZE] for i in range(0, len(pairs), RAKUTEN_BATCH_SIZE)]
-
-    def fetch_batch(batch):
-        body = {"inventories": [{"manageNumber": mn, "variantId": vid} for mn, vid in batch]}
-        resp = requests.post(RAKUTEN_INVENTORY_BULK_GET_URL, headers=headers, json=body, timeout=15)
-        resp.raise_for_status()
-        return resp.json()
-
+def _rakuten_fetch_worker(state, pairs, auth_header):
     stock_map = {}
     errors = []
     try:
+        headers = {
+            "Authorization": auth_header,
+            "Content-Type": "application/json; charset=utf-8",
+        }
+        batches = [pairs[i:i + RAKUTEN_BATCH_SIZE] for i in range(0, len(pairs), RAKUTEN_BATCH_SIZE)]
+
+        def fetch_batch(batch):
+            body = {"inventories": [{"manageNumber": mn, "variantId": vid} for mn, vid in batch]}
+            resp = requests.post(RAKUTEN_INVENTORY_BULK_GET_URL, headers=headers, json=body, timeout=15)
+            resp.raise_for_status()
+            return resp.json()
+
         with ThreadPoolExecutor(max_workers=RAKUTEN_MAX_WORKERS) as executor:
             future_to_idx = {executor.submit(fetch_batch, b): i for i, b in enumerate(batches)}
             for future in as_completed(future_to_idx):
@@ -291,6 +291,9 @@ def _rakuten_fetch_worker(pairs, auth_header):
                             stock_map[str(vid)] = int(qty)
                 except Exception as e:
                     errors.append(f"{idx + 1}件目バッチ: {e}")
+    except Exception as e:
+        # 想定外のエラーが起きても「取得中」のまま固まらないよう、必ずここを通す
+        errors.append(f"予期しないエラー: {e}")
     finally:
         with state["lock"]:
             state["map"] = stock_map
@@ -319,12 +322,19 @@ def get_rakuten_stock_state(pairs, force=False):
     state = _get_rakuten_bg_container()
 
     with state["lock"]:
+        # 何らかの理由でスレッドが完了せず「取得中」のまま固まった場合の自己回復
+        # （通常は数秒〜数十秒で終わるはずなので、2分を大きく超えたら異常とみなす）
+        if state["fetching"] and (time.time() - state["fetching_started_ts"]) > 120:
+            state["fetching"] = False
+            state["errors"] = ["前回の取得が完了しないまま長時間経過したため、状態をリセットしました。"]
+
         is_stale = (time.time() - state["fetched_ts"]) > RAKUTEN_TTL_SECONDS
         already_fetching = state["fetching"]
         should_start = (force or is_stale) and not already_fetching
 
         if should_start:
             state["fetching"] = True
+            state["fetching_started_ts"] = time.time()
 
         result = (
             dict(state["map"]),
@@ -334,7 +344,7 @@ def get_rakuten_stock_state(pairs, force=False):
         )
 
     if should_start:
-        t = threading.Thread(target=_rakuten_fetch_worker, args=(pairs, auth_header), daemon=True)
+        t = threading.Thread(target=_rakuten_fetch_worker, args=(state, pairs, auth_header), daemon=True)
         t.start()
 
     return result
@@ -952,7 +962,7 @@ def main():
                                 col_cfg["画像"] = st.column_config.ImageColumn("画像", width="small")
                             if "楽天在庫" in df_view_r.columns:
                                 col_cfg["楽天在庫"] = st.column_config.NumberColumn("楽天在庫", format="%d")
-                            if not rakuten_stock_map:
+                            if not rakuten_stock_map and not rakuten_fetching:
                                 st.caption("ℹ️ 楽天在庫が空欄の場合は、`.streamlit/secrets.toml` に楽天APIの認証情報が未設定か、取得エラーが発生しています。")
 
                             st.dataframe(
@@ -1195,7 +1205,7 @@ def main():
                     unsafe_allow_html=True,
                 )
 
-                if not rakuten_stock_map:
+                if not rakuten_stock_map and not rakuten_fetching:
                     st.caption("ℹ️ 楽天在庫が空欄の場合は、`.streamlit/secrets.toml` に楽天APIの認証情報が未設定か、取得エラーが発生しています。")
 
                 event = st.dataframe(
