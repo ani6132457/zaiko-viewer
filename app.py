@@ -6,6 +6,7 @@ import html
 import re
 import json
 import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import streamlit.components.v1 as components
 from datetime import datetime, timedelta
 from pandas.tseries.offsets import DateOffset
@@ -194,6 +195,7 @@ def get_tempostar_sales_map(file_paths):
 #    実際にRMSの管理画面（WEB APIサービス配下のAPIドキュメント）で最終確認のうえご利用ください。
 RAKUTEN_INVENTORY_BULK_GET_URL = "https://api.rms.rakuten.co.jp/es/2.0/inventories/bulk-get"
 RAKUTEN_BATCH_SIZE = 100
+RAKUTEN_MAX_WORKERS = 8  # 並列で投げるバッチ数（楽天側のレート制限に応じて調整可）
 
 
 @st.cache_data
@@ -235,8 +237,8 @@ def _rakuten_auth_header():
     return f"ESA {token}"
 
 
-@st.cache_data(ttl=300, show_spinner=False)
-def get_rakuten_stock_map(pairs):
+@st.cache_data(ttl=900, show_spinner=False)
+def get_rakuten_stock_map(pairs, refresh_nonce=0):
     """
     楽天RMS 在庫API 2.0 から在庫数を一括取得する。
     戻り値: { variantId(=商品コード): 在庫数 }
@@ -245,40 +247,54 @@ def get_rakuten_stock_map(pairs):
         [rakuten]
         service_secret = "..."
         license_key = "..."
+
+    ※ refresh_nonce はキャッシュを手動で無効化するためだけの引数（値自体は使わない）。
+    ※ バッチはThreadPoolExecutorで並列に投げることで待ち時間を短縮している。
+       楽天側のレート制限に引っかかる場合は RAKUTEN_MAX_WORKERS を減らしてください。
     """
     auth_header = _rakuten_auth_header()
     if not auth_header or not pairs:
-        return {}, []
+        return {}, [], None
 
     headers = {
         "Authorization": auth_header,
         "Content-Type": "application/json; charset=utf-8",
     }
 
-    stock_map = {}
-    errors = []
-    for i in range(0, len(pairs), RAKUTEN_BATCH_SIZE):
-        batch = pairs[i:i + RAKUTEN_BATCH_SIZE]
+    batches = [pairs[i:i + RAKUTEN_BATCH_SIZE] for i in range(0, len(pairs), RAKUTEN_BATCH_SIZE)]
+
+    def fetch_batch(batch_idx, batch):
         body = {
             "inventories": [
                 {"manageNumber": mn, "variantId": vid} for mn, vid in batch
             ]
         }
-        try:
-            resp = requests.post(
-                RAKUTEN_INVENTORY_BULK_GET_URL, headers=headers, json=body, timeout=15
-            )
-            resp.raise_for_status()
-            res_json = resp.json()
-            for item in res_json.get("inventories", []):
-                vid = item.get("variantId")
-                qty = item.get("quantity")
-                if vid is not None and qty is not None:
-                    stock_map[str(vid)] = int(qty)
-        except Exception as e:
-            errors.append(f"{i // RAKUTEN_BATCH_SIZE + 1}件目バッチ: {e}")
+        resp = requests.post(
+            RAKUTEN_INVENTORY_BULK_GET_URL, headers=headers, json=body, timeout=15
+        )
+        resp.raise_for_status()
+        return resp.json()
 
-    return stock_map, errors
+    stock_map = {}
+    errors = []
+    with ThreadPoolExecutor(max_workers=RAKUTEN_MAX_WORKERS) as executor:
+        future_to_idx = {
+            executor.submit(fetch_batch, i, batch): i
+            for i, batch in enumerate(batches)
+        }
+        for future in as_completed(future_to_idx):
+            idx = future_to_idx[future]
+            try:
+                res_json = future.result()
+                for item in res_json.get("inventories", []):
+                    vid = item.get("variantId")
+                    qty = item.get("quantity")
+                    if vid is not None and qty is not None:
+                        stock_map[str(vid)] = int(qty)
+            except Exception as e:
+                errors.append(f"{idx + 1}件目バッチ: {e}")
+
+    return stock_map, errors, datetime.now().strftime("%H:%M:%S")
 
 
 # ==========================
@@ -459,14 +475,26 @@ def main():
 
     if "selected_sku" not in st.session_state:
         st.session_state["selected_sku"] = None
+    if "rakuten_refresh_nonce" not in st.session_state:
+        st.session_state["rakuten_refresh_nonce"] = 0
 
     # ---------- 楽天在庫（RMS 在庫API 2.0）----------
     all_paths_for_rakuten = tuple(sorted(fi["path"] for fi in file_infos))
     if _rakuten_auth_header() is None:
-        rakuten_stock_map, rakuten_errors = {}, []
+        rakuten_stock_map, rakuten_errors, rakuten_fetched_at = {}, [], None
     else:
         rakuten_pairs = get_rakuten_sku_pairs(all_paths_for_rakuten)
-        rakuten_stock_map, rakuten_errors = get_rakuten_stock_map(rakuten_pairs)
+        rakuten_stock_map, rakuten_errors, rakuten_fetched_at = get_rakuten_stock_map(
+            rakuten_pairs, st.session_state["rakuten_refresh_nonce"]
+        )
+
+    with st.sidebar:
+        st.markdown("#### 📦 楽天在庫データ")
+        if rakuten_fetched_at:
+            st.caption(f"最終取得: {rakuten_fetched_at}（15分ごとに自動更新）")
+        if st.button("🔄 楽天在庫を今すぐ再取得", use_container_width=True):
+            st.session_state["rakuten_refresh_nonce"] += 1
+            st.rerun()
 
 
     # ---------- 初期フィルタ（セッション） ----------
