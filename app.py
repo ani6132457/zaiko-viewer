@@ -8,6 +8,7 @@ import json
 import requests
 import threading
 import time
+import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import streamlit.components.v1 as components
 from datetime import datetime, timedelta
@@ -198,6 +199,8 @@ def get_tempostar_sales_map(file_paths):
 RAKUTEN_INVENTORY_BULK_GET_URL = "https://api.rms.rakuten.co.jp/es/2.0/inventories/bulk-get"
 RAKUTEN_BATCH_SIZE = 100
 RAKUTEN_MAX_WORKERS = 8  # 並列で投げるバッチ数（楽天側のレート制限に応じて調整可）
+RAKUTEN_MAX_RETRIES = 4  # 429（レート制限）時の最大リトライ回数
+RAKUTEN_RETRY_BASE_WAIT = 2.0  # リトライ時の待機秒数の基準（指数バックオフ: 2s, 4s, 8s, 16s...）
 
 
 @st.cache_data
@@ -273,9 +276,30 @@ def _rakuten_fetch_worker(state, pairs, auth_header):
 
         def fetch_batch(batch):
             body = {"inventories": [{"manageNumber": mn, "variantId": vid} for mn, vid in batch]}
-            resp = requests.post(RAKUTEN_INVENTORY_BULK_GET_URL, headers=headers, json=body, timeout=15)
-            resp.raise_for_status()
-            return resp.json()
+            last_exc = None
+            for attempt in range(RAKUTEN_MAX_RETRIES + 1):
+                resp = requests.post(RAKUTEN_INVENTORY_BULK_GET_URL, headers=headers, json=body, timeout=15)
+                if resp.status_code == 429:
+                    last_exc = requests.exceptions.HTTPError(
+                        f"429 Too Many Requests（{attempt + 1}回目）", response=resp
+                    )
+                    if attempt < RAKUTEN_MAX_RETRIES:
+                        # Retry-Afterヘッダーがあればそれを優先、なければ指数バックオフ＋ランダムな揺らぎ
+                        retry_after = resp.headers.get("Retry-After")
+                        if retry_after:
+                            try:
+                                wait_sec = float(retry_after)
+                            except ValueError:
+                                wait_sec = RAKUTEN_RETRY_BASE_WAIT * (2 ** attempt)
+                        else:
+                            wait_sec = RAKUTEN_RETRY_BASE_WAIT * (2 ** attempt)
+                        wait_sec += random.uniform(0, 0.5)  # 複数バッチが同時に再送されるのを避ける
+                        time.sleep(wait_sec)
+                        continue
+                    break
+                resp.raise_for_status()
+                return resp.json()
+            raise last_exc
 
         with ThreadPoolExecutor(max_workers=RAKUTEN_MAX_WORKERS) as executor:
             future_to_idx = {executor.submit(fetch_batch, b): i for i, b in enumerate(batches)}
@@ -325,8 +349,8 @@ def get_rakuten_stock_state(pairs, force=False):
 
     with state["lock"]:
         # 何らかの理由でスレッドが完了せず「取得中」のまま固まった場合の自己回復
-        # （通常は数秒〜数十秒で終わるはずなので、2分を大きく超えたら異常とみなす）
-        if state["fetching"] and (time.time() - state["fetching_started_ts"]) > 120:
+        # （429リトライ時の待機（最大30秒程度×複数バッチ）も考慮し、5分を大きく超えたら異常とみなす）
+        if state["fetching"] and (time.time() - state["fetching_started_ts"]) > 300:
             state["fetching"] = False
             state["errors"] = ["前回の取得が完了しないまま長時間経過したため、状態をリセットしました。"]
 
