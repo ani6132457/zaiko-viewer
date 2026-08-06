@@ -6,6 +6,8 @@ import html
 import re
 import json
 import requests
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import streamlit.components.v1 as components
 from datetime import datetime, timedelta
@@ -237,64 +239,127 @@ def _rakuten_auth_header():
     return f"ESA {token}"
 
 
-@st.cache_data(ttl=900, show_spinner=False)
-def get_rakuten_stock_map(pairs, refresh_nonce=0):
-    """
-    楽天RMS 在庫API 2.0 から在庫数を一括取得する。
-    戻り値: { variantId(=商品コード): 在庫数 }
-    認証情報は .streamlit/secrets.toml に以下の形式で設定してください。
+# ---- バックグラウンド更新用の共有キャッシュ（プロセス内メモリ上に保持） ----
+# st.cache_data（同期・画面ブロック型）ではなく、別スレッドで取得して
+# 終わったものから順に反映する方式にすることで、取得中も画面操作をブロックしない。
+#
+# 注意: 通常のモジュール直下の変数（例: _state = {...}）は、Streamlitが
+# スクリプトを再実行するたびに再代入されて中身が消えてしまう。
+# st.cache_resource を使うことで、rerunをまたいでプロセス内に持続させている。
+RAKUTEN_TTL_SECONDS = 900  # 15分
 
-        [rakuten]
-        service_secret = "..."
-        license_key = "..."
 
-    ※ refresh_nonce はキャッシュを手動で無効化するためだけの引数（値自体は使わない）。
-    ※ バッチはThreadPoolExecutorで並列に投げることで待ち時間を短縮している。
-       楽天側のレート制限に引っかかる場合は RAKUTEN_MAX_WORKERS を減らしてください。
-    """
-    auth_header = _rakuten_auth_header()
-    if not auth_header or not pairs:
-        return {}, [], None
+@st.cache_resource
+def _get_rakuten_bg_container():
+    return {
+        "lock": threading.Lock(),
+        "map": {},
+        "errors": [],
+        "fetched_at": None,   # 表示用の "HH:MM:SS"
+        "fetched_ts": 0.0,    # TTL判定用のUNIX時刻
+        "fetching": False,
+    }
 
+
+def _rakuten_fetch_worker(pairs, auth_header):
+    state = _get_rakuten_bg_container()
     headers = {
         "Authorization": auth_header,
         "Content-Type": "application/json; charset=utf-8",
     }
-
     batches = [pairs[i:i + RAKUTEN_BATCH_SIZE] for i in range(0, len(pairs), RAKUTEN_BATCH_SIZE)]
 
-    def fetch_batch(batch_idx, batch):
-        body = {
-            "inventories": [
-                {"manageNumber": mn, "variantId": vid} for mn, vid in batch
-            ]
-        }
-        resp = requests.post(
-            RAKUTEN_INVENTORY_BULK_GET_URL, headers=headers, json=body, timeout=15
-        )
+    def fetch_batch(batch):
+        body = {"inventories": [{"manageNumber": mn, "variantId": vid} for mn, vid in batch]}
+        resp = requests.post(RAKUTEN_INVENTORY_BULK_GET_URL, headers=headers, json=body, timeout=15)
         resp.raise_for_status()
         return resp.json()
 
     stock_map = {}
     errors = []
-    with ThreadPoolExecutor(max_workers=RAKUTEN_MAX_WORKERS) as executor:
-        future_to_idx = {
-            executor.submit(fetch_batch, i, batch): i
-            for i, batch in enumerate(batches)
-        }
-        for future in as_completed(future_to_idx):
-            idx = future_to_idx[future]
-            try:
-                res_json = future.result()
-                for item in res_json.get("inventories", []):
-                    vid = item.get("variantId")
-                    qty = item.get("quantity")
-                    if vid is not None and qty is not None:
-                        stock_map[str(vid)] = int(qty)
-            except Exception as e:
-                errors.append(f"{idx + 1}件目バッチ: {e}")
+    try:
+        with ThreadPoolExecutor(max_workers=RAKUTEN_MAX_WORKERS) as executor:
+            future_to_idx = {executor.submit(fetch_batch, b): i for i, b in enumerate(batches)}
+            for future in as_completed(future_to_idx):
+                idx = future_to_idx[future]
+                try:
+                    res_json = future.result()
+                    for item in res_json.get("inventories", []):
+                        vid = item.get("variantId")
+                        qty = item.get("quantity")
+                        if vid is not None and qty is not None:
+                            stock_map[str(vid)] = int(qty)
+                except Exception as e:
+                    errors.append(f"{idx + 1}件目バッチ: {e}")
+    finally:
+        with state["lock"]:
+            state["map"] = stock_map
+            state["errors"] = errors
+            state["fetched_at"] = datetime.now().strftime("%H:%M:%S")
+            state["fetched_ts"] = time.time()
+            state["fetching"] = False
 
-    return stock_map, errors, datetime.now().strftime("%H:%M:%S")
+
+def get_rakuten_stock_state(pairs, force=False):
+    """
+    楽天RMS 在庫API 2.0 の在庫データを取得する（非ブロッキング）。
+    ・裏側のスレッドで取得し、取得中もその場では待たずに現在キャッシュされている値を返す
+    ・取得が完了すると、次にこの関数が呼ばれた（＝次の画面操作でrerunされた）タイミングで新しい値に切り替わる
+    戻り値: (stock_map, errors, fetched_at表示文字列, fetching中かどうか)
+
+    認証情報は .streamlit/secrets.toml に以下の形式で設定してください。
+        [rakuten]
+        service_secret = "..."
+        license_key = "..."
+    """
+    auth_header = _rakuten_auth_header()
+    if not auth_header or not pairs:
+        return {}, [], None, False
+
+    state = _get_rakuten_bg_container()
+
+    with state["lock"]:
+        is_stale = (time.time() - state["fetched_ts"]) > RAKUTEN_TTL_SECONDS
+        already_fetching = state["fetching"]
+        should_start = (force or is_stale) and not already_fetching
+
+        if should_start:
+            state["fetching"] = True
+
+        result = (
+            dict(state["map"]),
+            list(state["errors"]),
+            state["fetched_at"],
+            state["fetching"],
+        )
+
+    if should_start:
+        t = threading.Thread(target=_rakuten_fetch_worker, args=(pairs, auth_header), daemon=True)
+        t.start()
+
+    return result
+
+
+def render_rakuten_refresh_control(fetched_at, fetching, errors, key):
+    """
+    検索条件などの近くに置く、楽天在庫の状態表示＋手動更新ボタン。
+    非ブロッキング取得なので、押してもすぐ手が離せる（裏で取得が進み、
+    完了すると次の画面操作で自動的に新しい値に切り替わる）。
+    """
+    c1, c2 = st.columns([5, 2])
+    with c1:
+        if fetching:
+            st.caption("📦 楽天在庫を裏で取得中…（そのまま操作を続けられます。完了後、次の操作で反映されます）")
+        elif fetched_at:
+            st.caption(f"📦 楽天在庫 最終取得: {fetched_at}（15分ごとに自動更新）")
+        else:
+            st.caption("📦 楽天在庫：未取得")
+        if errors:
+            st.caption(f"⚠️ 一部取得エラー: {errors[0]}")
+    with c2:
+        if st.button("🔄 楽天在庫を更新", key=f"rakuten_refresh_{key}", disabled=fetching, use_container_width=True):
+            st.session_state["rakuten_force_refresh"] = True
+            st.rerun()
 
 
 # ==========================
@@ -475,26 +540,17 @@ def main():
 
     if "selected_sku" not in st.session_state:
         st.session_state["selected_sku"] = None
-    if "rakuten_refresh_nonce" not in st.session_state:
-        st.session_state["rakuten_refresh_nonce"] = 0
 
-    # ---------- 楽天在庫（RMS 在庫API 2.0）----------
+    # ---------- 楽天在庫（RMS 在庫API 2.0・非ブロッキング背景取得） ----------
     all_paths_for_rakuten = tuple(sorted(fi["path"] for fi in file_infos))
+    force_rakuten_refresh = st.session_state.pop("rakuten_force_refresh", False)
     if _rakuten_auth_header() is None:
-        rakuten_stock_map, rakuten_errors, rakuten_fetched_at = {}, [], None
+        rakuten_stock_map, rakuten_errors, rakuten_fetched_at, rakuten_fetching = {}, [], None, False
     else:
         rakuten_pairs = get_rakuten_sku_pairs(all_paths_for_rakuten)
-        rakuten_stock_map, rakuten_errors, rakuten_fetched_at = get_rakuten_stock_map(
-            rakuten_pairs, st.session_state["rakuten_refresh_nonce"]
+        rakuten_stock_map, rakuten_errors, rakuten_fetched_at, rakuten_fetching = get_rakuten_stock_state(
+            rakuten_pairs, force=force_rakuten_refresh
         )
-
-    with st.sidebar:
-        st.markdown("#### 📦 楽天在庫データ")
-        if rakuten_fetched_at:
-            st.caption(f"最終取得: {rakuten_fetched_at}（15分ごとに自動更新）")
-        if st.button("🔄 楽天在庫を今すぐ再取得", use_container_width=True):
-            st.session_state["rakuten_refresh_nonce"] += 1
-            st.rerun()
 
 
     # ---------- 初期フィルタ（セッション） ----------
@@ -695,7 +751,7 @@ def main():
         # ==========================
     # タブ（タブ名と中身を一致させる）
     # ==========================
-    def render_restock_tab(file_infos, min_date, max_date, rakuten_stock_map):
+    def render_restock_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at):
         # --- 発注推奨一覧タブ ---
         left, right = st.columns([1, 3])
 
@@ -742,6 +798,10 @@ def main():
                 submit_restock = st.form_submit_button("🔎 この条件で表示", use_container_width=True)
 
             st.markdown('</div>', unsafe_allow_html=True)
+
+            render_rakuten_refresh_control(
+                rakuten_fetched_at, rakuten_fetching, rakuten_errors, key="restock"
+            )
 
             if submit_restock:
                 st.session_state["restock_applied"] = True
@@ -902,7 +962,7 @@ def main():
                                 column_config=col_cfg if col_cfg else None,
                             )
 
-    def render_sales_tab(file_infos, min_date, max_date, rakuten_stock_map):
+    def render_sales_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at):
         # --- 売上個数一覧タブ ---
         left, right = st.columns([1, 3])
 
@@ -936,6 +996,10 @@ def main():
                 submit_sku = st.form_submit_button("🔎 この条件で表示", use_container_width=True)
 
             st.markdown('</div>', unsafe_allow_html=True)
+
+            render_rakuten_refresh_control(
+                rakuten_fetched_at, rakuten_fetching, rakuten_errors, key="sales"
+            )
 
             if submit_sku:
                 # 開始・終了日の順序を自動補正
@@ -1163,7 +1227,7 @@ def main():
         # タブ2：在庫少商品（発注目安）
         # --------------------------------------------------
 
-    def render_delivery_tab(file_infos, rakuten_stock_map, rakuten_errors):
+    def render_delivery_tab(file_infos, rakuten_stock_map, rakuten_errors, rakuten_fetching, rakuten_fetched_at):
         # --- 納品推奨数システム（HTMLツール埋め込み＋テンポスター在庫連携）---
         html_path = "納品推奨数システムv5.html"
         if not os.path.exists(html_path):
@@ -1171,6 +1235,10 @@ def main():
                 f"『{html_path}』が見つかりません。app.py と同じフォルダに配置してください。"
             )
             return
+
+        render_rakuten_refresh_control(
+            rakuten_fetched_at, rakuten_fetching, rakuten_errors, key="delivery"
+        )
 
         sku_master = load_sku_master()
         all_paths = [fi["path"] for fi in file_infos]
@@ -1190,7 +1258,9 @@ def main():
         else:
             stock_map = tempostar_stock_map
             stock_source_label = "テンポスター(フォールバック)"
-            if rakuten_errors:
+            if rakuten_fetching:
+                st.info("📦 楽天在庫を裏で取得中です。取得完了までテンポスターの在庫データで表示しています。")
+            elif rakuten_errors:
                 st.warning(
                     "楽天在庫の取得に失敗したため、テンポスターの在庫データで表示しています。"
                     f"（エラー: {rakuten_errors[0]}）"
@@ -1236,13 +1306,13 @@ def main():
     )
 
     with tab_restock:
-        render_restock_tab(file_infos, min_date, max_date, rakuten_stock_map)
+        render_restock_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at)
 
     with tab_sales:
-        render_sales_tab(file_infos, min_date, max_date, rakuten_stock_map)
+        render_sales_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at)
 
     with tab_delivery:
-        render_delivery_tab(file_infos, rakuten_stock_map, rakuten_errors)
+        render_delivery_tab(file_infos, rakuten_stock_map, rakuten_errors, rakuten_fetching, rakuten_fetched_at)
 
 
 if __name__ == "__main__":
