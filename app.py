@@ -190,6 +190,44 @@ def get_tempostar_sales_map(file_paths):
 
 
 # ==========================
+# 売上個数予想（去年の「翌日」を起点にした期間集計）
+# ==========================
+def default_forecast_range():
+    """
+    「去年の翌日」を起点にしたデフォルト期間（1ヶ月分）を返す。
+    例）今日が2026/08/08なら、去年の同日は2025/08/08、その翌日である
+    2025/08/09を起点日とし、そこから1ヶ月後までをデフォルト範囲にする。
+    """
+    today = datetime.now().date()
+    try:
+        last_year_today = today.replace(year=today.year - 1)
+    except ValueError:
+        # うるう年の2/29対応
+        last_year_today = today.replace(year=today.year - 1, day=28)
+    start = last_year_today + timedelta(days=1)
+    end = (pd.Timestamp(start) + DateOffset(months=1)).date()
+    return start, end
+
+
+def compute_forecast_map(sales_map, start_date, end_date):
+    """
+    get_tempostar_sales_map() が返す日別売上データから、
+    指定期間内の合計を商品コードごとに集計する。
+    戻り値: { 商品コード: 期間内合計売上個数 }
+    """
+    if not sales_map or start_date is None or end_date is None or start_date > end_date:
+        return {}
+    s = start_date.strftime("%Y%m%d")
+    e = end_date.strftime("%Y%m%d")
+    result = {}
+    for sku, entries in sales_map.items():
+        total = sum(item["q"] for item in entries if s <= item["d"] <= e)
+        if total > 0:
+            result[sku] = total
+    return result
+
+
+# ==========================
 # 楽天RMS 在庫API 2.0 連携
 # ==========================
 # ※ manageNumber（商品管理番号）＝ Tempostarの「商品基本コード」
@@ -593,7 +631,12 @@ def main():
         )
 
 
+    # ---------- 売上個数予想用：全期間の日別売上マップ（1回だけ計算） ----------
+    all_sales_map = get_tempostar_sales_map(all_paths_for_rakuten)
+
     # ---------- 初期フィルタ（セッション） ----------
+    default_forecast_start, default_forecast_end = default_forecast_range()
+
     default_start = max_date - timedelta(days=30)
     if default_start < min_date:
         default_start = min_date
@@ -614,6 +657,10 @@ def main():
         st.session_state["sku_end_date"] = max_date
     if "sku_min_sales" not in st.session_state:
         st.session_state["sku_min_sales"] = 0
+    if "sku_forecast_start" not in st.session_state:
+        st.session_state["sku_forecast_start"] = default_forecast_start
+    if "sku_forecast_end" not in st.session_state:
+        st.session_state["sku_forecast_end"] = default_forecast_end
 
     # 発注推奨タブ用デフォルト
     if "rs_keyword" not in st.session_state:
@@ -626,6 +673,10 @@ def main():
         st.session_state["rs_target_days"] = 30
     if "rs_max_stock" not in st.session_state:
         st.session_state["rs_max_stock"] = 999999
+    if "rs_forecast_start" not in st.session_state:
+        st.session_state["rs_forecast_start"] = default_forecast_start
+    if "rs_forecast_end" not in st.session_state:
+        st.session_state["rs_forecast_end"] = default_forecast_end
 
 
     # ==========================
@@ -791,7 +842,7 @@ def main():
         # ==========================
     # タブ（タブ名と中身を一致させる）
     # ==========================
-    def render_restock_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at):
+    def render_restock_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, all_sales_map):
         # --- 発注推奨一覧タブ ---
         left, right = st.columns([1, 3])
 
@@ -835,6 +886,13 @@ def main():
                     key="rs_max_stock",
                 )
 
+                st.markdown("**売上個数予想の集計期間**（デフォルト：去年翌日から1ヶ月）")
+                fc1, fc2 = st.columns(2)
+                with fc1:
+                    st.date_input("開始日", key="rs_forecast_start")
+                with fc2:
+                    st.date_input("終了日", key="rs_forecast_end")
+
                 submit_restock = st.form_submit_button("🔎 この条件で表示", use_container_width=True)
 
             st.markdown('</div>', unsafe_allow_html=True)
@@ -855,6 +913,9 @@ def main():
                 restock_months  = int(st.session_state["rs_months"])
                 target_days     = int(st.session_state["rs_target_days"])
                 max_current_stock = int(st.session_state["rs_max_stock"])
+                forecast_start_r = st.session_state["rs_forecast_start"]
+                forecast_end_r   = st.session_state["rs_forecast_end"]
+                forecast_map_r   = compute_forecast_map(all_sales_map, forecast_start_r, forecast_end_r)
 
                 end_r = max_date
                 start_r = (pd.Timestamp(max_date) - pd.DateOffset(months=restock_months)).date()
@@ -932,6 +993,11 @@ def main():
                             sales_recent["商品コード"].astype(str).str.strip().map(rakuten_stock_map)
                         )
 
+                        # 売上個数予想（去年翌日を起点にした期間集計）
+                        sales_recent["売上個数予想"] = (
+                            sales_recent["商品コード"].astype(str).str.strip().map(forecast_map_r).fillna(0).astype(int)
+                        )
+
                         img_master = load_image_master()
                         base_url = "https://image.rakuten.co.jp/hype/cabinet"
 
@@ -961,7 +1027,7 @@ def main():
                         else:
                             display_cols = [
                                 "画像", "商品コード", "商品基本コード", "商品名",
-                                "属性1名", "属性2名", "売上個数合計", "現在庫", "楽天在庫", "発注推奨数",
+                                "属性1名", "属性2名", "売上個数合計", "売上個数予想", "現在庫", "楽天在庫", "発注推奨数",
                             ]
                             display_cols = [c for c in display_cols if c in restock_view.columns]
                             df_view_r = restock_view[display_cols].copy()
@@ -983,6 +1049,7 @@ def main():
                                 f'<div class="metric-bar">'
                                 f'<div class="metric-chip">抽出SKU数<strong>{len(df_view_r):,}</strong></div>'
                                 f'<div class="metric-chip">集計期間<strong>{start_r} ～ {end_r}</strong></div>'
+                                f'<div class="metric-chip">売上個数予想の期間<strong>{forecast_start_r} ～ {forecast_end_r}</strong></div>'
                                 f'</div>',
                                 unsafe_allow_html=True,
                             )
@@ -992,6 +1059,8 @@ def main():
                                 col_cfg["画像"] = st.column_config.ImageColumn("画像", width="small")
                             if "楽天在庫" in df_view_r.columns:
                                 col_cfg["楽天在庫"] = st.column_config.NumberColumn("楽天在庫", format="%d")
+                            if "売上個数予想" in df_view_r.columns:
+                                col_cfg["売上個数予想"] = st.column_config.NumberColumn("売上個数予想", format="%d")
                             if not rakuten_stock_map and not rakuten_fetching:
                                 st.caption("ℹ️ 楽天在庫が空欄の場合は、`.streamlit/secrets.toml` に楽天APIの認証情報が未設定か、取得エラーが発生しています。")
 
@@ -1002,7 +1071,7 @@ def main():
                                 column_config=col_cfg if col_cfg else None,
                             )
 
-    def render_sales_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at):
+    def render_sales_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, all_sales_map):
         # --- 売上個数一覧タブ ---
         left, right = st.columns([1, 3])
 
@@ -1033,6 +1102,13 @@ def main():
                     key="sku_min_sales",
                 )
 
+                st.markdown("**売上個数予想の集計期間**（デフォルト：去年翌日から1ヶ月）")
+                fc1, fc2 = st.columns(2)
+                with fc1:
+                    st.date_input("予想 開始日", key="sku_forecast_start")
+                with fc2:
+                    st.date_input("予想 終了日", key="sku_forecast_end")
+
                 submit_sku = st.form_submit_button("🔎 この条件で表示", use_container_width=True)
 
             st.markdown('</div>', unsafe_allow_html=True)
@@ -1057,6 +1133,9 @@ def main():
                 end_date       = st.session_state["sku_end_date"]
                 keyword        = st.session_state["sku_keyword"]
                 min_total_sales = int(st.session_state["sku_min_sales"])
+                forecast_start_s = st.session_state["sku_forecast_start"]
+                forecast_end_s   = st.session_state["sku_forecast_end"]
+                forecast_map_s   = compute_forecast_map(all_sales_map, forecast_start_s, forecast_end_s)
 
                 # 今年ファイル
                 main_files = [fi for fi in file_infos if start_date <= fi["date"] <= end_date]
@@ -1194,6 +1273,11 @@ def main():
                     sales_grouped["商品コード"].astype(str).str.strip().map(rakuten_stock_map)
                 )
 
+                # 売上個数予想（去年翌日を起点にした期間集計）
+                sales_grouped["売上個数予想"] = (
+                    sales_grouped["商品コード"].astype(str).str.strip().map(forecast_map_s).fillna(0).astype(int)
+                )
+
                 if min_total_sales > 0:
                     sales_grouped = sales_grouped[sales_grouped["売上個数合計"] >= min_total_sales]
 
@@ -1222,7 +1306,7 @@ def main():
 
                 display_cols = [
                     "画像", "商品コード", "商品基本コード", "商品名",
-                    "属性1名", "属性2名", "今年売上", "前年売上", "現在庫", "楽天在庫",
+                    "属性1名", "属性2名", "今年売上", "前年売上", "売上個数予想", "現在庫", "楽天在庫",
                 ]
                 display_cols = [c for c in display_cols if c in sales_grouped.columns]
                 df_view = sales_grouped[display_cols]
@@ -1231,6 +1315,7 @@ def main():
                     f'<div class="metric-bar">'
                     f'<div class="metric-chip">SKU数<strong>{len(df_view):,}</strong></div>'
                     f'<div class="metric-chip">集計期間<strong>{start_date} ～ {end_date}</strong></div>'
+                    f'<div class="metric-chip">売上個数予想の期間<strong>{forecast_start_s} ～ {forecast_end_s}</strong></div>'
                     f'</div>',
                     unsafe_allow_html=True,
                 )
@@ -1248,6 +1333,7 @@ def main():
                         "画像":    st.column_config.ImageColumn("画像", width="small"),
                         "今年売上": st.column_config.NumberColumn("今年売上", format="%d"),
                         "前年売上": st.column_config.NumberColumn("前年売上", format="%d"),
+                        "売上個数予想": st.column_config.NumberColumn("売上個数予想", format="%d"),
                         "現在庫":  st.column_config.NumberColumn("現在庫",   format="%d"),
                         "楽天在庫": st.column_config.NumberColumn("楽天在庫", format="%d"),
                     } if "画像" in df_view.columns else None,
@@ -1346,10 +1432,10 @@ def main():
     )
 
     with tab_restock:
-        render_restock_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at)
+        render_restock_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, all_sales_map)
 
     with tab_sales:
-        render_sales_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at)
+        render_sales_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, all_sales_map)
 
     with tab_delivery:
         render_delivery_tab(file_infos, rakuten_stock_map, rakuten_errors, rakuten_fetching, rakuten_fetched_at)
