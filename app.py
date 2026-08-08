@@ -413,6 +413,200 @@ def get_rakuten_stock_state(pairs, force=False):
     return result
 
 
+# ==========================
+# Amazon SP-API（FBA在庫）連携
+# ==========================
+# ※ Amazonの出品者SKU ＝ Tempostarの「商品コード」と同一の運用であることを前提にしています。
+# ※ Amazon公式のベストプラクティスとして、getInventorySummariesは1日に複数回呼ぶことは
+#    推奨されていない（1日1回程度のスナップショット取得が想定されている）ため、
+#    楽天と異なり自動更新の間隔を長め（20時間）にしています。手動更新ボタンはいつでも押せます。
+# ※ FBA在庫APIは楽天よりレート制限が厳しめのため、並列数を低めに設定しています。
+AMAZON_LWA_TOKEN_URL = "https://api.amazon.com/auth/o2/token"
+AMAZON_SPAPI_ENDPOINT = "https://sellingpartnerapi-fe.amazon.com"  # 日本を含む極東リージョン
+AMAZON_MARKETPLACE_ID_JP = "A1VC38T7YXB528"
+AMAZON_INVENTORY_BATCH_SIZE = 50
+AMAZON_MAX_WORKERS = 2
+AMAZON_MAX_RETRIES = 4
+AMAZON_RETRY_BASE_WAIT = 3.0
+AMAZON_TTL_SECONDS = 20 * 60 * 60  # 20時間
+
+
+@st.cache_data
+def get_amazon_sku_list(file_paths):
+    """Tempostar CSV全体から商品コード（＝Amazon出品者SKU）の重複なし一覧を作る。"""
+    if not file_paths:
+        return tuple()
+    df_all = load_tempostar_data(tuple(sorted(file_paths)))
+    if "商品コード" not in df_all.columns:
+        return tuple()
+    skus = df_all["商品コード"].astype(str).str.strip()
+    skus = skus[skus != ""].drop_duplicates()
+    return tuple(sorted(skus.tolist()))
+
+
+def _amazon_credentials():
+    try:
+        amazon_secrets = st.secrets.get("amazon", {})
+    except Exception:
+        amazon_secrets = {}
+    client_id = amazon_secrets.get("client_id")
+    client_secret = amazon_secrets.get("client_secret")
+    refresh_token = amazon_secrets.get("refresh_token")
+    if not client_id or not client_secret or not refresh_token:
+        return None
+    return {"client_id": client_id, "client_secret": client_secret, "refresh_token": refresh_token}
+
+
+def _amazon_get_access_token(creds):
+    """リフレッシュトークンからアクセストークン（有効期限約1時間）を取得する。"""
+    resp = requests.post(
+        AMAZON_LWA_TOKEN_URL,
+        data={
+            "grant_type": "refresh_token",
+            "refresh_token": creds["refresh_token"],
+            "client_id": creds["client_id"],
+            "client_secret": creds["client_secret"],
+        },
+        timeout=15,
+    )
+    resp.raise_for_status()
+    return resp.json()["access_token"]
+
+
+@st.cache_resource
+def _get_amazon_bg_container():
+    return {
+        "lock": threading.Lock(),
+        "map": {},  # { SKU: {"fulfillable":n, "inbound":n, "reserved":n, "unfulfillable":n} }
+        "errors": [],
+        "fetched_at": None,
+        "fetched_ts": 0.0,
+        "fetching": False,
+        "fetching_started_ts": 0.0,
+    }
+
+
+def _amazon_fetch_worker(state, skus, creds):
+    stock_map = {}
+    errors = []
+    try:
+        access_token = _amazon_get_access_token(creds)
+        headers = {
+            "x-amz-access-token": access_token,
+            "Content-Type": "application/json",
+            "User-Agent": "InventoryDashboard/1.0 (Language=Python)",
+        }
+        batches = [skus[i:i + AMAZON_INVENTORY_BATCH_SIZE] for i in range(0, len(skus), AMAZON_INVENTORY_BATCH_SIZE)]
+
+        def fetch_batch(batch):
+            params = {
+                "details": "true",
+                "granularityType": "Marketplace",
+                "granularityId": AMAZON_MARKETPLACE_ID_JP,
+                "marketplaceIds": AMAZON_MARKETPLACE_ID_JP,
+                "sellerSkus": ",".join(batch),
+            }
+            last_exc = None
+            for attempt in range(AMAZON_MAX_RETRIES + 1):
+                resp = requests.get(
+                    f"{AMAZON_SPAPI_ENDPOINT}/fba/inventory/v1/summaries",
+                    headers=headers, params=params, timeout=15,
+                )
+                if resp.status_code == 429:
+                    last_exc = requests.exceptions.HTTPError(
+                        f"429 Too Many Requests（{attempt + 1}回目）", response=resp
+                    )
+                    if attempt < AMAZON_MAX_RETRIES:
+                        wait_sec = AMAZON_RETRY_BASE_WAIT * (2 ** attempt) + random.uniform(0, 0.5)
+                        time.sleep(wait_sec)
+                        continue
+                    break
+                resp.raise_for_status()
+                return resp.json()
+            raise last_exc
+
+        with ThreadPoolExecutor(max_workers=AMAZON_MAX_WORKERS) as executor:
+            future_to_idx = {executor.submit(fetch_batch, b): i for i, b in enumerate(batches)}
+            for future in as_completed(future_to_idx):
+                idx = future_to_idx[future]
+                try:
+                    res_json = future.result()
+                    summaries = res_json.get("payload", {}).get("inventorySummaries", [])
+                    for item in summaries:
+                        sku = item.get("sellerSku")
+                        if not sku:
+                            continue
+                        detail = item.get("inventoryDetails", {}) or {}
+                        reserved = detail.get("reservedQuantity", {})
+                        stock_map[str(sku)] = {
+                            "fulfillable": detail.get("fulfillableQuantity", 0),
+                            "inbound": (
+                                detail.get("inboundWorkingQuantity", 0)
+                                + detail.get("inboundShippedQuantity", 0)
+                                + detail.get("inboundReceivingQuantity", 0)
+                            ),
+                            "reserved": reserved.get("totalReservedQuantity", 0) if isinstance(reserved, dict) else 0,
+                            "unfulfillable": detail.get("totalUnfulfillableQuantity", 0),
+                        }
+                except Exception as e:
+                    errors.append(f"{idx + 1}件目バッチ: {e}")
+    except Exception as e:
+        # LWAトークン取得失敗など、想定外のエラーが起きても「取得中」のまま固まらないようにする
+        errors.append(f"予期しないエラー: {e}")
+    finally:
+        with state["lock"]:
+            state["map"] = stock_map
+            state["errors"] = errors
+            state["fetched_at"] = datetime.now().strftime("%H:%M:%S")
+            state["fetched_ts"] = time.time()
+            state["fetching"] = False
+
+
+def get_amazon_fba_stock_state(skus, force=False):
+    """
+    Amazon FBA在庫（getInventorySummaries）を取得する（非ブロッキング）。
+    Amazon公式ベストプラクティスに従い、自動更新は約20時間に1回。手動更新ボタンでいつでも即時取得できる。
+    戻り値: (stock_map, errors, fetched_at表示文字列, fetching中かどうか)
+
+    認証情報は .streamlit/secrets.toml に以下の形式で設定してください。
+        [amazon]
+        client_id = "..."
+        client_secret = "..."
+        refresh_token = "..."
+    """
+    creds = _amazon_credentials()
+    if not creds or not skus:
+        return {}, [], None, False
+
+    state = _get_amazon_bg_container()
+
+    with state["lock"]:
+        if state["fetching"] and (time.time() - state["fetching_started_ts"]) > 300:
+            state["fetching"] = False
+            state["errors"] = ["前回の取得が完了しないまま長時間経過したため、状態をリセットしました。"]
+
+        is_stale = (time.time() - state["fetched_ts"]) > AMAZON_TTL_SECONDS
+        already_fetching = state["fetching"]
+        should_start = (force or is_stale) and not already_fetching
+
+        if should_start:
+            state["fetching"] = True
+            state["fetching_started_ts"] = time.time()
+
+        result = (
+            dict(state["map"]),
+            list(state["errors"]),
+            state["fetched_at"],
+            state["fetching"],
+        )
+
+    if should_start:
+        t = threading.Thread(target=_amazon_fetch_worker, args=(state, skus, creds), daemon=True)
+        t.start()
+
+    return result
+
+
 def render_rakuten_refresh_control(fetched_at, fetching, errors, key):
     """
     検索条件などの近くに置く、楽天在庫の状態表示＋手動更新ボタン。
@@ -432,6 +626,27 @@ def render_rakuten_refresh_control(fetched_at, fetching, errors, key):
     with c2:
         if st.button("🔄 楽天在庫を更新", key=f"rakuten_refresh_{key}", disabled=fetching, use_container_width=True):
             st.session_state["rakuten_force_refresh"] = True
+            st.rerun()
+
+
+def render_amazon_refresh_control(fetched_at, fetching, errors, key):
+    """
+    Amazon FBA在庫の状態表示＋手動更新ボタン。楽天と同じく非ブロッキング。
+    Amazon公式の推奨（1日1回程度）に沿って、自動更新は約20時間間隔にしている。
+    """
+    c1, c2 = st.columns([5, 2])
+    with c1:
+        if fetching:
+            st.caption("📦 Amazon FBA在庫を裏で取得中…（そのまま操作を続けられます。完了後、次の操作で反映されます）")
+        elif fetched_at:
+            st.caption(f"📦 Amazon FBA在庫 最終取得: {fetched_at}（自動更新は約20時間おき。Amazon推奨により頻繁な手動更新は控えめに）")
+        else:
+            st.caption("📦 Amazon FBA在庫：未取得")
+        if errors:
+            st.caption(f"⚠️ 一部取得エラー: {errors[0]}")
+    with c2:
+        if st.button("🔄 Amazon在庫を更新", key=f"amazon_refresh_{key}", disabled=fetching, use_container_width=True):
+            st.session_state["amazon_force_refresh"] = True
             st.rerun()
 
 
@@ -628,6 +843,17 @@ def main():
         rakuten_pairs = get_rakuten_sku_pairs(all_paths_for_rakuten)
         rakuten_stock_map, rakuten_errors, rakuten_fetched_at, rakuten_fetching = get_rakuten_stock_state(
             rakuten_pairs, force=(manual_refresh or need_session_fetch)
+        )
+
+    # ---------- Amazon FBA在庫（SP-API・非ブロッキング背景取得） ----------
+    # Amazon推奨（1日1回程度）に沿って、自動更新は約20時間おき。手動更新ボタンはいつでも押せる。
+    amazon_manual_refresh = st.session_state.pop("amazon_force_refresh", False)
+    if _amazon_credentials() is None:
+        amazon_stock_map, amazon_errors, amazon_fetched_at, amazon_fetching = {}, [], None, False
+    else:
+        amazon_skus = get_amazon_sku_list(all_paths_for_rakuten)
+        amazon_stock_map, amazon_errors, amazon_fetched_at, amazon_fetching = get_amazon_fba_stock_state(
+            amazon_skus, force=amazon_manual_refresh
         )
 
 
@@ -842,7 +1068,7 @@ def main():
         # ==========================
     # タブ（タブ名と中身を一致させる）
     # ==========================
-    def render_restock_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, all_sales_map):
+    def render_restock_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, all_sales_map, amazon_stock_map, amazon_fetching, amazon_errors, amazon_fetched_at):
         # --- 発注推奨一覧タブ ---
         left, right = st.columns([1, 3])
 
@@ -899,6 +1125,9 @@ def main():
 
             render_rakuten_refresh_control(
                 rakuten_fetched_at, rakuten_fetching, rakuten_errors, key="restock"
+            )
+            render_amazon_refresh_control(
+                amazon_fetched_at, amazon_fetching, amazon_errors, key="restock"
             )
 
             if submit_restock:
@@ -993,6 +1222,12 @@ def main():
                             sales_recent["商品コード"].astype(str).str.strip().map(rakuten_stock_map)
                         )
 
+                        # Amazon FBA在庫（出荷可能数量・SP-APIより取得）
+                        sales_recent["Amazon FBA在庫"] = (
+                            sales_recent["商品コード"].astype(str).str.strip()
+                            .map(lambda k: amazon_stock_map.get(k, {}).get("fulfillable"))
+                        )
+
                         # 売上個数予想（去年翌日を起点にした期間集計）
                         sales_recent["売上個数予想"] = (
                             sales_recent["商品コード"].astype(str).str.strip().map(forecast_map_r).fillna(0).astype(int)
@@ -1027,7 +1262,7 @@ def main():
                         else:
                             display_cols = [
                                 "画像", "商品コード", "商品基本コード", "商品名",
-                                "属性1名", "属性2名", "売上個数合計", "売上個数予想", "現在庫", "楽天在庫", "発注推奨数",
+                                "属性1名", "属性2名", "売上個数合計", "売上個数予想", "現在庫", "楽天在庫", "Amazon FBA在庫", "発注推奨数",
                             ]
                             display_cols = [c for c in display_cols if c in restock_view.columns]
                             df_view_r = restock_view[display_cols].copy()
@@ -1061,10 +1296,14 @@ def main():
                                 col_cfg["商品名"] = st.column_config.TextColumn("商品名", width="medium")
                             if "楽天在庫" in df_view_r.columns:
                                 col_cfg["楽天在庫"] = st.column_config.NumberColumn("楽天在庫", format="%d")
+                            if "Amazon FBA在庫" in df_view_r.columns:
+                                col_cfg["Amazon FBA在庫"] = st.column_config.NumberColumn("Amazon FBA在庫", format="%d")
                             if "売上個数予想" in df_view_r.columns:
                                 col_cfg["売上個数予想"] = st.column_config.NumberColumn("売上個数予想", format="%d")
                             if not rakuten_stock_map and not rakuten_fetching:
                                 st.caption("ℹ️ 楽天在庫が空欄の場合は、`.streamlit/secrets.toml` に楽天APIの認証情報が未設定か、取得エラーが発生しています。")
+                            if not amazon_stock_map and not amazon_fetching:
+                                st.caption("ℹ️ Amazon FBA在庫が空欄の場合は、`.streamlit/secrets.toml` にAmazon APIの認証情報が未設定か、取得エラーが発生しています。")
 
                             st.dataframe(
                                 df_view_r,
@@ -1073,7 +1312,7 @@ def main():
                                 column_config=col_cfg if col_cfg else None,
                             )
 
-    def render_sales_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, all_sales_map):
+    def render_sales_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, all_sales_map, amazon_stock_map, amazon_fetching, amazon_errors, amazon_fetched_at):
         # --- 売上個数一覧タブ ---
         left, right = st.columns([1, 3])
 
@@ -1117,6 +1356,9 @@ def main():
 
             render_rakuten_refresh_control(
                 rakuten_fetched_at, rakuten_fetching, rakuten_errors, key="sales"
+            )
+            render_amazon_refresh_control(
+                amazon_fetched_at, amazon_fetching, amazon_errors, key="sales"
             )
 
             if submit_sku:
@@ -1275,6 +1517,12 @@ def main():
                     sales_grouped["商品コード"].astype(str).str.strip().map(rakuten_stock_map)
                 )
 
+                # Amazon FBA在庫（出荷可能数量・SP-APIより取得）
+                sales_grouped["Amazon FBA在庫"] = (
+                    sales_grouped["商品コード"].astype(str).str.strip()
+                    .map(lambda k: amazon_stock_map.get(k, {}).get("fulfillable"))
+                )
+
                 # 売上個数予想（去年翌日を起点にした期間集計）
                 sales_grouped["売上個数予想"] = (
                     sales_grouped["商品コード"].astype(str).str.strip().map(forecast_map_s).fillna(0).astype(int)
@@ -1308,7 +1556,7 @@ def main():
 
                 display_cols = [
                     "画像", "商品コード", "商品基本コード", "商品名",
-                    "属性1名", "属性2名", "今年売上", "前年売上", "売上個数予想", "現在庫", "楽天在庫",
+                    "属性1名", "属性2名", "今年売上", "前年売上", "売上個数予想", "現在庫", "楽天在庫", "Amazon FBA在庫",
                 ]
                 display_cols = [c for c in display_cols if c in sales_grouped.columns]
                 df_view = sales_grouped[display_cols]
@@ -1324,6 +1572,8 @@ def main():
 
                 if not rakuten_stock_map and not rakuten_fetching:
                     st.caption("ℹ️ 楽天在庫が空欄の場合は、`.streamlit/secrets.toml` に楽天APIの認証情報が未設定か、取得エラーが発生しています。")
+                if not amazon_stock_map and not amazon_fetching:
+                    st.caption("ℹ️ Amazon FBA在庫が空欄の場合は、`.streamlit/secrets.toml` にAmazon APIの認証情報が未設定か、取得エラーが発生しています。")
 
                 event = st.dataframe(
                     df_view,
@@ -1339,6 +1589,7 @@ def main():
                         "売上個数予想": st.column_config.NumberColumn("売上個数予想", format="%d"),
                         "現在庫":  st.column_config.NumberColumn("現在庫",   format="%d"),
                         "楽天在庫": st.column_config.NumberColumn("楽天在庫", format="%d"),
+                        "Amazon FBA在庫": st.column_config.NumberColumn("Amazon FBA在庫", format="%d"),
                     } if "画像" in df_view.columns else None,
                 )
 
@@ -1435,10 +1686,10 @@ def main():
     )
 
     with tab_restock:
-        render_restock_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, all_sales_map)
+        render_restock_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, all_sales_map, amazon_stock_map, amazon_fetching, amazon_errors, amazon_fetched_at)
 
     with tab_sales:
-        render_sales_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, all_sales_map)
+        render_sales_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, all_sales_map, amazon_stock_map, amazon_fetching, amazon_errors, amazon_fetched_at)
 
     with tab_delivery:
         render_delivery_tab(file_infos, rakuten_stock_map, rakuten_errors, rakuten_fetching, rakuten_fetched_at)
