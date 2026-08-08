@@ -1057,6 +1057,8 @@ def main():
                             col_cfg = {}
                             if "画像" in df_view_r.columns:
                                 col_cfg["画像"] = st.column_config.ImageColumn("画像", width="small")
+                            if "商品名" in df_view_r.columns:
+                                col_cfg["商品名"] = st.column_config.TextColumn("商品名", width="medium")
                             if "楽天在庫" in df_view_r.columns:
                                 col_cfg["楽天在庫"] = st.column_config.NumberColumn("楽天在庫", format="%d")
                             if "売上個数予想" in df_view_r.columns:
@@ -1331,6 +1333,7 @@ def main():
                     on_select="rerun",
                     column_config={
                         "画像":    st.column_config.ImageColumn("画像", width="small"),
+                        "商品名":  st.column_config.TextColumn("商品名", width="medium"),
                         "今年売上": st.column_config.NumberColumn("今年売上", format="%d"),
                         "前年売上": st.column_config.NumberColumn("前年売上", format="%d"),
                         "売上個数予想": st.column_config.NumberColumn("売上個数予想", format="%d"),
