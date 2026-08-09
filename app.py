@@ -17,7 +17,7 @@ from pandas.tseries.offsets import DateOffset
 # 追加（オーバーレイ表示用）
 import base64
 import io
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go
 
 
 # ==========================
@@ -789,14 +789,23 @@ def _render_stock_dialog(selected_sku: str, df_main: pd.DataFrame):
         if df_plot.empty:
             st.caption("選択したSKUの在庫データがありません。")
         else:
-            fig, ax = plt.subplots(figsize=(7.0, 3.2))
-            ax.plot(df_plot["日付"], df_plot["変動後"])
-            ax.set_title(f"在庫推移（SKU: {selected_sku}）")
-            ax.set_ylabel("在庫")
-            ax.grid(True, alpha=0.25)
-            fig.autofmt_xdate()
-            st.pyplot(fig)
-            plt.close(fig)
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=df_plot["日付"],
+                y=df_plot["変動後"],
+                mode="lines+markers",
+                line=dict(color="#4C78A8"),
+                marker=dict(size=5),
+                hovertemplate="%{x|%Y/%m/%d}<br>在庫: %{y}<extra></extra>",
+            ))
+            fig.update_layout(
+                title=f"在庫推移（SKU: {selected_sku}）",
+                yaxis_title="在庫",
+                height=340,
+                margin=dict(l=40, r=20, t=40, b=40),
+                hovermode="x unified",
+            )
+            st.plotly_chart(fig, use_container_width=True)
 
     if st.button("✕ 閉じる", key=f"close_dialog_{selected_sku}", use_container_width=True):
         st.session_state["drawer_dismissed_sku"] = selected_sku
