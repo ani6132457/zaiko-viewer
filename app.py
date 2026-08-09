@@ -770,100 +770,47 @@ def make_html_table(df: pd.DataFrame) -> str:
 # オーバーレイ（右ドロワー）表示：matplotlib→PNG→HTML埋め込み
 # ==========================
 def show_stock_drawer(selected_sku: str, df_main: pd.DataFrame):
-    msg = ""
-    img_html = ""
+    """
+    在庫推移グラフをインラインのカード（st.container）として表示する。
 
-    if "変動後" not in df_main.columns:
-        msg = "『変動後』列がないため在庫推移グラフを表示できません。"
-    else:
+    以前はposition:fixedの独自HTML（背景クリックで閉じる仕組み）を使っていたが、
+    ①背景の透明な板が画面全体を覆い、実体の閉じるボタンをテキスト一致で
+      探してクリックする仕組みが失敗すると操作不能に陥る、
+    ②長いbase64画像をHTMLとして埋め込むと正しく描画されない場合がある、
+    という2つの重大な不具合が確認されたため、Streamlit標準のコンポーネントのみで
+    組み直している（フリーズの可能性を根本的に排除するため）。
+    """
+    with st.container(border=True):
+        head_col, close_col = st.columns([5, 1])
+        with head_col:
+            st.markdown(f"**📈 在庫推移（{selected_sku}）**")
+        with close_col:
+            if st.button("✕ 閉じる", key=f"close_drawer_{selected_sku}", use_container_width=True):
+                st.session_state["drawer_dismissed_sku"] = selected_sku
+                st.session_state["selected_sku"] = None
+                st.rerun()
+
+        if "変動後" not in df_main.columns:
+            st.caption("『変動後』列がないため在庫推移グラフを表示できません。")
+            return
+
         df_sku = df_main[df_main["商品コード"] == selected_sku].copy()
         df_sku["日付"] = df_sku["元ファイル"].astype(str).str.extract(r"(\d{8})")
         df_sku["日付"] = pd.to_datetime(df_sku["日付"], format="%Y%m%d", errors="coerce")
         df_plot = df_sku[["日付", "変動後"]].dropna().sort_values("日付")
 
         if df_plot.empty:
-            msg = "選択したSKUの在庫データがありません。"
-        else:
-            fig, ax = plt.subplots(figsize=(7.4, 3.4))
-            ax.plot(df_plot["日付"], df_plot["変動後"])
-            ax.set_title(f"在庫推移（SKU: {selected_sku}）")
-            ax.set_ylabel("在庫")
-            ax.grid(True, alpha=0.25)
-            fig.autofmt_xdate()
+            st.caption("選択したSKUの在庫データがありません。")
+            return
 
-            buf = io.BytesIO()
-            fig.savefig(buf, format="png", dpi=160, bbox_inches="tight")
-            plt.close(fig)
-
-            b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
-            img_html = f"<img src='data:image/png;base64,{b64}' style='width:100%;height:auto;display:block;' />"
-
-    close_key = f"close_drawer_{selected_sku}"
-    close_label = "✕ 閉じる"
-
-    # ドロワー以外（背景）をクリックしたら、実体の「閉じる」ボタンを探してクリックする。
-    # st.markdown内の<script>タグはブラウザの仕様で実行されないため、
-    # インラインのonclick属性で完結させている（モーダルのbackdropパターン）。
-    backdrop_onclick = (
-        "var btns=document.querySelectorAll('button');"
-        "for(var i=0;i<btns.length;i++){"
-        f"if(btns[i].innerText && btns[i].innerText.trim()==='{close_label}'){{btns[i].click();break;}}"
-        "}"
-    )
-
-    drawer_html = f"""
-    <style>
-    .drawer-backdrop {{
-        position: fixed;
-        inset: 0;
-        z-index: 9997;
-        background: transparent;
-    }}
-    .drawer {{
-        position: fixed;
-        top: 3.6rem;
-        right: 0;
-        width: 560px;
-        max-width: 94vw;
-        height: calc(100vh - 3.6rem);
-        background: #fff;
-        border-left: 1px solid #ddd;
-        box-shadow: -10px 0 26px rgba(0,0,0,0.18);
-        z-index: 9998;
-        padding: 14px 14px 18px 14px;
-        overflow: auto;
-        animation: slideIn 180ms ease-out;
-    }}
-    @keyframes slideIn {{
-        from {{ transform: translateX(16px); opacity: 0.6; }}
-        to   {{ transform: translateX(0); opacity: 1; }}
-    }}
-    .drawer-title {{
-        font-weight: 700;
-        font-size: 15px;
-        margin: 0 0 10px 0;
-    }}
-    .drawer-msg {{
-        margin: 6px 0 0 0;
-        color:#444;
-        font-size: 13px;
-    }}
-    </style>
-
-    <div class="drawer-backdrop" onclick="{backdrop_onclick}"></div>
-    <div class="drawer" id="stock-drawer">
-        <p class="drawer-title">📈 在庫推移（{html.escape(str(selected_sku))}）</p>
-        {f"<p class='drawer-msg'>{html.escape(msg)}</p>" if msg else ""}
-        {img_html}
-    </div>
-    """
-    st.markdown(drawer_html, unsafe_allow_html=True)
-
-    # 実体の閉じるボタン（背景クリック時もこれがプログラム的にクリックされる）
-    if st.button(close_label, key=close_key):
-        st.session_state["drawer_dismissed_sku"] = selected_sku
-        st.session_state["selected_sku"] = None
-        st.rerun()
+        fig, ax = plt.subplots(figsize=(7.4, 3.0))
+        ax.plot(df_plot["日付"], df_plot["変動後"])
+        ax.set_title(f"在庫推移（SKU: {selected_sku}）")
+        ax.set_ylabel("在庫")
+        ax.grid(True, alpha=0.25)
+        fig.autofmt_xdate()
+        st.pyplot(fig)
+        plt.close(fig)
 
 
 def handle_row_selection_for_drawer(event, df_view, sku_col="商品コード"):
