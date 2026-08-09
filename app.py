@@ -457,6 +457,37 @@ def _amazon_credentials():
     return {"client_id": client_id, "client_secret": client_secret, "refresh_token": refresh_token}
 
 
+def _amazon_credentials_diagnosis():
+    """
+    認証情報が読めない場合に、具体的に何が原因かを切り分けるための診断メッセージを返す。
+    問題なければ None を返す。
+    """
+    try:
+        has_amazon_key = "amazon" in st.secrets
+    except Exception as e:
+        return f"st.secrets自体の読み込みに失敗しています（TOMLの書式エラーの可能性）: {e}"
+
+    if not has_amazon_key:
+        return "Secretsに [amazon] セクションが見つかりません。見出し行「[amazon]」が正しく保存されているか確認してください。"
+
+    try:
+        amazon_secrets = st.secrets.get("amazon", {})
+    except Exception as e:
+        return f"[amazon] セクションの読み込みに失敗しています: {e}"
+
+    missing = [
+        name for name, val in [
+            ("client_id", amazon_secrets.get("client_id")),
+            ("client_secret", amazon_secrets.get("client_secret")),
+            ("refresh_token", amazon_secrets.get("refresh_token")),
+        ] if not val
+    ]
+    if missing:
+        return f"[amazon] セクションはありますが、次の項目が空または未設定です: {', '.join(missing)}"
+
+    return None
+
+
 def _amazon_get_access_token(creds):
     """リフレッシュトークンからアクセストークン（有効期限約1時間）を取得する。"""
     resp = requests.post(
@@ -849,12 +880,20 @@ def main():
     # Amazon推奨（1日1回程度）に沿って、自動更新は約20時間おき。手動更新ボタンはいつでも押せる。
     amazon_manual_refresh = st.session_state.pop("amazon_force_refresh", False)
     if _amazon_credentials() is None:
-        amazon_stock_map, amazon_errors, amazon_fetched_at, amazon_fetching = {}, [], None, False
+        diag = _amazon_credentials_diagnosis()
+        amazon_stock_map, amazon_errors, amazon_fetched_at, amazon_fetching = (
+            {}, [diag] if diag else ["認証情報が読み込めませんでした（原因不明）"], None, False
+        )
     else:
         amazon_skus = get_amazon_sku_list(all_paths_for_rakuten)
-        amazon_stock_map, amazon_errors, amazon_fetched_at, amazon_fetching = get_amazon_fba_stock_state(
-            amazon_skus, force=amazon_manual_refresh
-        )
+        if not amazon_skus:
+            amazon_stock_map, amazon_errors, amazon_fetched_at, amazon_fetching = (
+                {}, ["Tempostarデータに「商品コード」列が無いか、対象SKUが0件のため取得を開始していません。"], None, False
+            )
+        else:
+            amazon_stock_map, amazon_errors, amazon_fetched_at, amazon_fetching = get_amazon_fba_stock_state(
+                amazon_skus, force=amazon_manual_refresh
+            )
 
 
     # ---------- 売上個数予想用：全期間の日別売上マップ（1回だけ計算） ----------
