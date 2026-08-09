@@ -676,9 +676,10 @@ function handleAllRowClick(event, rowId) {
   openStockModal(row.sku, row.name || row.cs_no);
 }
 
-function buildStockChartSVG(history) {
+function renderStockChart(container, history) {
   if (!history || history.length === 0) {
-    return `<p style="color:var(--text-muted);font-size:13px;">在庫推移データがありません。</p>`;
+    container.innerHTML = `<p style="color:var(--text-muted);font-size:13px;">在庫推移データがありません。</p>`;
+    return;
   }
   const width = 640, height = 260;
   const padding = { top: 20, right: 20, bottom: 34, left: 46 };
@@ -707,19 +708,66 @@ function buildStockChartSVG(history) {
   ).join('');
 
   const dots = history.map((h, i) =>
-    `<circle cx="${xOf(i)}" cy="${yScale(h.stock)}" r="2.5" fill="var(--accent)"><title>${esc(fmtDate(h.d))}: ${h.stock}</title></circle>`
+    `<circle cx="${xOf(i)}" cy="${yScale(h.stock)}" r="2.5" fill="var(--accent)" />`
   ).join('');
 
-  return `
-  <svg viewBox="0 0 ${width} ${height}" style="width:100%;height:auto;">
-    <line x1="${padding.left}" y1="${padding.top}" x2="${padding.left}" y2="${height-padding.bottom}" stroke="var(--border-md)" />
-    <line x1="${padding.left}" y1="${height-padding.bottom}" x2="${width-padding.right}" y2="${height-padding.bottom}" stroke="var(--border-md)" />
-    <text x="${padding.left-6}" y="${padding.top+4}" font-size="10" fill="var(--text-muted)" text-anchor="end">${maxV}</text>
-    <text x="${padding.left-6}" y="${height-padding.bottom+4}" font-size="10" fill="var(--text-muted)" text-anchor="end">${minV}</text>
-    <polyline points="${points}" fill="none" stroke="var(--accent)" stroke-width="2" />
-    ${dots}
-    ${xLabels}
-  </svg>`;
+  container.innerHTML = `
+    <div style="position:relative;">
+      <svg id="stock-chart-svg" viewBox="0 0 ${width} ${height}" style="width:100%;height:auto;display:block;cursor:crosshair;">
+        <line x1="${padding.left}" y1="${padding.top}" x2="${padding.left}" y2="${height-padding.bottom}" stroke="var(--border-md)" />
+        <line x1="${padding.left}" y1="${height-padding.bottom}" x2="${width-padding.right}" y2="${height-padding.bottom}" stroke="var(--border-md)" />
+        <text x="${padding.left-6}" y="${padding.top+4}" font-size="10" fill="var(--text-muted)" text-anchor="end">${maxV}</text>
+        <text x="${padding.left-6}" y="${height-padding.bottom+4}" font-size="10" fill="var(--text-muted)" text-anchor="end">${minV}</text>
+        <polyline points="${points}" fill="none" stroke="var(--accent)" stroke-width="2" />
+        ${dots}
+        ${xLabels}
+        <line id="stock-chart-hoverline" x1="0" y1="${padding.top}" x2="0" y2="${height-padding.bottom}" stroke="var(--text-muted)" stroke-dasharray="3,3" style="display:none;" />
+        <circle id="stock-chart-hoverdot" r="4.5" fill="var(--accent)" stroke="#fff" stroke-width="1.5" style="display:none;" />
+      </svg>
+      <div id="stock-chart-tooltip" style="position:absolute;display:none;pointer-events:none;background:rgba(30,30,30,0.92);color:#fff;padding:5px 9px;border-radius:6px;font-size:12px;white-space:nowrap;transform:translate(-50%,-125%);z-index:10;"></div>
+    </div>`;
+
+  const svg = container.querySelector('#stock-chart-svg');
+  const tooltip = container.querySelector('#stock-chart-tooltip');
+  const hoverLine = container.querySelector('#stock-chart-hoverline');
+  const hoverDot = container.querySelector('#stock-chart-hoverdot');
+
+  function updateHover(clientX, clientY) {
+    const rect = svg.getBoundingClientRect();
+    const scaleX = width / rect.width;
+    const scaleY = height / rect.height;
+    const mouseX = (clientX - rect.left) * scaleX;
+    let idx = Math.round((mouseX - padding.left) / (xStep || 1));
+    idx = Math.max(0, Math.min(n - 1, idx));
+    const h = history[idx];
+    const px = xOf(idx), py = yScale(h.stock);
+
+    hoverLine.setAttribute('x1', px);
+    hoverLine.setAttribute('x2', px);
+    hoverLine.style.display = 'block';
+    hoverDot.setAttribute('cx', px);
+    hoverDot.setAttribute('cy', py);
+    hoverDot.style.display = 'block';
+
+    tooltip.style.left = `${px / scaleX}px`;
+    tooltip.style.top = `${py / scaleY}px`;
+    tooltip.textContent = `${fmtDate(h.d)}：${h.stock}`;
+    tooltip.style.display = 'block';
+  }
+
+  svg.addEventListener('mousemove', (e) => updateHover(e.clientX, e.clientY));
+  svg.addEventListener('mouseleave', () => {
+    hoverLine.style.display = 'none';
+    hoverDot.style.display = 'none';
+    tooltip.style.display = 'none';
+  });
+  // タッチ操作でも追従できるように
+  svg.addEventListener('touchmove', (e) => {
+    if (e.touches && e.touches[0]) {
+      updateHover(e.touches[0].clientX, e.touches[0].clientY);
+      e.preventDefault();
+    }
+  }, { passive: false });
 }
 
 function openStockModal(sku, label) {
@@ -728,7 +776,7 @@ function openStockModal(sku, label) {
   const backdrop = document.getElementById('stock-modal-backdrop');
   if (!title || !body || !backdrop) return;
   title.textContent = `📈 在庫推移（${label || sku}）`;
-  body.innerHTML = buildStockChartSVG(stockHistoryMap[sku]);
+  renderStockChart(body, stockHistoryMap[sku]);
   backdrop.style.display = 'flex';
 }
 
