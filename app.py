@@ -190,6 +190,45 @@ def get_tempostar_sales_map(file_paths):
 
 
 # ==========================
+# 日別在庫履歴（納品推奨数システムの在庫推移グラフ用）
+# ==========================
+@st.cache_data
+def get_tempostar_stock_history_map(file_paths):
+    """
+    全期間のTempostar CSVから、商品コードごとの日別在庫（変動後）推移を作る。
+    戻り値: { 商品コード: [{"d": "YYYYMMDD", "stock": 在庫数}, ...] }（日付昇順）
+    """
+    if not file_paths:
+        return {}
+
+    df_all = load_tempostar_data(tuple(sorted(file_paths)))
+    required = {"商品コード", "変動後"}
+    if not required.issubset(df_all.columns):
+        return {}
+
+    df_all = df_all.copy()
+    df_all["商品コード"] = df_all["商品コード"].astype(str).str.strip()
+    df_all["_日付"] = df_all["元ファイル"].astype(str).str.extract(r"(\d{8})")
+    df_all = df_all.dropna(subset=["_日付", "変動後"])
+
+    grouped = (
+        df_all.sort_values("_日付")
+        .groupby(["商品コード", "_日付"], dropna=False)["変動後"]
+        .last()
+        .reset_index()
+    )
+
+    history_map = {}
+    for sku, sub in grouped.groupby("商品コード"):
+        sub = sub.sort_values("_日付")
+        history_map[sku] = [
+            {"d": row["_日付"], "stock": int(row["変動後"])}
+            for _, row in sub.iterrows()
+        ]
+    return history_map
+
+
+# ==========================
 # 売上個数予想（去年の「翌日」を起点にした期間集計）
 # ==========================
 def default_forecast_range():
@@ -759,75 +798,90 @@ def show_stock_drawer(selected_sku: str, df_main: pd.DataFrame):
             b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
             img_html = f"<img src='data:image/png;base64,{b64}' style='width:100%;height:auto;display:block;' />"
 
-            drawer_html = f"""
-            <style>
-            .drawer {{
-                position: fixed;
-                top: 3.6rem;
-                right: 0;
-                width: 560px;
-                max-width: 94vw;
-                height: calc(100vh - 3.6rem);
-                background: #fff;
-                border-left: 1px solid #ddd;
-                box-shadow: -10px 0 26px rgba(0,0,0,0.18);
-                z-index: 9999;
-                padding: 14px 14px 18px 14px;
-                overflow: auto;
-                animation: slideIn 180ms ease-out;
-            }}
-            @keyframes slideIn {{
-                from {{ transform: translateX(16px); opacity: 0.6; }}
-                to   {{ transform: translateX(0); opacity: 1; }}
-            }}
-            .drawer-head {{
-                display:flex;
-                align-items:center;
-                justify-content:space-between;
-                gap:10px;
-                margin-bottom: 10px;
-            }}
-            .drawer-title {{
-                font-weight: 700;
-                font-size: 15px;
-                margin: 0;
-            }}
-            .drawer-close-btn {{
-                padding: 6px 10px;
-                border: 1px solid #ddd;
-                border-radius: 10px;
-                background: #fafafa;
-                font-size: 13px;
-                cursor: pointer;
-                white-space: nowrap;
-            }}
-            .drawer-close-btn:hover {{ background: #f0f0f0; }}
-            .drawer-msg {{
-                margin: 6px 0 0 0;
-                color:#444;
-                font-size: 13px;
-            }}
-            </style>
+    close_key = f"close_drawer_{selected_sku}"
+    close_label = "✕ 閉じる"
 
-            <div class="drawer" id="stock-drawer">
-            <div class="drawer-head">
-                <p class="drawer-title">📈 在庫推移（{html.escape(str(selected_sku))}）</p>
-                <button class="drawer-close-btn" onclick="
-                const el = window.parent.document.getElementById('stock-drawer');
-                if (el) el.style.display='none';
-                ">閉じる</button>
-            </div>
+    # ドロワー以外（背景）をクリックしたら、実体の「閉じる」ボタンを探してクリックする。
+    # st.markdown内の<script>タグはブラウザの仕様で実行されないため、
+    # インラインのonclick属性で完結させている（モーダルのbackdropパターン）。
+    backdrop_onclick = (
+        "var btns=document.querySelectorAll('button');"
+        "for(var i=0;i<btns.length;i++){"
+        f"if(btns[i].innerText && btns[i].innerText.trim()==='{close_label}'){{btns[i].click();break;}}"
+        "}"
+    )
 
-            {f"<p class='drawer-msg'>{html.escape(msg)}</p>" if msg else ""}
-            {img_html}
-            </div>
-            """
-            st.markdown(drawer_html, unsafe_allow_html=True)
+    drawer_html = f"""
+    <style>
+    .drawer-backdrop {{
+        position: fixed;
+        inset: 0;
+        z-index: 9997;
+        background: transparent;
+    }}
+    .drawer {{
+        position: fixed;
+        top: 3.6rem;
+        right: 0;
+        width: 560px;
+        max-width: 94vw;
+        height: calc(100vh - 3.6rem);
+        background: #fff;
+        border-left: 1px solid #ddd;
+        box-shadow: -10px 0 26px rgba(0,0,0,0.18);
+        z-index: 9998;
+        padding: 14px 14px 18px 14px;
+        overflow: auto;
+        animation: slideIn 180ms ease-out;
+    }}
+    @keyframes slideIn {{
+        from {{ transform: translateX(16px); opacity: 0.6; }}
+        to   {{ transform: translateX(0); opacity: 1; }}
+    }}
+    .drawer-title {{
+        font-weight: 700;
+        font-size: 15px;
+        margin: 0 0 10px 0;
+    }}
+    .drawer-msg {{
+        margin: 6px 0 0 0;
+        color:#444;
+        font-size: 13px;
+    }}
+    </style>
 
-    # 閉じる（sessionで制御）
-    if st.button("閉じる", key=f"close_drawer_{selected_sku}"):
+    <div class="drawer-backdrop" onclick="{backdrop_onclick}"></div>
+    <div class="drawer" id="stock-drawer">
+        <p class="drawer-title">📈 在庫推移（{html.escape(str(selected_sku))}）</p>
+        {f"<p class='drawer-msg'>{html.escape(msg)}</p>" if msg else ""}
+        {img_html}
+    </div>
+    """
+    st.markdown(drawer_html, unsafe_allow_html=True)
+
+    # 実体の閉じるボタン（背景クリック時もこれがプログラム的にクリックされる）
+    if st.button(close_label, key=close_key):
+        st.session_state["drawer_dismissed_sku"] = selected_sku
         st.session_state["selected_sku"] = None
         st.rerun()
+
+
+def handle_row_selection_for_drawer(event, df_view, sku_col="商品コード"):
+    """
+    st.dataframe(selection_mode='single-row')の選択結果から、表示すべきSKUを確定する共通ロジック。
+    ・行選択が外れたら閉じる
+    ・閉じるボタン（backdropクリック含む）で閉じた直後は、同じ行が選択されたままでも再度開かない
+    """
+    sel = event.selection.get("rows", [])
+    if sel:
+        clicked_sku = str(df_view.iloc[sel[0]][sku_col]).strip()
+        if clicked_sku != st.session_state.get("drawer_dismissed_sku"):
+            st.session_state["selected_sku"] = clicked_sku
+        else:
+            st.session_state["selected_sku"] = None
+    else:
+        st.session_state["selected_sku"] = None
+        st.session_state["drawer_dismissed_sku"] = None
 
 
 # ==========================
@@ -862,6 +916,8 @@ def main():
 
     if "selected_sku" not in st.session_state:
         st.session_state["selected_sku"] = None
+    if "drawer_dismissed_sku" not in st.session_state:
+        st.session_state["drawer_dismissed_sku"] = None
 
     # ---------- 楽天在庫（RMS 在庫API 2.0・非ブロッキング背景取得） ----------
     # 自動取得は「このブラウザセッションでまだ取得していない時（＝開いた直後やF5直後）」のみ。
@@ -1347,12 +1403,19 @@ def main():
                             if not amazon_stock_map and not amazon_fetching:
                                 st.caption("ℹ️ Amazon FBA在庫が空欄の場合は、`.streamlit/secrets.toml` にAmazon APIの認証情報が未設定か、取得エラーが発生しています。")
 
-                            st.dataframe(
+                            event_r = st.dataframe(
                                 df_view_r,
                                 hide_index=True,
                                 use_container_width=True,
+                                selection_mode="single-row",
+                                on_select="rerun",
                                 column_config=col_cfg if col_cfg else None,
                             )
+
+                            # 行クリックでSKU取得 → ドロワー表示
+                            handle_row_selection_for_drawer(event_r, df_view_r)
+                            if st.session_state["selected_sku"]:
+                                show_stock_drawer(st.session_state["selected_sku"], df_restock)
 
     def render_sales_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, all_sales_map, amazon_stock_map, amazon_fetching, amazon_errors, amazon_fetched_at):
         # --- 売上個数一覧タブ ---
@@ -1636,10 +1699,7 @@ def main():
                 )
 
                 # 行クリックでSKU取得 → ドロワー表示
-                sel = event.selection.get("rows", [])
-                if sel:
-                    clicked_row = df_view.iloc[sel[0]]
-                    st.session_state["selected_sku"] = str(clicked_row["商品コード"]).strip()
+                handle_row_selection_for_drawer(event, df_view)
 
                 # 右ドロワー（選択されている時だけ）
                 if st.session_state["selected_sku"]:
@@ -1666,6 +1726,13 @@ def main():
         all_paths = [fi["path"] for fi in file_infos]
         sales_map = get_tempostar_sales_map(all_paths)
         tempostar_stock_map = get_tempostar_stock_map(all_paths)
+        stock_history_map = get_tempostar_stock_history_map(all_paths)
+
+        # 売上個数予想（発注推奨一覧タブと同じ期間設定を流用。デフォルトは去年翌日から1ヶ月）
+        forecast_default_start, forecast_default_end = default_forecast_range()
+        forecast_start_d = st.session_state.get("rs_forecast_start", forecast_default_start)
+        forecast_end_d = st.session_state.get("rs_forecast_end", forecast_default_end)
+        forecast_map_d = compute_forecast_map(sales_map, forecast_start_d, forecast_end_d)
 
         if rakuten_stock_map:
             # SKUごとに楽天在庫を優先し、楽天側にデータがないSKUだけテンポスター在庫で補完する
@@ -1708,6 +1775,8 @@ def main():
             f"window.__TEMPOSTAR_STOCK__ = {json.dumps(stock_map, ensure_ascii=False)};"
             f"window.__STOCK_SOURCE_LABEL__ = {json.dumps(stock_source_label, ensure_ascii=False)};"
             f"window.__TEMPOSTAR_SALES__ = {json.dumps(sales_map, ensure_ascii=False)};"
+            f"window.__STOCK_HISTORY__ = {json.dumps(stock_history_map, ensure_ascii=False)};"
+            f"window.__FORECAST_SALES__ = {json.dumps(forecast_map_d, ensure_ascii=False)};"
             "</script>"
         )
         # 本体スクリプトが動く前に注入データを読み込ませるため、<script>タグの直前に挿入
@@ -1716,7 +1785,8 @@ def main():
         st.caption(
             f"在庫データソース：{stock_source_label} ｜ SKUマスター {len(sku_master)}件 ｜ "
             f"在庫データ {len(stock_map)}SKU分 ｜ "
-            f"売上データ {len(sales_map)}SKU分（期間は画面上部で指定可）"
+            f"売上データ {len(sales_map)}SKU分（期間は画面上部で指定可） ｜ "
+            f"売上個数予想：{forecast_start_d} ～ {forecast_end_d}"
         )
         # iframe自体のスクロールバーは出さず、アプリ全体のスクロールと
         # テーブル内（商品行）のスクロールの2つだけになるようにする
