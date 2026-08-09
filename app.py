@@ -789,6 +789,20 @@ def _render_stock_dialog(selected_sku: str, df_main: pd.DataFrame):
         if df_plot.empty:
             st.caption("選択したSKUの在庫データがありません。")
         else:
+            df_plot = df_plot.reset_index(drop=True)
+
+            def _fmt_diff(x):
+                if pd.isna(x):
+                    return "—"
+                x = int(x)
+                if x > 0:
+                    return f"+{x}"
+                if x < 0:
+                    return str(x)
+                return "±0"
+
+            diff_text = df_plot["変動後"].diff().apply(_fmt_diff)
+
             fig = go.Figure()
             fig.add_trace(go.Scatter(
                 x=df_plot["日付"],
@@ -796,7 +810,8 @@ def _render_stock_dialog(selected_sku: str, df_main: pd.DataFrame):
                 mode="lines+markers",
                 line=dict(color="#4C78A8"),
                 marker=dict(size=5),
-                hovertemplate="%{x|%Y/%m/%d}<br>在庫: %{y}<extra></extra>",
+                customdata=diff_text,
+                hovertemplate="%{x|%Y/%m/%d}<br>在庫: %{y}（前回比 %{customdata}）<extra></extra>",
             ))
             fig.update_layout(
                 title=f"在庫推移（SKU: {selected_sku}）",

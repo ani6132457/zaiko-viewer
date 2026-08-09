@@ -757,9 +757,15 @@ function renderStockChart(container, history) {
     hoverDot.setAttribute('cy', py);
     hoverDot.style.display = 'block';
 
+    let diffText = '—';
+    if (idx > 0) {
+      const d = h.stock - history[idx - 1].stock;
+      diffText = d > 0 ? `+${d}` : (d < 0 ? `${d}` : '±0');
+    }
+
     tooltip.style.left = `${px / scaleX}px`;
     tooltip.style.top = `${py / scaleY}px`;
-    tooltip.textContent = `${fmtDate(h.d)}：${h.stock}`;
+    tooltip.textContent = `${fmtDate(h.d)}：${h.stock}（前回比 ${diffText}）`;
     tooltip.style.display = 'block';
   }
 
