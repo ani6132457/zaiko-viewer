@@ -463,12 +463,15 @@ def _amazon_credentials_diagnosis():
     問題なければ None を返す。
     """
     try:
-        has_amazon_key = "amazon" in st.secrets
+        top_level_keys = list(st.secrets.keys())
     except Exception as e:
         return f"st.secrets自体の読み込みに失敗しています（TOMLの書式エラーの可能性）: {e}"
 
-    if not has_amazon_key:
-        return "Secretsに [amazon] セクションが見つかりません。見出し行「[amazon]」が正しく保存されているか確認してください。"
+    if "amazon" not in top_level_keys:
+        return (
+            f"Secretsに [amazon] セクションが見つかりません。"
+            f"実際に読み込めているセクション名: {top_level_keys}"
+        )
 
     try:
         amazon_secrets = st.secrets.get("amazon", {})
