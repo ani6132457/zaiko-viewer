@@ -1504,28 +1504,41 @@ def main():
                     st.error("Tempostar CSV に『商品コード』『商品基本コード』『増減値』が必要です。")
                     return
 
+                # --- 全SKUのベース（売上が0件のSKUも含める）---
+                agg_base = {
+                    "商品基本コード": "last",
+                    "商品名": "last",
+                    "属性1名": "last",
+                    "属性2名": "last",
+                }
+                if "変動後" in df_main.columns:
+                    agg_base["変動後"] = "last"
+
+                sales_grouped = (
+                    df_main.groupby("商品コード", dropna=False)
+                    .agg(agg_base)
+                    .reset_index()
+                )
+                if "変動後" in sales_grouped.columns:
+                    sales_grouped = sales_grouped.rename(columns={"変動後": "現在庫"})
+                else:
+                    sales_grouped["現在庫"] = 0
+
                 # --- 売上集計（今年）---
                 if "更新理由" in df_main.columns:
                     df_sales_main = df_main[df_main["更新理由"].astype(str).str.contains("受注取込", na=False)].copy()
                 else:
                     df_sales_main = df_main.copy()
 
-                agg_sales = {
-                    "商品基本コード": "last",
-                    "商品名": "last",
-                    "属性1名": "last",
-                    "属性2名": "last",
-                    "増減値": "sum",
-                }
-
-                sales_grouped = (
-                    df_sales_main.groupby("商品コード", dropna=False)
-                    .agg(agg_sales)
+                sales_sum_main = (
+                    df_sales_main.groupby("商品コード", dropna=False)["増減値"]
+                    .sum()
                     .reset_index()
                     .rename(columns={"増減値": "増減値合計"})
                 )
-                sales_grouped["売上個数合計"] = -sales_grouped["増減値合計"]
-                sales_grouped = sales_grouped[sales_grouped["売上個数合計"] > 0]
+                sales_grouped = sales_grouped.merge(sales_sum_main, on="商品コード", how="left")
+                sales_grouped["増減値合計"] = sales_grouped["増減値合計"].fillna(0)
+                sales_grouped["売上個数合計"] = (-sales_grouped["増減値合計"]).astype(int)
 
                 # --- 売上集計（昨年）---
                 if df_last is not None and {"商品コード", "増減値"}.issubset(df_last.columns):
@@ -1537,7 +1550,6 @@ def main():
                         df_sales_last = df_last.copy()
 
                     df_sales_last["商品コード"] = df_sales_last["商品コード"].astype(str).str.strip()
-                    df_sales_main["商品コード"] = df_sales_main["商品コード"].astype(str).str.strip()
 
                     last_grouped = (
                         df_sales_last.groupby("商品コード", dropna=False)["増減値"]
@@ -1559,23 +1571,6 @@ def main():
                     .fillna(0)
                     .astype(int)
                 )
-
-                # 在庫（現在庫）
-                if "変動後" in df_main.columns:
-                    stock_group = (
-                        df_main.groupby("商品コード", dropna=False)["変動後"]
-                        .last()
-                        .reset_index()
-                        .rename(columns={"変動後": "現在庫"})
-                    )
-                    stock_group["現在庫"] = (
-                        pd.to_numeric(stock_group["現在庫"], errors="coerce")
-                        .fillna(0)
-                        .astype(int)
-                    )
-                    sales_grouped = sales_grouped.merge(stock_group, on="商品コード", how="left")
-                else:
-                    sales_grouped["現在庫"] = 0
 
                 sales_grouped["現在庫"] = (
                     pd.to_numeric(sales_grouped["現在庫"], errors="coerce")
