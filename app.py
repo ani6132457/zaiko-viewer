@@ -141,6 +141,41 @@ def get_tempostar_stock_map(file_paths):
     return {k: int(v) for k, v in stock.items()}
 
 
+@st.cache_data
+def get_all_sku_snapshot(file_paths):
+    """
+    全期間のTempostar CSVから、商品コードごとに最新の商品情報・在庫を1行にまとめる。
+    絞り込み期間内に一度もCSVに登場しない（＝その期間は動きが無かった）商品も含め、
+    「現時点で存在する全SKU」を常に拾えるようにするためのもの。
+    """
+    if not file_paths:
+        return pd.DataFrame()
+
+    df_all = load_tempostar_data(tuple(sorted(file_paths)))
+    if "商品コード" not in df_all.columns:
+        return pd.DataFrame()
+
+    df_all = df_all.copy()
+    df_all["商品コード"] = df_all["商品コード"].astype(str).str.strip()
+    df_all["_日付"] = df_all["元ファイル"].astype(str).str.extract(r"(\d{8})")
+    df_all = df_all.sort_values("_日付")
+
+    agg = {}
+    for col in ["商品基本コード", "商品名", "属性1名", "属性2名", "変動後"]:
+        if col in df_all.columns:
+            agg[col] = "last"
+
+    snap = df_all.groupby("商品コード", dropna=False).agg(agg).reset_index()
+
+    if "変動後" in snap.columns:
+        snap = snap.rename(columns={"変動後": "現在庫"})
+        snap["現在庫"] = pd.to_numeric(snap["現在庫"], errors="coerce").fillna(0).astype(int)
+    else:
+        snap["現在庫"] = 0
+
+    return snap
+
+
 # ==========================
 # テンポスター日別売上マップ（SKU → [{d:'YYYYMMDD', q:数量}, ...]）
 # ==========================
@@ -1504,25 +1539,23 @@ def main():
                     st.error("Tempostar CSV に『商品コード』『商品基本コード』『増減値』が必要です。")
                     return
 
-                # --- 全SKUのベース（売上が0件のSKUも含める）---
-                agg_base = {
-                    "商品基本コード": "last",
-                    "商品名": "last",
-                    "属性1名": "last",
-                    "属性2名": "last",
-                }
-                if "変動後" in df_main.columns:
-                    agg_base["変動後"] = "last"
+                # --- 全SKUのベース（売上が0件のSKUや、期間内に動きが無い商品も含める）---
+                # 集計期間内のdf_mainではなく、常に全期間の最新スナップショットを使うことで、
+                # 「その期間は全く動きが無かった商品」も現在庫つきで表示できるようにする。
+                all_paths_for_snapshot = [fi["path"] for fi in file_infos]
+                sales_grouped = get_all_sku_snapshot(all_paths_for_snapshot).copy()
 
-                sales_grouped = (
-                    df_main.groupby("商品コード", dropna=False)
-                    .agg(agg_base)
-                    .reset_index()
-                )
-                if "変動後" in sales_grouped.columns:
-                    sales_grouped = sales_grouped.rename(columns={"変動後": "現在庫"})
-                else:
-                    sales_grouped["現在庫"] = 0
+                if sales_grouped.empty:
+                    st.error("Tempostar CSV から商品情報を読み取れませんでした。")
+                    return
+
+                # キーワード絞り込み（全SKUベース側にも適用）
+                if keyword:
+                    cond_base = False
+                    for col in ["商品コード", "商品基本コード", "商品名"]:
+                        if col in sales_grouped.columns:
+                            cond_base |= sales_grouped[col].astype(str).str.contains(keyword, case=False, na=False)
+                    sales_grouped = sales_grouped[cond_base]
 
                 # --- 売上集計（今年）---
                 if "更新理由" in df_main.columns:
