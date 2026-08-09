@@ -769,31 +769,18 @@ def make_html_table(df: pd.DataFrame) -> str:
 # ==========================
 # オーバーレイ（右ドロワー）表示：matplotlib→PNG→HTML埋め込み
 # ==========================
-def show_stock_drawer(selected_sku: str, df_main: pd.DataFrame):
+@st.dialog("📈 在庫推移")
+def _render_stock_dialog(selected_sku: str, df_main: pd.DataFrame):
     """
-    在庫推移グラフをインラインのカード（st.container）として表示する。
-
-    以前はposition:fixedの独自HTML（背景クリックで閉じる仕組み）を使っていたが、
-    ①背景の透明な板が画面全体を覆い、実体の閉じるボタンをテキスト一致で
-      探してクリックする仕組みが失敗すると操作不能に陥る、
-    ②長いbase64画像をHTMLとして埋め込むと正しく描画されない場合がある、
-    という2つの重大な不具合が確認されたため、Streamlit標準のコンポーネントのみで
-    組み直している（フリーズの可能性を根本的に排除するため）。
+    st.dialog（Streamlit標準のモーダルポップアップ機能）で在庫推移グラフを表示する。
+    自作のposition:fixedなHTML/JSに頼らないため、フリーズなどの不具合が起きない。
+    標準機能により、✕ボタン・画面外クリック・ESCキーのいずれでも安全に閉じられる。
     """
-    with st.container(border=True):
-        head_col, close_col = st.columns([5, 1])
-        with head_col:
-            st.markdown(f"**📈 在庫推移（{selected_sku}）**")
-        with close_col:
-            if st.button("✕ 閉じる", key=f"close_drawer_{selected_sku}", use_container_width=True):
-                st.session_state["drawer_dismissed_sku"] = selected_sku
-                st.session_state["selected_sku"] = None
-                st.rerun()
+    st.markdown(f"**SKU: {selected_sku}**")
 
-        if "変動後" not in df_main.columns:
-            st.caption("『変動後』列がないため在庫推移グラフを表示できません。")
-            return
-
+    if "変動後" not in df_main.columns:
+        st.caption("『変動後』列がないため在庫推移グラフを表示できません。")
+    else:
         df_sku = df_main[df_main["商品コード"] == selected_sku].copy()
         df_sku["日付"] = df_sku["元ファイル"].astype(str).str.extract(r"(\d{8})")
         df_sku["日付"] = pd.to_datetime(df_sku["日付"], format="%Y%m%d", errors="coerce")
@@ -801,16 +788,24 @@ def show_stock_drawer(selected_sku: str, df_main: pd.DataFrame):
 
         if df_plot.empty:
             st.caption("選択したSKUの在庫データがありません。")
-            return
+        else:
+            fig, ax = plt.subplots(figsize=(7.0, 3.2))
+            ax.plot(df_plot["日付"], df_plot["変動後"])
+            ax.set_title(f"在庫推移（SKU: {selected_sku}）")
+            ax.set_ylabel("在庫")
+            ax.grid(True, alpha=0.25)
+            fig.autofmt_xdate()
+            st.pyplot(fig)
+            plt.close(fig)
 
-        fig, ax = plt.subplots(figsize=(7.4, 3.0))
-        ax.plot(df_plot["日付"], df_plot["変動後"])
-        ax.set_title(f"在庫推移（SKU: {selected_sku}）")
-        ax.set_ylabel("在庫")
-        ax.grid(True, alpha=0.25)
-        fig.autofmt_xdate()
-        st.pyplot(fig)
-        plt.close(fig)
+    if st.button("✕ 閉じる", key=f"close_dialog_{selected_sku}", use_container_width=True):
+        st.session_state["drawer_dismissed_sku"] = selected_sku
+        st.session_state["selected_sku"] = None
+        st.rerun()
+
+
+def show_stock_drawer(selected_sku: str, df_main: pd.DataFrame):
+    _render_stock_dialog(selected_sku, df_main)
 
 
 def handle_row_selection_for_drawer(event, df_view, sku_col="商品コード"):
