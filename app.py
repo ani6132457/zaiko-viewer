@@ -1944,7 +1944,7 @@ def main():
         selected_users = []
         for i, u in enumerate(users):
             with checkbox_cols[i % 4]:
-                checked = st.checkbox(u, value=st.session_state.get(f"stockcheck_user_{u}", True), key=f"stockcheck_user_{u}")
+                checked = st.checkbox(u, value=st.session_state.get(f"stockcheck_user_{u}", False), key=f"stockcheck_user_{u}")
             if checked:
                 selected_users.append(u)
 
@@ -2004,6 +2004,31 @@ def main():
                 hide_index=True,
                 use_container_width=True,
             )
+
+            st.markdown("##### SKUごとの変動ログ詳細")
+            st.caption("参考として、選択ユーザーに関わらずそのSKUの変動ログを全件表示しています（受注取込による自動減少も含む）。")
+
+            log_detail_cols = [c for c in ["更新日時", "更新理由", "変動前", "変動後", "増減値", "ユーザー"] if c in df_log.columns]
+
+            for _, row in abnormal_view.iterrows():
+                sku_i = row["SKU"]
+                label = f"{sku_i}"
+                if "商品名" in row and pd.notna(row.get("商品名")):
+                    label += f"｜{row['商品名']}"
+                label += f"｜納品数{row['納品数合計']} / 減少数{row['減少数']} / 差分{row['差分（納品数−減少数）']}"
+
+                with st.expander(label):
+                    log_rows = df_log[df_log["商品コード"] == sku_i].copy()
+                    if "更新日時" in log_rows.columns:
+                        log_rows = log_rows.sort_values("更新日時")
+                    if log_rows.empty:
+                        st.caption("このSKUに該当する変動ログはありません。")
+                    else:
+                        st.dataframe(
+                            log_rows[log_detail_cols],
+                            hide_index=True,
+                            use_container_width=True,
+                        )
 
         if not unmapped.empty:
             with st.expander(f"SKUマスターに一致するCS品番が見つからなかった行（{len(unmapped)}件・チェック対象外）"):
