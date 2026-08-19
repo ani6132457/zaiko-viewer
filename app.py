@@ -905,8 +905,79 @@ def handle_row_selection_for_drawer(event, df_view, sku_col="商品コード"):
 # ==========================
 # Main
 # ==========================
+def inject_scroll_preserver():
+    """
+    全タブ・全操作共通：rerun（画面全体の再実行）が起きても、
+    直前のスクロール位置をできるだけ早いタイミングで復元する。
+    ・sessionStorage（ブラウザタブを閉じるまで保持）に現在位置を保存
+    ・rerun後、DOMの再描画をMutationObserverで検知し、即座に位置を書き戻す
+    ・追加パッケージ不要（st.components.v1.htmlのiframe経由でwindow.parentを操作）
+    """
+    scroll_js = """
+    <script>
+    (function() {
+      try {
+        var win = window.parent;
+        var doc = win.document;
+        var STORAGE_KEY = "app_scroll_y";
+
+        function getScrollY() {
+          return win.scrollY || doc.documentElement.scrollTop || doc.body.scrollTop || 0;
+        }
+        function setScrollY(y) {
+          win.scrollTo(0, y);
+          doc.documentElement.scrollTop = y;
+          doc.body.scrollTop = y;
+        }
+
+        // --- 復元 ---
+        var savedY = parseInt(win.sessionStorage.getItem(STORAGE_KEY) || "0", 10);
+        if (savedY > 0) {
+          var start = Date.now();
+          var applied = false;
+
+          var observer = new MutationObserver(function() {
+            var maxScroll = Math.max(
+              doc.documentElement.scrollHeight,
+              doc.body.scrollHeight
+            ) - win.innerHeight;
+            if (maxScroll >= savedY - 5 || Date.now() - start > 1500) {
+              setScrollY(savedY);
+              applied = true;
+            }
+            if (Date.now() - start > 1500) {
+              observer.disconnect();
+            }
+          });
+          observer.observe(doc.body, { childList: true, subtree: true });
+
+          // 念のため即時にも一度試す
+          setScrollY(savedY);
+
+          // 保険：一定時間後に必ず監視を止める
+          setTimeout(function() { observer.disconnect(); }, 1500);
+        }
+
+        // --- 保存（ユーザーがスクロールするたびに更新） ---
+        var saveTimer = null;
+        win.addEventListener("scroll", function() {
+          clearTimeout(saveTimer);
+          saveTimer = setTimeout(function() {
+            win.sessionStorage.setItem(STORAGE_KEY, String(getScrollY()));
+          }, 120);
+        }, true);
+      } catch (e) {
+        // クロスオリジン等で失敗しても、アプリ本体には影響させない
+      }
+    })();
+    </script>
+    """
+    components.html(scroll_js, height=0)
+
+
 def main():
     st.set_page_config(page_title="Tempostar 売上集計", layout="wide")
+    inject_scroll_preserver()
     st.title("Tempostar 在庫変動データ")
 
     # ---------- CSV 一覧 ----------
