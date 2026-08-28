@@ -735,293 +735,6 @@ def get_amazon_fba_stock_state(skus, force=False):
     return result
 
 
-# ==========================
-# ZOZOTOWN（perky room）在庫チェック
-# ==========================
-# ※ ZOZOに独自APIは無いため、商品ページを直接取得してカラー×サイズの
-#    在庫表示（在庫あり／残りN点／在庫なし）をテキストから読み取る方式。
-# ※ 商品ページはサーバー側で内容が埋め込まれているため、ブラウザ（JS実行）は
-#    不要で requests + BeautifulSoup で取得できる想定。ただし実機での動作は
-#    未検証のため、まずは「先頭N件のみ」でテストしてから全件実行すること。
-ZOZO_SHOP = "perkyroom"
-ZOZO_SCPID = "41348"  # SORENA・AVIREXがまとまっているショップカテゴリーID
-ZOZO_LIST_URL = f"https://zozo.jp/shop/{ZOZO_SHOP}/?p_scpid={ZOZO_SCPID}&pno={{page}}"
-ZOZO_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-    "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Referer": "https://zozo.jp/",
-    "Connection": "keep-alive",
-    "Upgrade-Insecure-Requests": "1",
-    "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-    "sec-ch-ua-mobile": "?0",
-    "sec-ch-ua-platform": '"Windows"',
-    "Sec-Fetch-Dest": "document",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "same-origin",
-    "Sec-Fetch-User": "?1",
-}
-ZOZO_MAX_WORKERS = 6
-ZOZO_REQUEST_TIMEOUT = 15
-ZOZO_MAX_403_RETRIES = 2
-
-
-def _zozo_prepare_session(session):
-    """
-    トップページに先にアクセスしてCookieを取得しておく。
-    いきなり絞り込みページへ直接アクセスするより、ボット判定を避けやすくするため。
-    """
-    try:
-        session.get("https://zozo.jp/", headers=ZOZO_HEADERS, timeout=ZOZO_REQUEST_TIMEOUT)
-        time.sleep(0.5)
-    except Exception:
-        pass  # ここで失敗しても本処理側で改めてエラーになるので無視してよい
-
-
-def _zozo_get(session, url):
-    """403の場合は少し待って数回だけ再試行する。"""
-    last_exc = None
-    for attempt in range(ZOZO_MAX_403_RETRIES + 1):
-        resp = session.get(url, headers=ZOZO_HEADERS, timeout=ZOZO_REQUEST_TIMEOUT)
-        if resp.status_code == 403:
-            last_exc = requests.exceptions.HTTPError(f"403 Forbidden: {url}", response=resp)
-            time.sleep(1.5 * (attempt + 1))
-            continue
-        resp.raise_for_status()
-        return resp
-    raise last_exc
-
-_ZOZO_PRODUCT_LINK_RE = re.compile(
-    r'href="([^"]*/shop/' + re.escape(ZOZO_SHOP) + r'/(goods-sale|goods)/(\d+)/[^"]*)"'
-)
-_ZOZO_SIZE_STOCK_RE = re.compile(r"^(?P<size>\S+?)\s*/\s*(?P<stock>在庫あり|在庫なし|残り\d+点)$")
-_ZOZO_INQUIRY_SHOP_RE = re.compile(r"([A-Za-z0-9\-]+)（店舗）")
-_ZOZO_BOILERPLATE_LINES = {"カートに入れる", "完売しました", ""}
-_ZOZO_SCRIPT_STYLE_RE = re.compile(r"<(script|style)\b.*?</\1>", re.IGNORECASE | re.DOTALL)
-_ZOZO_TAG_RE = re.compile(r"<[^>]+>")
-_ZOZO_H1_RE = re.compile(r"<h1\b[^>]*>(.*?)</h1>", re.IGNORECASE | re.DOTALL)
-_ZOZO_BRAND_LINK_RE = re.compile(
-    r'<a\b[^>]*href="[^"]*/brand/[a-zA-Z0-9\-]+/?"[^>]*>(.*?)</a>', re.IGNORECASE | re.DOTALL
-)
-
-
-def _zozo_strip_tags(fragment):
-    """HTML断片からタグを除去してプレーンテキストにする（標準ライブラリのみ使用）。"""
-    text = _ZOZO_TAG_RE.sub(" ", fragment)
-    return html.unescape(text).strip()
-
-
-def _zozo_html_to_lines(page_html):
-    """ページ全体のHTMLから、可視テキストを行単位のリストに変換する。"""
-    cleaned = _ZOZO_SCRIPT_STYLE_RE.sub("\n", page_html)
-    cleaned = _ZOZO_TAG_RE.sub("\n", cleaned)
-    cleaned = html.unescape(cleaned)
-    return [l.strip() for l in cleaned.split("\n") if l.strip() != ""]
-
-
-def fetch_zozo_product_list(session, scpid=ZOZO_SCPID, max_pages=30, test_limit=None):
-    """
-    perky room のショップカテゴリー絞り込み一覧ページを巡回し、
-    重複のない (gid, url_kind, brand) のリストを作る。
-    url_kind は "goods-sale" か "goods"（セール中かどうかでURLパスが変わるため）。
-    test_limit を指定すると、そのユニーク商品数に達した時点で巡回を打ち切る（動作確認用）。
-    """
-    seen = {}
-    page = 1
-    while page <= max_pages:
-        url = ZOZO_LIST_URL.format(page=page)
-        resp = _zozo_get(session, url)
-
-        found_on_page = 0
-        for m in _ZOZO_PRODUCT_LINK_RE.finditer(resp.text):
-            url_kind, gid = m.group(2), m.group(3)
-            found_on_page += 1
-            if gid in seen:
-                continue
-            # ブランド名は一覧ページからではなく、後で詳細ページ取得時に確定させる
-            seen[gid] = {"gid": gid, "url_kind": url_kind}
-            if test_limit and len(seen) >= test_limit:
-                return list(seen.values())
-
-        if found_on_page == 0:
-            break
-        page += 1
-        time.sleep(0.3)  # 連続アクセスを避けるための小休止
-
-    return list(seen.values())
-
-
-def fetch_zozo_product_detail(session, gid, url_kind="goods-sale"):
-    """
-    商品詳細ページを取得し、カラー×サイズ×在庫状況の一覧を返す。
-    戻り値: {"gid":, "brand":, "name":, "shop_code":, "url":, "variants": [{"color","size","stock"}...]}
-    """
-    url = f"https://zozo.jp/shop/{ZOZO_SHOP}/{url_kind}/{gid}/"
-    resp = _zozo_get(session, url)
-    page_html = resp.text
-
-    # 商品名（h1想定。取れなければtitleタグから推定）
-    name = None
-    h1_m = _ZOZO_H1_RE.search(page_html)
-    if h1_m:
-        name = _zozo_strip_tags(h1_m.group(1)) or None
-    if not name:
-        title_m = re.search(r"<title>(.*?)</title>", page_html, re.IGNORECASE | re.DOTALL)
-        if title_m:
-            name = _zozo_strip_tags(title_m.group(1)) or None
-
-    # ブランド名（パンくずの /brand/xxx/ リンクの中で最初に出てくるもの）
-    brand = None
-    brand_m = _ZOZO_BRAND_LINK_RE.search(page_html)
-    if brand_m:
-        brand = _zozo_strip_tags(brand_m.group(1)) or None
-
-    lines = _zozo_html_to_lines(page_html)
-
-    # 「アイテム説明」より後ろは無関係な情報（説明文・レビュー等）なので切り捨てる
-    try:
-        cutoff = lines.index("アイテム説明")
-        lines = lines[:cutoff]
-    except ValueError:
-        pass
-
-    # 店舗品番の抽出（「問い合わせ番号」以降の2つの値）
-    shop_code = None
-    if "問い合わせ番号" in lines:
-        idx = lines.index("問い合わせ番号")
-        window = " ".join(lines[idx: idx + 4])
-        shop_m = _ZOZO_INQUIRY_SHOP_RE.search(window)
-        if shop_m:
-            shop_code = shop_m.group(1)
-
-    # カラー×サイズ×在庫のパース
-    variants = []
-    current_color = None
-    for line in lines:
-        if line in _ZOZO_BOILERPLATE_LINES:
-            continue
-        size_m = _ZOZO_SIZE_STOCK_RE.match(line)
-        if size_m:
-            if current_color:
-                variants.append({
-                    "color": current_color,
-                    "size": size_m.group("size"),
-                    "stock": size_m.group("stock"),
-                })
-            continue
-        # サイズ/在庫の行でなければ「カラー名の候補」として保持
-        # （長すぎる行＝説明文の可能性が高いので除外）
-        if len(line) <= 20:
-            current_color = line
-
-    return {
-        "gid": gid,
-        "name": name,
-        "brand": brand,
-        "shop_code": shop_code,
-        "url": url,
-        "variants": variants,
-    }
-
-
-@st.cache_resource
-def _get_zozo_bg_container():
-    return {
-        "lock": threading.Lock(),
-        "rows": [],          # 展開済みの行データ（商品×カラー×サイズ単位）
-        "product_count": 0,
-        "errors": [],
-        "fetched_at": None,
-        "fetching": False,
-        "fetching_started_ts": 0.0,
-    }
-
-
-def _zozo_fetch_worker(state, test_limit):
-    rows = []
-    errors = []
-    fetched_at_dt = datetime.now()
-    try:
-        session = requests.Session()
-        _zozo_prepare_session(session)
-        products = fetch_zozo_product_list(session, test_limit=test_limit)
-
-        def fetch_one(p):
-            return fetch_zozo_product_detail(session, p["gid"], p["url_kind"])
-
-        with ThreadPoolExecutor(max_workers=ZOZO_MAX_WORKERS) as executor:
-            future_to_gid = {executor.submit(fetch_one, p): p["gid"] for p in products}
-            for future in as_completed(future_to_gid):
-                gid = future_to_gid[future]
-                try:
-                    detail = future.result()
-                    for v in detail["variants"]:
-                        rows.append({
-                            "ブランド": detail["brand"] or "",
-                            "商品名": detail["name"] or "",
-                            "ZOZO品番": detail["gid"],
-                            "店舗品番": detail["shop_code"] or "",
-                            "カラー": v["color"],
-                            "サイズ": v["size"],
-                            "在庫状況": v["stock"],
-                            "URL": detail["url"],
-                        })
-                    if not detail["variants"]:
-                        errors.append(f"gid={gid}: カラー/サイズ情報が取得できませんでした（要パース調整）")
-                except Exception as e:
-                    errors.append(f"gid={gid}: {e}")
-
-        state_product_count = len(products)
-    except Exception as e:
-        msg = f"予期しないエラー: {e}"
-        if "403" in str(e):
-            msg += (
-            "　→ ヘッダーを整えても403が出る場合、実行元サーバーのIP自体がZOZO側の"
-            "ボット対策でブロックされている可能性が高いです。その場合はStreamlit Cloud上での"
-            "実行ではなく、手元のPCなど別環境からの実行に切り替える必要があります。"
-            )
-        errors.append(msg)
-        state_product_count = 0
-    finally:
-        with state["lock"]:
-            state["rows"] = rows
-            state["product_count"] = state_product_count
-            state["errors"] = errors
-            state["fetched_at"] = fetched_at_dt.strftime("%Y-%m-%d %H:%M:%S")
-            state["fetching"] = False
-
-
-def start_zozo_fetch(test_limit=None):
-    state = _get_zozo_bg_container()
-    with state["lock"]:
-        if state["fetching"] and (time.time() - state["fetching_started_ts"]) > 900:
-            state["fetching"] = False
-            state["errors"] = ["前回の取得が完了しないまま長時間経過したため、状態をリセットしました。"]
-        if state["fetching"]:
-            return False
-        state["fetching"] = True
-        state["fetching_started_ts"] = time.time()
-
-    t = threading.Thread(target=_zozo_fetch_worker, args=(state, test_limit), daemon=True)
-    t.start()
-    return True
-
-
-def get_zozo_state():
-    state = _get_zozo_bg_container()
-    with state["lock"]:
-        return {
-            "rows": list(state["rows"]),
-            "product_count": state["product_count"],
-            "errors": list(state["errors"]),
-            "fetched_at": state["fetched_at"],
-            "fetching": state["fetching"],
-        }
-
 
 def render_rakuten_refresh_control(fetched_at, fetching, errors, key):
     """
@@ -2447,51 +2160,42 @@ def main():
 
     def render_zozo_tab():
         st.markdown(
-            "ZOZOTOWN「perky room」内のSORENA・AVIREXの商品ページを直接取得し、"
-            "カラー×サイズごとの在庫表示（在庫あり／残りN点／在庫なし）を一時的に確認するための画面です。"
-            "取得結果は保存されません（毎回その場で取得し直します）。"
+            "Excelマクロ（ZozoStockChecker）で取得したZOZOTOWN「perky room」のCSVを読み込んで、"
+            "カラー×サイズごとの在庫状況（在庫あり／残りN点／在庫なし）を確認するための画面です。"
         )
         st.caption(
-            "⚠️ 初回実行時の注意：ZOZO側のページ構造次第でパースがうまくいかない可能性があります。"
-            "まずは「テスト実行」で少数だけ試してから、全件実行してください。"
+            "先にExcel側で「① 在庫取得実行」→「② CSV出力」を実行し、出力されたCSVをここにドラッグ&ドロップしてください。"
         )
 
-        col1, col2, col3 = st.columns([2, 2, 4])
-        with col1:
-            if st.button("🧪 テスト実行（先頭10商品のみ）", use_container_width=True):
-                started = start_zozo_fetch(test_limit=10)
-                if not started:
-                    st.warning("すでに取得処理が実行中です。完了までお待ちください。")
-                st.rerun()
-        with col2:
-            if st.button("🔄 全件取得（SORENA/AVIREX 対象）", use_container_width=True):
-                started = start_zozo_fetch(test_limit=None)
-                if not started:
-                    st.warning("すでに取得処理が実行中です。完了までお待ちください。")
-                st.rerun()
-
-        zstate = get_zozo_state()
-        with col3:
-            if zstate["fetching"]:
-                st.caption("📦 ZOZO在庫を取得中…（商品数によっては数分かかります。完了後、画面を操作すると反映されます）")
-            elif zstate["fetched_at"]:
-                st.caption(f"📦 最終取得: {zstate['fetched_at']}（対象商品数: {zstate['product_count']}件）")
-            else:
-                st.caption("📦 まだ取得していません。上のボタンから実行してください。")
-
-        if zstate["errors"]:
-            with st.expander(f"⚠️ 取得中に発生したエラー・警告（{len(zstate['errors'])}件）"):
-                for e in zstate["errors"][:50]:
-                    st.caption(e)
-
-        if zstate["fetching"] and not zstate["rows"]:
-            st.info("取得中です。完了すると自動的にここに表示されます（ボタンや他の操作で画面を更新してください）。")
+        uploaded = st.file_uploader(
+            "ZOZO在庫CSVをアップロード",
+            type="csv",
+            key="zozo_csv_uploader",
+        )
+        if not uploaded:
             return
 
-        if not zstate["rows"]:
+        df = read_csv_flexible(uploaded)
+        if df is None:
+            st.error("CSVの読み込みに失敗しました（文字コード不明）。Excelマクロが出力したCSVをそのまま使ってください。")
             return
 
-        df = pd.DataFrame(zstate["rows"])
+        required_cols = {"ブランド", "商品名", "ZOZO品番", "店舗品番", "カラー", "サイズ", "在庫状況", "URL"}
+        if not required_cols.issubset(df.columns):
+            st.error(
+                f"必要な列（{', '.join(required_cols)}）が見つかりません。"
+                f"検出された列：{', '.join(df.columns)}"
+            )
+            return
+
+        for col in required_cols:
+            df[col] = df[col].fillna("").astype(str)
+
+        fetched_at = ""
+        if "取得日時" in df.columns and len(df) > 0:
+            fetched_at = str(df["取得日時"].iloc[0])
+        if fetched_at:
+            st.caption(f"📦 このCSVの取得日時: {fetched_at}（{uploaded.name}）")
 
         # ---------- サマリー ----------
         total = len(df)
