@@ -751,10 +751,49 @@ ZOZO_HEADERS = {
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
     "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Referer": "https://zozo.jp/",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+    "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"Windows"',
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "same-origin",
+    "Sec-Fetch-User": "?1",
 }
 ZOZO_MAX_WORKERS = 6
 ZOZO_REQUEST_TIMEOUT = 15
+ZOZO_MAX_403_RETRIES = 2
+
+
+def _zozo_prepare_session(session):
+    """
+    トップページに先にアクセスしてCookieを取得しておく。
+    いきなり絞り込みページへ直接アクセスするより、ボット判定を避けやすくするため。
+    """
+    try:
+        session.get("https://zozo.jp/", headers=ZOZO_HEADERS, timeout=ZOZO_REQUEST_TIMEOUT)
+        time.sleep(0.5)
+    except Exception:
+        pass  # ここで失敗しても本処理側で改めてエラーになるので無視してよい
+
+
+def _zozo_get(session, url):
+    """403の場合は少し待って数回だけ再試行する。"""
+    last_exc = None
+    for attempt in range(ZOZO_MAX_403_RETRIES + 1):
+        resp = session.get(url, headers=ZOZO_HEADERS, timeout=ZOZO_REQUEST_TIMEOUT)
+        if resp.status_code == 403:
+            last_exc = requests.exceptions.HTTPError(f"403 Forbidden: {url}", response=resp)
+            time.sleep(1.5 * (attempt + 1))
+            continue
+        resp.raise_for_status()
+        return resp
+    raise last_exc
 
 _ZOZO_PRODUCT_LINK_RE = re.compile(
     r'href="([^"]*/shop/' + re.escape(ZOZO_SHOP) + r'/(goods-sale|goods)/(\d+)/[^"]*)"'
@@ -795,8 +834,7 @@ def fetch_zozo_product_list(session, scpid=ZOZO_SCPID, max_pages=30, test_limit=
     page = 1
     while page <= max_pages:
         url = ZOZO_LIST_URL.format(page=page)
-        resp = session.get(url, headers=ZOZO_HEADERS, timeout=ZOZO_REQUEST_TIMEOUT)
-        resp.raise_for_status()
+        resp = _zozo_get(session, url)
 
         found_on_page = 0
         for m in _ZOZO_PRODUCT_LINK_RE.finditer(resp.text):
@@ -823,8 +861,7 @@ def fetch_zozo_product_detail(session, gid, url_kind="goods-sale"):
     戻り値: {"gid":, "brand":, "name":, "shop_code":, "url":, "variants": [{"color","size","stock"}...]}
     """
     url = f"https://zozo.jp/shop/{ZOZO_SHOP}/{url_kind}/{gid}/"
-    resp = session.get(url, headers=ZOZO_HEADERS, timeout=ZOZO_REQUEST_TIMEOUT)
-    resp.raise_for_status()
+    resp = _zozo_get(session, url)
     page_html = resp.text
 
     # 商品名（h1想定。取れなければtitleタグから推定）
@@ -910,6 +947,7 @@ def _zozo_fetch_worker(state, test_limit):
     fetched_at_dt = datetime.now()
     try:
         session = requests.Session()
+        _zozo_prepare_session(session)
         products = fetch_zozo_product_list(session, test_limit=test_limit)
 
         def fetch_one(p):
@@ -939,7 +977,14 @@ def _zozo_fetch_worker(state, test_limit):
 
         state_product_count = len(products)
     except Exception as e:
-        errors.append(f"予期しないエラー: {e}")
+        msg = f"予期しないエラー: {e}"
+        if "403" in str(e):
+            msg += (
+            "　→ ヘッダーを整えても403が出る場合、実行元サーバーのIP自体がZOZO側の"
+            "ボット対策でブロックされている可能性が高いです。その場合はStreamlit Cloud上での"
+            "実行ではなく、手元のPCなど別環境からの実行に切り替える必要があります。"
+            )
+        errors.append(msg)
         state_product_count = 0
     finally:
         with state["lock"]:
