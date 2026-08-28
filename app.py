@@ -19,8 +19,8 @@ import base64
 import io
 import plotly.graph_objects as go
 
-# 追加（ZOZO在庫チェック用）
-from bs4 import BeautifulSoup
+# 追加（ZOZO在庫チェック用。外部ライブラリを増やさないよう標準ライブラリのみで実装。
+#         ※ html モジュールは冒頭で import 済みのものを流用）
 
 
 # ==========================
@@ -757,12 +757,31 @@ ZOZO_MAX_WORKERS = 6
 ZOZO_REQUEST_TIMEOUT = 15
 
 _ZOZO_PRODUCT_LINK_RE = re.compile(
-    r"/shop/" + re.escape(ZOZO_SHOP) + r"/(goods-sale|goods)/(\d+)/"
+    r'href="([^"]*/shop/' + re.escape(ZOZO_SHOP) + r'/(goods-sale|goods)/(\d+)/[^"]*)"'
 )
 _ZOZO_SIZE_STOCK_RE = re.compile(r"^(?P<size>\S+?)\s*/\s*(?P<stock>在庫あり|在庫なし|残り\d+点)$")
-_ZOZO_INQUIRY_ZOZO_RE = re.compile(r"(\d+)（ZOZO）")
 _ZOZO_INQUIRY_SHOP_RE = re.compile(r"([A-Za-z0-9\-]+)（店舗）")
 _ZOZO_BOILERPLATE_LINES = {"カートに入れる", "完売しました", ""}
+_ZOZO_SCRIPT_STYLE_RE = re.compile(r"<(script|style)\b.*?</\1>", re.IGNORECASE | re.DOTALL)
+_ZOZO_TAG_RE = re.compile(r"<[^>]+>")
+_ZOZO_H1_RE = re.compile(r"<h1\b[^>]*>(.*?)</h1>", re.IGNORECASE | re.DOTALL)
+_ZOZO_BRAND_LINK_RE = re.compile(
+    r'<a\b[^>]*href="[^"]*/brand/[a-zA-Z0-9\-]+/?"[^>]*>(.*?)</a>', re.IGNORECASE | re.DOTALL
+)
+
+
+def _zozo_strip_tags(fragment):
+    """HTML断片からタグを除去してプレーンテキストにする（標準ライブラリのみ使用）。"""
+    text = _ZOZO_TAG_RE.sub(" ", fragment)
+    return html.unescape(text).strip()
+
+
+def _zozo_html_to_lines(page_html):
+    """ページ全体のHTMLから、可視テキストを行単位のリストに変換する。"""
+    cleaned = _ZOZO_SCRIPT_STYLE_RE.sub("\n", page_html)
+    cleaned = _ZOZO_TAG_RE.sub("\n", cleaned)
+    cleaned = html.unescape(cleaned)
+    return [l.strip() for l in cleaned.split("\n") if l.strip() != ""]
 
 
 def fetch_zozo_product_list(session, scpid=ZOZO_SCPID, max_pages=30, test_limit=None):
@@ -778,23 +797,15 @@ def fetch_zozo_product_list(session, scpid=ZOZO_SCPID, max_pages=30, test_limit=
         url = ZOZO_LIST_URL.format(page=page)
         resp = session.get(url, headers=ZOZO_HEADERS, timeout=ZOZO_REQUEST_TIMEOUT)
         resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "html.parser")
 
         found_on_page = 0
-        for a in soup.find_all("a", href=True):
-            m = _ZOZO_PRODUCT_LINK_RE.search(a["href"])
-            if not m:
-                continue
-            url_kind, gid = m.group(1), m.group(2)
+        for m in _ZOZO_PRODUCT_LINK_RE.finditer(resp.text):
+            url_kind, gid = m.group(2), m.group(3)
             found_on_page += 1
             if gid in seen:
                 continue
-            # 商品名・ブランドはこのリンクの近くのテキストから拾う（取れなければ後で詳細ページから補完）
-            brand = None
-            strong = a.find_next("strong")
-            if strong and strong.get_text(strip=True):
-                brand = strong.get_text(strip=True)
-            seen[gid] = {"gid": gid, "url_kind": url_kind, "brand": brand}
+            # ブランド名は一覧ページからではなく、後で詳細ページ取得時に確定させる
+            seen[gid] = {"gid": gid, "url_kind": url_kind}
             if test_limit and len(seen) >= test_limit:
                 return list(seen.values())
 
@@ -814,18 +825,25 @@ def fetch_zozo_product_detail(session, gid, url_kind="goods-sale"):
     url = f"https://zozo.jp/shop/{ZOZO_SHOP}/{url_kind}/{gid}/"
     resp = session.get(url, headers=ZOZO_HEADERS, timeout=ZOZO_REQUEST_TIMEOUT)
     resp.raise_for_status()
-    soup = BeautifulSoup(resp.text, "html.parser")
+    page_html = resp.text
 
     # 商品名（h1想定。取れなければtitleタグから推定）
     name = None
-    h1 = soup.find("h1")
-    if h1 and h1.get_text(strip=True):
-        name = h1.get_text(strip=True)
-    if not name and soup.title:
-        name = soup.title.get_text(strip=True)
+    h1_m = _ZOZO_H1_RE.search(page_html)
+    if h1_m:
+        name = _zozo_strip_tags(h1_m.group(1)) or None
+    if not name:
+        title_m = re.search(r"<title>(.*?)</title>", page_html, re.IGNORECASE | re.DOTALL)
+        if title_m:
+            name = _zozo_strip_tags(title_m.group(1)) or None
 
-    full_text = soup.get_text("\n", strip=True)
-    lines = [l.strip() for l in full_text.split("\n") if l.strip() != ""]
+    # ブランド名（パンくずの /brand/xxx/ リンクの中で最初に出てくるもの）
+    brand = None
+    brand_m = _ZOZO_BRAND_LINK_RE.search(page_html)
+    if brand_m:
+        brand = _zozo_strip_tags(brand_m.group(1)) or None
+
+    lines = _zozo_html_to_lines(page_html)
 
     # 「アイテム説明」より後ろは無関係な情報（説明文・レビュー等）なので切り捨てる
     try:
@@ -866,6 +884,7 @@ def fetch_zozo_product_detail(session, gid, url_kind="goods-sale"):
     return {
         "gid": gid,
         "name": name,
+        "brand": brand,
         "shop_code": shop_code,
         "url": url,
         "variants": variants,
@@ -894,17 +913,17 @@ def _zozo_fetch_worker(state, test_limit):
         products = fetch_zozo_product_list(session, test_limit=test_limit)
 
         def fetch_one(p):
-            return fetch_zozo_product_detail(session, p["gid"], p["url_kind"]), p["brand"]
+            return fetch_zozo_product_detail(session, p["gid"], p["url_kind"])
 
         with ThreadPoolExecutor(max_workers=ZOZO_MAX_WORKERS) as executor:
             future_to_gid = {executor.submit(fetch_one, p): p["gid"] for p in products}
             for future in as_completed(future_to_gid):
                 gid = future_to_gid[future]
                 try:
-                    detail, brand = future.result()
+                    detail = future.result()
                     for v in detail["variants"]:
                         rows.append({
-                            "ブランド": brand or "",
+                            "ブランド": detail["brand"] or "",
                             "商品名": detail["name"] or "",
                             "ZOZO品番": detail["gid"],
                             "店舗品番": detail["shop_code"] or "",
@@ -2495,8 +2514,11 @@ def main():
         # ---------- SKUマスターとの紐づけ確認（検証用） ----------
         with st.expander("🔗 SKUマスター（CS品番）との紐づけ確認（検証用）"):
             st.caption(
-                "ZOZOの「店舗品番」と、納品推奨数システムで使っているSKUマスターの「CS品番」が"
-                "一致するかを確認します。一致すれば、木曜時点のTempostar在庫と今の在庫を比較できます。"
+                "ZOZOの「店舗品番」と、SKUマスターの「CS品番」が一致するかを確認します。"
+                "一致すれば、木曜時点の在庫日報CSV（販売可能数合計）と今のZOZO在庫を比較できます。"
+                "※ 在庫日報CSVは現状「納品推奨数システム」タブ（ブラウザ内のみで処理）に読み込まれており、"
+                "Python側からはまだ参照できません。差分表示を作る場合は、このタブにも"
+                "在庫日報CSVのアップロード欄を別途追加する必要があります。"
             )
             sku_master = load_sku_master()
             if not sku_master:
