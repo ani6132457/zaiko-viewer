@@ -901,6 +901,10 @@ def render_interactive_sku_table(
   .sku-table img { max-height:56px; width:auto; display:block; margin:auto; border-radius:4px; }
   .sku-table td.num, .sku-table th.num { text-align:right; font-variant-numeric: tabular-nums; white-space:nowrap; }
   .sku-table td.name-cell { max-width:320px; }
+  .name-clamp {
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+    overflow:hidden; line-height:1.35em; max-height:2.7em;
+  }
   .stock-danger { color:#c0392b; font-size:12px; font-weight:700; white-space:nowrap; }
   .stock-warn   { color:#d35400; font-size:12px; font-weight:700; white-space:nowrap; }
   .order-col { display:inline-block; font-weight:700; background:#fff0ee; color:#c0392b;
@@ -923,6 +927,7 @@ def render_interactive_sku_table(
   .no-data { color:#888; font-size:13px; padding:20px 0; }
   .axis-label { font-size:10px; fill:#888; }
   .grid-line { stroke:#edeff3; stroke-width:1; }
+  .chart-dot { transition: r 0.12s ease, fill 0.12s ease; }
 </style>
 
 <div class="wrap">
@@ -1005,6 +1010,9 @@ def render_interactive_sku_table(
       return '<span class="' + cls + '">' + escapeHtml(val) + '</span>';
     }
     if (val === null || val === undefined) return "";
+    if (col.key === "商品名") {
+      return '<div class="name-clamp" title="' + escapeHtml(val) + '">' + escapeHtml(val) + '</div>';
+    }
     return escapeHtml(val);
   }
 
@@ -1136,7 +1144,8 @@ def render_interactive_sku_table(
         diffText = "—";
       }
       prevVal = p.value;
-      pointsSvg += '<circle cx="' + x + '" cy="' + y + '" r="4" fill="#4C78A8">' +
+      pointsSvg += '<circle class="chart-dot" cx="' + x + '" cy="' + y + '" r="4" fill="#4C78A8"></circle>' +
+        '<circle class="chart-hit" cx="' + x + '" cy="' + y + '" r="10" fill="transparent" style="cursor:pointer">' +
         '<title>' + p.date + '\n在庫: ' + p.value + '（前回比 ' + diffText + '）</title></circle>';
     });
 
@@ -1155,6 +1164,21 @@ def render_interactive_sku_table(
       '</svg>';
   }
 
+  function wireChartHover() {
+    const hits = chartArea.querySelectorAll(".chart-hit");
+    hits.forEach(function(hit) {
+      const dot = hit.previousElementSibling;
+      hit.addEventListener("mouseenter", function() {
+        dot.setAttribute("r", "6");
+        dot.setAttribute("fill", "#1f3b57");
+      });
+      hit.addEventListener("mouseleave", function() {
+        dot.setAttribute("r", "4");
+        dot.setAttribute("fill", "#4C78A8");
+      });
+    });
+  }
+
   function openModal(sku) {
     selectedSku = sku;
     renderBody();
@@ -1164,6 +1188,7 @@ def render_interactive_sku_table(
       chartArea.innerHTML = '<div class="no-data">選択したSKUの在庫推移データがありません。</div>';
     } else {
       chartArea.innerHTML = buildChartSvg(points);
+      wireChartHover();
     }
     backdrop.classList.add("open");
     document.body.setAttribute("tabindex", "-1");
