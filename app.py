@@ -919,7 +919,7 @@ def render_interactive_sku_table(
   .modal-backdrop { display:none; position:fixed; inset:0; background:rgba(20,22,28,0.55);
     align-items:center; justify-content:center; z-index:1000; }
   .modal-backdrop.open { display:flex; }
-  .modal-box { background:#fff; border-radius:12px; width:min(760px, 92vw); max-height:88vh;
+  .modal-box { background:#fff; border-radius:12px; width:min(940px, 95vw); max-height:92vh;
     overflow-y:auto; padding:18px 20px 20px 20px; box-shadow:0 10px 40px rgba(0,0,0,0.25); }
   .modal-box h4 { margin:0 0 10px 0; font-size:15px; color:#1a1d23; }
   .modal-close { float:right; border:none; background:#f0f2f7; border-radius:6px; padding:5px 12px;
@@ -928,6 +928,16 @@ def render_interactive_sku_table(
   .axis-label { font-size:10px; fill:#888; }
   .grid-line { stroke:#edeff3; stroke-width:1; }
   .chart-dot { transition: r 0.12s ease, fill 0.12s ease; }
+  .chart-wrap { position:relative; }
+  .chart-tooltip {
+    position:absolute; display:none; background:#1a1d23; color:#fff; font-size:12px;
+    padding:6px 10px; border-radius:6px; pointer-events:none; white-space:nowrap;
+    transform:translate(-50%, -100%); margin-top:-10px; z-index:10; line-height:1.5;
+  }
+  .chart-tooltip:after {
+    content:""; position:absolute; top:100%; left:50%; transform:translateX(-50%);
+    border:5px solid transparent; border-top-color:#1a1d23;
+  }
 </style>
 
 <div class="wrap">
@@ -1105,7 +1115,7 @@ def render_interactive_sku_table(
   }
 
   function buildChartSvg(points) {
-    const W = 700, H = 300, padL = 50, padR = 20, padT = 20, padB = 34;
+    const W = 860, H = 420, padL = 56, padR = 24, padT = 24, padB = 40;
     const innerW = W - padL - padR, innerH = H - padT - padB;
     const values = points.map(function(p) { return p.value; });
     let vMin = Math.min.apply(null, values), vMax = Math.max.apply(null, values);
@@ -1127,7 +1137,7 @@ def render_interactive_sku_table(
       const yy = padT + (innerH * g) / gridN;
       const val = vMax - ((vMax - vMin) * g) / gridN;
       gridSvg += '<line class="grid-line" x1="' + padL + '" y1="' + yy + '" x2="' + (W - padR) + '" y2="' + yy + '"></line>';
-      gridSvg += '<text class="axis-label" x="' + (padL - 6) + '" y="' + (yy + 3) + '" text-anchor="end">' + Math.round(val) + '</text>';
+      gridSvg += '<text class="axis-label" x="' + (padL - 8) + '" y="' + (yy + 4) + '" text-anchor="end">' + Math.round(val) + '</text>';
     }
 
     let pathD = "";
@@ -1144,37 +1154,54 @@ def render_interactive_sku_table(
         diffText = "—";
       }
       prevVal = p.value;
-      pointsSvg += '<circle class="chart-dot" cx="' + x + '" cy="' + y + '" r="4" fill="#4C78A8"></circle>' +
-        '<circle class="chart-hit" cx="' + x + '" cy="' + y + '" r="10" fill="transparent" style="cursor:pointer">' +
-        '<title>' + p.date + '\n在庫: ' + p.value + '（前回比 ' + diffText + '）</title></circle>';
+      pointsSvg += '<circle class="chart-dot" cx="' + x + '" cy="' + y + '" r="4.5" fill="#4C78A8"></circle>' +
+        '<circle class="chart-hit" cx="' + x + '" cy="' + y + '" r="12" fill="transparent" style="cursor:pointer" ' +
+        'data-date="' + escapeHtml(p.date) + '" data-value="' + p.value + '" data-diff="' + escapeHtml(diffText) + '"></circle>';
     });
 
-    const labelIdxs = points.length <= 8
+    const labelIdxs = points.length <= 10
       ? points.map(function(_, i) { return i; })
       : [0, Math.floor((points.length - 1) / 2), points.length - 1];
     let xLabelsSvg = "";
     labelIdxs.forEach(function(i) {
-      xLabelsSvg += '<text class="axis-label" x="' + xAt(i) + '" y="' + (H - padB + 16) + '" text-anchor="middle">' + points[i].date + '</text>';
+      xLabelsSvg += '<text class="axis-label" x="' + xAt(i) + '" y="' + (H - padB + 20) + '" text-anchor="middle">' + points[i].date + '</text>';
     });
 
-    return '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto;">' +
+    return '<div class="chart-wrap">' +
+      '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto;display:block;">' +
       gridSvg +
       '<path d="' + pathD + '" fill="none" stroke="#4C78A8" stroke-width="2"></path>' +
       pointsSvg + xLabelsSvg +
-      '</svg>';
+      '</svg>' +
+      '<div class="chart-tooltip"></div>' +
+      '</div>';
   }
 
   function wireChartHover() {
     const hits = chartArea.querySelectorAll(".chart-hit");
+    const wrap = chartArea.querySelector(".chart-wrap");
+    const tooltip = chartArea.querySelector(".chart-tooltip");
     hits.forEach(function(hit) {
       const dot = hit.previousElementSibling;
       hit.addEventListener("mouseenter", function() {
-        dot.setAttribute("r", "6");
+        dot.setAttribute("r", "6.5");
         dot.setAttribute("fill", "#1f3b57");
+        if (tooltip && wrap) {
+          tooltip.innerHTML = hit.dataset.date + "<br>在庫: " + hit.dataset.value + "（前回比 " + hit.dataset.diff + "）";
+          tooltip.style.display = "block";
+          const hitRect = hit.getBoundingClientRect();
+          const wrapRect = wrap.getBoundingClientRect();
+          const half = tooltip.offsetWidth / 2;
+          let left = hitRect.left - wrapRect.left + hitRect.width / 2;
+          left = Math.max(half + 4, Math.min(wrapRect.width - half - 4, left));
+          tooltip.style.left = left + "px";
+          tooltip.style.top = (hitRect.top - wrapRect.top) + "px";
+        }
       });
       hit.addEventListener("mouseleave", function() {
-        dot.setAttribute("r", "4");
+        dot.setAttribute("r", "4.5");
         dot.setAttribute("fill", "#4C78A8");
+        if (tooltip) tooltip.style.display = "none";
       });
     });
   }
