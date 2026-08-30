@@ -17,7 +17,6 @@ from pandas.tseries.offsets import DateOffset
 # 追加（オーバーレイ表示用）
 import base64
 import io
-import plotly.graph_objects as go
 
 # 追加（ZOZO在庫チェック用。外部ライブラリを増やさないよう標準ライブラリのみで実装。
 #         ※ html モジュールは冒頭で import 済みのものを流用）
@@ -823,87 +822,393 @@ def make_html_table(df: pd.DataFrame) -> str:
 
 
 # ==========================
-# オーバーレイ（右ドロワー）表示：matplotlib→PNG→HTML埋め込み
+# インタラクティブ結果テーブル（HTML/JS埋め込み）
+# 一覧のチェック状態とグラフモーダルの開閉を同一JS内で完結させることで、
+# 閉じる操作（✕ボタン／モーダル外クリック／ESCキーのいずれ）に関わらず
+# チェックが必ず連動して外れるようにする。
 # ==========================
-@st.dialog("📈 在庫推移")
-def _render_stock_dialog(selected_sku: str, df_main: pd.DataFrame):
+
+def compute_stock_trend_map(df_main: pd.DataFrame, sku_col: str = "商品コード") -> dict:
+    """SKUごとの在庫推移（日付・在庫数）をグラフ用に事前集計する。"""
+    if df_main is None or df_main.empty:
+        return {}
+    if "変動後" not in df_main.columns or "元ファイル" not in df_main.columns:
+        return {}
+
+    df = df_main[[sku_col, "元ファイル", "変動後"]].copy()
+    df["日付"] = df["元ファイル"].astype(str).str.extract(r"(\d{8})")
+    df["日付"] = pd.to_datetime(df["日付"], format="%Y%m%d", errors="coerce")
+    df["変動後"] = pd.to_numeric(df["変動後"], errors="coerce")
+    df = df.dropna(subset=["日付", "変動後"]).sort_values("日付")
+
+    trend_map = {}
+    for sku, g in df.groupby(sku_col, dropna=False):
+        key = str(sku).strip()
+        trend_map[key] = [
+            {"date": d.strftime("%Y-%m-%d"), "value": int(v)}
+            for d, v in zip(g["日付"], g["変動後"])
+        ]
+    return trend_map
+
+
+def render_interactive_sku_table(
+    df_view: pd.DataFrame,
+    trend_map: dict,
+    columns: list,
+    key: str,
+    sku_col: str = "商品コード",
+    default_sort_key: str = None,
+    default_sort_dir: str = "desc",
+    page_size: int = 100,
+    height: int = 900,
+):
     """
-    st.dialog（Streamlit標準のモーダルポップアップ機能）で在庫推移グラフを表示する。
-    自作のposition:fixedなHTML/JSに頼らないため、フリーズなどの不具合が起きない。
-    標準機能により、✕ボタン・画面外クリック・ESCキーのいずれでも安全に閉じられる。
+    一覧表示＋行クリックでの在庫推移グラフ表示を、HTML/JSで完結させて描画する。
+    columns: [{"key": "列名", "label": "表示名", "type": "image|number|order|status|text"}, ...]
     """
-    st.markdown(f"**SKU: {selected_sku}**")
+    if df_view is None or df_view.empty:
+        st.info("表示できるデータがありません。")
+        return
 
-    if "変動後" not in df_main.columns:
-        st.caption("『変動後』列がないため在庫推移グラフを表示できません。")
-    else:
-        df_sku = df_main[df_main["商品コード"] == selected_sku].copy()
-        df_sku["日付"] = df_sku["元ファイル"].astype(str).str.extract(r"(\d{8})")
-        df_sku["日付"] = pd.to_datetime(df_sku["日付"], format="%Y%m%d", errors="coerce")
-        df_plot = df_sku[["日付", "変動後"]].dropna().sort_values("日付")
+    col_keys = [c["key"] for c in columns if c["key"] in df_view.columns]
+    df_data = df_view[col_keys].copy()
 
-        if df_plot.empty:
-            st.caption("選択したSKUの在庫データがありません。")
-        else:
-            df_plot = df_plot.reset_index(drop=True)
+    # NaN/NaT を JSON 変換可能な None に変換
+    records = json.loads(df_data.where(pd.notnull(df_data), None).to_json(orient="records", force_ascii=False))
 
-            def _fmt_diff(x):
-                if pd.isna(x):
-                    return "—"
-                x = int(x)
-                if x > 0:
-                    return f"+{x}"
-                if x < 0:
-                    return str(x)
-                return "±0"
+    trend_json = json.dumps(trend_map, ensure_ascii=False)
+    data_json = json.dumps(records, ensure_ascii=False)
+    columns_json = json.dumps(columns, ensure_ascii=False)
 
-            diff_text = df_plot["変動後"].diff().apply(_fmt_diff)
+    default_sort_key = default_sort_key or (col_keys[0] if col_keys else "")
 
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(
-                x=df_plot["日付"],
-                y=df_plot["変動後"],
-                mode="lines+markers",
-                line=dict(color="#4C78A8"),
-                marker=dict(size=5),
-                customdata=diff_text,
-                hovertemplate="%{x|%Y/%m/%d}<br>在庫: %{y}（前回比 %{customdata}）<extra></extra>",
-            ))
-            fig.update_layout(
-                title=f"在庫推移（SKU: {selected_sku}）",
-                yaxis_title="在庫",
-                height=340,
-                margin=dict(l=40, r=20, t=40, b=40),
-                hovermode="x unified",
-            )
-            st.plotly_chart(fig, use_container_width=True)
+    html_template = r"""
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Meiryo, sans-serif; }
+  .wrap { background:#fff; border-radius:10px; box-shadow:0 1px 6px rgba(0,0,0,0.07); overflow:hidden; }
+  .scroll-area { max-height: __TABLE_MAXH__px; overflow-y: auto; overflow-x: auto; }
+  table.sku-table { border-collapse: collapse; font-size: 13px; width: 100%; background:#fff; }
+  .sku-table th { background:#f0f2f7; color:#444; font-size:12px; font-weight:700;
+    letter-spacing:0.03em; padding:10px 10px; border-bottom:2px solid #d8dde8; white-space:nowrap;
+    position: sticky; top: 0; z-index: 2; cursor: pointer; user-select: none; }
+  .sku-table th .arrow { margin-left:4px; opacity:0.5; font-size:10px; }
+  .sku-table th.sorted .arrow { opacity:1; }
+  .sku-table td { padding:9px 10px; border-bottom:1px solid #eef0f5; vertical-align:middle; color:#222; }
+  .sku-table tbody tr { cursor:pointer; }
+  .sku-table tbody tr:hover { background:#f5f7fc; }
+  .sku-table tbody tr.selected { background:#e8f0fe; }
+  .sku-table img { max-height:56px; width:auto; display:block; margin:auto; border-radius:4px; }
+  .sku-table td.num, .sku-table th.num { text-align:right; font-variant-numeric: tabular-nums; white-space:nowrap; }
+  .sku-table td.name-cell { max-width:320px; }
+  .stock-danger { color:#c0392b; font-size:12px; font-weight:700; white-space:nowrap; }
+  .stock-warn   { color:#d35400; font-size:12px; font-weight:700; white-space:nowrap; }
+  .order-col { display:inline-block; font-weight:700; background:#fff0ee; color:#c0392b;
+    padding:3px 10px; border-radius:20px; border:1px solid #f5c6c2; min-width:40px; text-align:center; }
+  .pager { display:flex; align-items:center; gap:10px; padding:10px 14px; font-size:13px; color:#444;
+    border-top:1px solid #eef0f5; background:#fafbfc; }
+  .pager button { border:1px solid #d8dde8; background:#fff; border-radius:6px; padding:5px 12px;
+    font-size:13px; cursor:pointer; }
+  .pager button:disabled { opacity:0.4; cursor:default; }
+  .pager .info { margin-left:auto; color:#666; }
 
-    if st.button("✕ 閉じる", key=f"close_dialog_{selected_sku}", use_container_width=True):
-        st.session_state["drawer_dismissed_sku"] = selected_sku
-        st.session_state["selected_sku"] = None
-        st.rerun()
+  .modal-backdrop { display:none; position:fixed; inset:0; background:rgba(20,22,28,0.55);
+    align-items:center; justify-content:center; z-index:1000; }
+  .modal-backdrop.open { display:flex; }
+  .modal-box { background:#fff; border-radius:12px; width:min(760px, 92vw); max-height:88vh;
+    overflow-y:auto; padding:18px 20px 20px 20px; box-shadow:0 10px 40px rgba(0,0,0,0.25); }
+  .modal-box h4 { margin:0 0 10px 0; font-size:15px; color:#1a1d23; }
+  .modal-close { float:right; border:none; background:#f0f2f7; border-radius:6px; padding:5px 12px;
+    cursor:pointer; font-size:13px; }
+  .no-data { color:#888; font-size:13px; padding:20px 0; }
+  .axis-label { font-size:10px; fill:#888; }
+  .grid-line { stroke:#edeff3; stroke-width:1; }
+</style>
 
+<div class="wrap">
+  <div class="scroll-area">
+    <table class="sku-table" id="tbl___KEY__">
+      <thead><tr id="thead___KEY__"></tr></thead>
+      <tbody id="tbody___KEY__"></tbody>
+    </table>
+  </div>
+  <div class="pager">
+    <button id="prev___KEY__">← 前へ</button>
+    <button id="next___KEY__">次へ →</button>
+    <span id="pageinfo___KEY__"></span>
+    <span class="info" id="totalinfo___KEY__"></span>
+  </div>
+</div>
 
-def show_stock_drawer(selected_sku: str, df_main: pd.DataFrame):
-    _render_stock_dialog(selected_sku, df_main)
+<div class="modal-backdrop" id="backdrop___KEY__">
+  <div class="modal-box">
+    <button class="modal-close" id="closebtn___KEY__">✕ 閉じる</button>
+    <h4 id="modaltitle___KEY__"></h4>
+    <div id="chartarea___KEY__"></div>
+  </div>
+</div>
 
+<script>
+(function() {
+  const KEY = "__KEY__";
+  const DATA = __DATA_JSON__;
+  const TREND = __TREND_JSON__;
+  const COLUMNS = __COLUMNS_JSON__;
+  const SKU_COL = __SKU_COL_JSON__;
+  const PAGE_SIZE = __PAGE_SIZE__;
 
-def handle_row_selection_for_drawer(event, df_view, sku_col="商品コード"):
-    """
-    st.dataframe(selection_mode='single-row')の選択結果から、表示すべきSKUを確定する共通ロジック。
-    ・行選択が外れたら閉じる
-    ・閉じるボタン（backdropクリック含む）で閉じた直後は、同じ行が選択されたままでも再度開かない
-    """
-    sel = event.selection.get("rows", [])
-    if sel:
-        clicked_sku = str(df_view.iloc[sel[0]][sku_col]).strip()
-        if clicked_sku != st.session_state.get("drawer_dismissed_sku"):
-            st.session_state["selected_sku"] = clicked_sku
-        else:
-            st.session_state["selected_sku"] = None
-    else:
-        st.session_state["selected_sku"] = None
-        st.session_state["drawer_dismissed_sku"] = None
+  let sortKey = __DEFAULT_SORT_KEY_JSON__;
+  let sortDir = __DEFAULT_SORT_DIR_JSON__;
+  let page = 1;
+  let selectedSku = null;
+  let sortedData = DATA.slice();
+
+  const thead = document.getElementById("thead_" + KEY);
+  const tbody = document.getElementById("tbody_" + KEY);
+  const prevBtn = document.getElementById("prev_" + KEY);
+  const nextBtn = document.getElementById("next_" + KEY);
+  const pageinfo = document.getElementById("pageinfo_" + KEY);
+  const totalinfo = document.getElementById("totalinfo_" + KEY);
+  const backdrop = document.getElementById("backdrop_" + KEY);
+  const closeBtn = document.getElementById("closebtn_" + KEY);
+  const modalTitle = document.getElementById("modaltitle_" + KEY);
+  const chartArea = document.getElementById("chartarea_" + KEY);
+
+  function fmtNum(v) {
+    if (v === null || v === undefined || v === "") return "—";
+    const n = Number(v);
+    if (isNaN(n)) return "—";
+    return n.toLocaleString("ja-JP");
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, function(c) {
+      return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];
+    });
+  }
+
+  function cellHtml(col, val) {
+    if (col.type === "image") {
+      if (!val) return "";
+      return '<img loading="lazy" src="' + escapeHtml(val) + '">';
+    }
+    if (col.type === "number") {
+      return fmtNum(val);
+    }
+    if (col.type === "order") {
+      return '<span class="order-col">' + fmtNum(val) + '</span>';
+    }
+    if (col.type === "status") {
+      if (!val) return "";
+      const cls = String(val).indexOf("在庫切れ") >= 0 ? "stock-danger"
+                : (String(val).indexOf("在庫少") >= 0 ? "stock-warn" : "");
+      return '<span class="' + cls + '">' + escapeHtml(val) + '</span>';
+    }
+    if (val === null || val === undefined) return "";
+    return escapeHtml(val);
+  }
+
+  function renderHead() {
+    thead.innerHTML = "";
+    const chkTh = document.createElement("th");
+    chkTh.style.width = "36px";
+    thead.appendChild(chkTh);
+    COLUMNS.forEach(function(col) {
+      const th = document.createElement("th");
+      if (col.type === "number" || col.type === "order") th.classList.add("num");
+      th.textContent = col.label;
+      const arrow = document.createElement("span");
+      arrow.className = "arrow";
+      th.appendChild(arrow);
+      if (col.key === sortKey) {
+        th.classList.add("sorted");
+        arrow.textContent = sortDir === "asc" ? "▲" : "▼";
+      } else {
+        arrow.textContent = "▼";
+      }
+      th.addEventListener("click", function() {
+        if (sortKey === col.key) {
+          sortDir = sortDir === "asc" ? "desc" : "asc";
+        } else {
+          sortKey = col.key;
+          sortDir = (col.type === "number" || col.type === "order") ? "desc" : "asc";
+        }
+        page = 1;
+        applySort();
+        renderHead();
+        renderBody();
+      });
+      thead.appendChild(th);
+    });
+  }
+
+  function applySort() {
+    sortedData = DATA.slice().sort(function(a, b) {
+      let av = a[sortKey], bv = b[sortKey];
+      if (av === null || av === undefined) av = "";
+      if (bv === null || bv === undefined) bv = "";
+      let cmp;
+      if (typeof av === "number" || typeof bv === "number") {
+        cmp = (Number(av) || 0) - (Number(bv) || 0);
+      } else {
+        cmp = String(av).localeCompare(String(bv), "ja");
+      }
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+  }
+
+  function totalPages() {
+    return Math.max(1, Math.ceil(sortedData.length / PAGE_SIZE));
+  }
+
+  function renderBody() {
+    const tp = totalPages();
+    if (page > tp) page = tp;
+    const startIdx = (page - 1) * PAGE_SIZE;
+    const pageRows = sortedData.slice(startIdx, startIdx + PAGE_SIZE);
+
+    tbody.innerHTML = "";
+    pageRows.forEach(function(row) {
+      const tr = document.createElement("tr");
+      const sku = String(row[SKU_COL] || "").trim();
+      const isChecked = sku === selectedSku;
+      if (isChecked) tr.classList.add("selected");
+      const chkTd = document.createElement("td");
+      chkTd.style.textAlign = "center";
+      chkTd.innerHTML = '<input type="checkbox" class="row-chk" ' + (isChecked ? "checked" : "") + ' tabindex="-1" style="pointer-events:none;">';
+      tr.appendChild(chkTd);
+      COLUMNS.forEach(function(col) {
+        const td = document.createElement("td");
+        if (col.type === "number" || col.type === "order") td.classList.add("num");
+        if (col.key === "商品名") td.classList.add("name-cell");
+        td.innerHTML = cellHtml(col, row[col.key]);
+        tr.appendChild(td);
+      });
+      tr.addEventListener("click", function() {
+        openModal(sku);
+      });
+      tbody.appendChild(tr);
+    });
+
+    pageinfo.textContent = "ページ " + page + " / " + tp;
+    totalinfo.textContent = "全 " + sortedData.length.toLocaleString("ja-JP") + " 件";
+    prevBtn.disabled = page <= 1;
+    nextBtn.disabled = page >= tp;
+  }
+
+  function buildChartSvg(points) {
+    const W = 700, H = 300, padL = 50, padR = 20, padT = 20, padB = 34;
+    const innerW = W - padL - padR, innerH = H - padT - padB;
+    const values = points.map(function(p) { return p.value; });
+    let vMin = Math.min.apply(null, values), vMax = Math.max.apply(null, values);
+    if (vMin === vMax) { vMin -= 1; vMax += 1; }
+    const pad = (vMax - vMin) * 0.1;
+    vMin -= pad; vMax += pad;
+
+    function xAt(i) {
+      if (points.length <= 1) return padL + innerW / 2;
+      return padL + (innerW * i) / (points.length - 1);
+    }
+    function yAt(v) {
+      return padT + innerH - ((v - vMin) / (vMax - vMin)) * innerH;
+    }
+
+    let gridSvg = "";
+    const gridN = 4;
+    for (let g = 0; g <= gridN; g++) {
+      const yy = padT + (innerH * g) / gridN;
+      const val = vMax - ((vMax - vMin) * g) / gridN;
+      gridSvg += '<line class="grid-line" x1="' + padL + '" y1="' + yy + '" x2="' + (W - padR) + '" y2="' + yy + '"></line>';
+      gridSvg += '<text class="axis-label" x="' + (padL - 6) + '" y="' + (yy + 3) + '" text-anchor="end">' + Math.round(val) + '</text>';
+    }
+
+    let pathD = "";
+    let pointsSvg = "";
+    let prevVal = null;
+    points.forEach(function(p, i) {
+      const x = xAt(i), y = yAt(p.value);
+      pathD += (i === 0 ? "M" : "L") + x + "," + y + " ";
+      let diffText;
+      if (prevVal !== null) {
+        const d = p.value - prevVal;
+        diffText = d > 0 ? ("+" + d) : String(d);
+      } else {
+        diffText = "—";
+      }
+      prevVal = p.value;
+      pointsSvg += '<circle cx="' + x + '" cy="' + y + '" r="4" fill="#4C78A8">' +
+        '<title>' + p.date + '\n在庫: ' + p.value + '（前回比 ' + diffText + '）</title></circle>';
+    });
+
+    const labelIdxs = points.length <= 8
+      ? points.map(function(_, i) { return i; })
+      : [0, Math.floor((points.length - 1) / 2), points.length - 1];
+    let xLabelsSvg = "";
+    labelIdxs.forEach(function(i) {
+      xLabelsSvg += '<text class="axis-label" x="' + xAt(i) + '" y="' + (H - padB + 16) + '" text-anchor="middle">' + points[i].date + '</text>';
+    });
+
+    return '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto;">' +
+      gridSvg +
+      '<path d="' + pathD + '" fill="none" stroke="#4C78A8" stroke-width="2"></path>' +
+      pointsSvg + xLabelsSvg +
+      '</svg>';
+  }
+
+  function openModal(sku) {
+    selectedSku = sku;
+    renderBody();
+    modalTitle.textContent = "📈 在庫推移（SKU: " + sku + "）";
+    const points = TREND[sku];
+    if (!points || points.length === 0) {
+      chartArea.innerHTML = '<div class="no-data">選択したSKUの在庫推移データがありません。</div>';
+    } else {
+      chartArea.innerHTML = buildChartSvg(points);
+    }
+    backdrop.classList.add("open");
+    document.body.setAttribute("tabindex", "-1");
+    document.body.focus();
+  }
+
+  function closeModal() {
+    backdrop.classList.remove("open");
+    selectedSku = null;
+    renderBody();
+  }
+
+  closeBtn.addEventListener("click", closeModal);
+  backdrop.addEventListener("click", function(e) {
+    if (e.target === backdrop) closeModal();
+  });
+  document.addEventListener("keydown", function(e) {
+    if (e.key === "Escape" && backdrop.classList.contains("open")) closeModal();
+  });
+
+  prevBtn.addEventListener("click", function() { if (page > 1) { page--; renderBody(); } });
+  nextBtn.addEventListener("click", function() { if (page < totalPages()) { page++; renderBody(); } });
+
+  applySort();
+  renderHead();
+  renderBody();
+})();
+</script>
+"""
+
+    html_out = (
+        html_template
+        .replace("__KEY__", key)
+        .replace("__TABLE_MAXH__", str(max(height - 120, 300)))
+        .replace("__DATA_JSON__", data_json)
+        .replace("__TREND_JSON__", trend_json)
+        .replace("__COLUMNS_JSON__", columns_json)
+        .replace("__SKU_COL_JSON__", json.dumps(sku_col, ensure_ascii=False))
+        .replace("__PAGE_SIZE__", str(int(page_size)))
+        .replace("__DEFAULT_SORT_KEY_JSON__", json.dumps(default_sort_key, ensure_ascii=False))
+        .replace("__DEFAULT_SORT_DIR_JSON__", json.dumps(default_sort_dir, ensure_ascii=False))
+    )
+
+    components.html(html_out, height=height, scrolling=False)
+
 
 
 # ==========================
@@ -1006,11 +1311,6 @@ def main():
 
     all_dates = sorted({fi["date"] for fi in file_infos})
     min_date, max_date = min(all_dates), max(all_dates)
-
-    if "selected_sku" not in st.session_state:
-        st.session_state["selected_sku"] = None
-    if "drawer_dismissed_sku" not in st.session_state:
-        st.session_state["drawer_dismissed_sku"] = None
 
     # ---------- 楽天在庫（RMS 在庫API 2.0・非ブロッキング背景取得） ----------
     # 自動取得は「このブラウザセッションでまだ取得していない時（＝開いた直後やF5直後）」のみ。
@@ -1480,35 +1780,39 @@ def main():
                                 unsafe_allow_html=True,
                             )
 
-                            col_cfg = {}
-                            if "画像" in df_view_r.columns:
-                                col_cfg["画像"] = st.column_config.ImageColumn("画像", width="small")
-                            if "商品名" in df_view_r.columns:
-                                col_cfg["商品名"] = st.column_config.TextColumn("商品名", width="medium")
-                            if "楽天在庫" in df_view_r.columns:
-                                col_cfg["楽天在庫"] = st.column_config.NumberColumn("楽天在庫", format="%d")
-                            if "Amazon FBA在庫" in df_view_r.columns:
-                                col_cfg["Amazon FBA在庫"] = st.column_config.NumberColumn("Amazon FBA在庫", format="%d")
-                            if "売上個数予想" in df_view_r.columns:
-                                col_cfg["売上個数予想"] = st.column_config.NumberColumn("売上個数予想", format="%d")
                             if not rakuten_stock_map and not rakuten_fetching:
                                 st.caption("ℹ️ 楽天在庫が空欄の場合は、`.streamlit/secrets.toml` に楽天APIの認証情報が未設定か、取得エラーが発生しています。")
                             if not amazon_stock_map and not amazon_fetching:
                                 st.caption("ℹ️ Amazon FBA在庫が空欄の場合は、`.streamlit/secrets.toml` にAmazon APIの認証情報が未設定か、取得エラーが発生しています。")
 
-                            event_r = st.dataframe(
-                                df_view_r,
-                                hide_index=True,
-                                use_container_width=True,
-                                selection_mode="single-row",
-                                on_select="rerun",
-                                column_config=col_cfg if col_cfg else None,
-                            )
+                            restock_columns = [
+                                {"key": "画像", "label": "画像", "type": "image"},
+                                {"key": "商品コード", "label": "商品コード", "type": "text"},
+                                {"key": "商品基本コード", "label": "商品基本コード", "type": "text"},
+                                {"key": "商品名", "label": "商品名", "type": "text"},
+                                {"key": "属性1名", "label": "属性1名", "type": "text"},
+                                {"key": "属性2名", "label": "属性2名", "type": "text"},
+                                {"key": "売上個数合計", "label": "売上個数合計", "type": "number"},
+                                {"key": "売上個数予想", "label": "売上個数予想", "type": "number"},
+                                {"key": "現在庫", "label": "現在庫", "type": "number"},
+                                {"key": "楽天在庫", "label": "楽天在庫", "type": "number"},
+                                {"key": "状態", "label": "状態", "type": "status"},
+                                {"key": "Amazon FBA在庫", "label": "Amazon FBA在庫", "type": "number"},
+                                {"key": "発注推奨数", "label": "発注推奨数", "type": "order"},
+                            ]
+                            restock_columns = [c for c in restock_columns if c["key"] in df_view_r.columns]
 
-                            # 行クリックでSKU取得 → ドロワー表示
-                            handle_row_selection_for_drawer(event_r, df_view_r)
-                            if st.session_state["selected_sku"]:
-                                show_stock_drawer(st.session_state["selected_sku"], df_restock)
+                            trend_map_r = compute_stock_trend_map(df_restock)
+
+                            render_interactive_sku_table(
+                                df_view_r,
+                                trend_map_r,
+                                restock_columns,
+                                key="restock",
+                                default_sort_key="発注推奨数",
+                                default_sort_dir="desc",
+                                page_size=100,
+                            )
 
     def render_sales_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, all_sales_map, amazon_stock_map, amazon_fetching, amazon_errors, amazon_fetched_at):
         # --- 売上個数一覧タブ ---
@@ -1766,30 +2070,33 @@ def main():
                 if not amazon_stock_map and not amazon_fetching:
                     st.caption("ℹ️ Amazon FBA在庫が空欄の場合は、`.streamlit/secrets.toml` にAmazon APIの認証情報が未設定か、取得エラーが発生しています。")
 
-                event = st.dataframe(
+                sales_columns = [
+                    {"key": "画像", "label": "画像", "type": "image"},
+                    {"key": "商品コード", "label": "商品コード", "type": "text"},
+                    {"key": "商品基本コード", "label": "商品基本コード", "type": "text"},
+                    {"key": "商品名", "label": "商品名", "type": "text"},
+                    {"key": "属性1名", "label": "属性1名", "type": "text"},
+                    {"key": "属性2名", "label": "属性2名", "type": "text"},
+                    {"key": "今年売上", "label": "今年売上", "type": "number"},
+                    {"key": "前年売上", "label": "前年売上", "type": "number"},
+                    {"key": "売上個数予想", "label": "売上個数予想", "type": "number"},
+                    {"key": "現在庫", "label": "現在庫", "type": "number"},
+                    {"key": "楽天在庫", "label": "楽天在庫", "type": "number"},
+                    {"key": "Amazon FBA在庫", "label": "Amazon FBA在庫", "type": "number"},
+                ]
+                sales_columns = [c for c in sales_columns if c["key"] in df_view.columns]
+
+                trend_map_s = compute_stock_trend_map(df_main)
+
+                render_interactive_sku_table(
                     df_view,
-                    hide_index=True,
-                    use_container_width=True,
-                    selection_mode="single-row",
-                    on_select="rerun",
-                    column_config={
-                        "画像":    st.column_config.ImageColumn("画像", width="small"),
-                        "商品名":  st.column_config.TextColumn("商品名", width="medium"),
-                        "今年売上": st.column_config.NumberColumn("今年売上", format="%d"),
-                        "前年売上": st.column_config.NumberColumn("前年売上", format="%d"),
-                        "売上個数予想": st.column_config.NumberColumn("売上個数予想", format="%d"),
-                        "現在庫":  st.column_config.NumberColumn("現在庫",   format="%d"),
-                        "楽天在庫": st.column_config.NumberColumn("楽天在庫", format="%d"),
-                        "Amazon FBA在庫": st.column_config.NumberColumn("Amazon FBA在庫", format="%d"),
-                    } if "画像" in df_view.columns else None,
+                    trend_map_s,
+                    sales_columns,
+                    key="sales",
+                    default_sort_key="今年売上",
+                    default_sort_dir="desc",
+                    page_size=100,
                 )
-
-                # 行クリックでSKU取得 → ドロワー表示
-                handle_row_selection_for_drawer(event, df_view)
-
-                # 右ドロワー（選択されている時だけ）
-                if st.session_state["selected_sku"]:
-                    show_stock_drawer(st.session_state["selected_sku"], df_main)
 
         # --------------------------------------------------
         # タブ2：在庫少商品（発注目安）
