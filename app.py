@@ -851,6 +851,12 @@ def compute_stock_trend_map(df_main: pd.DataFrame, sku_col: str = "商品コー�
     return trend_map
 
 
+def filter_trend_map(trend_map: dict, skus) -> dict:
+    """トレンドマップから、指定SKU群だけを抜き出す（不要なSKUの埋め込みを避けて軽量化）。"""
+    sku_set = {str(s).strip() for s in skus if pd.notna(s)}
+    return {k: v for k, v in trend_map.items() if k in sku_set}
+
+
 def render_interactive_sku_table(
     df_view: pd.DataFrame,
     trend_map: dict,
@@ -938,6 +944,16 @@ def render_interactive_sku_table(
     content:""; position:absolute; top:100%; left:50%; transform:translateX(-50%);
     border:5px solid transparent; border-top-color:#1a1d23;
   }
+  .period-bar { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:12px; }
+  .period-btn { border:1px solid #d8dde8; background:#fff; color:#444; border-radius:20px;
+    padding:5px 14px; font-size:12px; cursor:pointer; }
+  .period-btn.active { background:#4C78A8; border-color:#4C78A8; color:#fff; font-weight:700; }
+  .period-sep { color:#ccc; margin:0 2px; }
+  .period-custom { display:flex; align-items:center; gap:6px; font-size:12px; color:#555; }
+  .period-custom input[type="date"] { border:1px solid #d8dde8; border-radius:6px; padding:4px 6px; font-size:12px; }
+  .period-apply { border:1px solid #4C78A8; background:#fff; color:#4C78A8; border-radius:6px;
+    padding:4px 12px; font-size:12px; cursor:pointer; }
+  .period-apply:hover { background:#eef4fa; }
 </style>
 
 <div class="wrap">
@@ -959,6 +975,19 @@ def render_interactive_sku_table(
   <div class="modal-box">
     <button class="modal-close" id="closebtn___KEY__">✕ 閉じる</button>
     <h4 id="modaltitle___KEY__"></h4>
+    <div class="period-bar" id="periodbar___KEY__">
+      <button class="period-btn" data-preset="1">1ヶ月</button>
+      <button class="period-btn" data-preset="3">3ヶ月</button>
+      <button class="period-btn" data-preset="6">6ヶ月</button>
+      <button class="period-btn" data-preset="12">1年</button>
+      <span class="period-sep">|</span>
+      <span class="period-custom">
+        <input type="date" id="periodstart___KEY__">
+        <span>〜</span>
+        <input type="date" id="periodend___KEY__">
+        <button class="period-apply" id="periodapply___KEY__">適用</button>
+      </span>
+    </div>
     <div id="chartarea___KEY__"></div>
   </div>
 </div>
@@ -988,6 +1017,12 @@ def render_interactive_sku_table(
   const closeBtn = document.getElementById("closebtn_" + KEY);
   const modalTitle = document.getElementById("modaltitle_" + KEY);
   const chartArea = document.getElementById("chartarea_" + KEY);
+  const periodBar = document.getElementById("periodbar_" + KEY);
+  const periodStartInput = document.getElementById("periodstart_" + KEY);
+  const periodEndInput = document.getElementById("periodend_" + KEY);
+  const periodApplyBtn = document.getElementById("periodapply_" + KEY);
+
+  let currentPoints = [];
 
   function fmtNum(v) {
     if (v === null || v === undefined || v === "") return "—";
@@ -1206,16 +1241,70 @@ def render_interactive_sku_table(
     });
   }
 
+  function subtractMonths(dateStr, months) {
+    const d = new Date(dateStr + "T00:00:00");
+    d.setMonth(d.getMonth() - months);
+    return d.toISOString().slice(0, 10);
+  }
+
+  function drawChartForRange(startStr, endStr) {
+    const filtered = currentPoints.filter(function(p) { return p.date >= startStr && p.date <= endStr; });
+    if (filtered.length === 0) {
+      chartArea.innerHTML = '<div class="no-data">この期間の在庫推移データがありません。</div>';
+    } else {
+      chartArea.innerHTML = buildChartSvg(filtered);
+      wireChartHover();
+    }
+  }
+
+  function setActivePresetButton(months) {
+    periodBar.querySelectorAll(".period-btn").forEach(function(b) {
+      b.classList.toggle("active", months !== null && String(months) === b.dataset.preset);
+    });
+  }
+
+  function applyPreset(months) {
+    if (currentPoints.length === 0) return;
+    const maxDateStr = currentPoints[currentPoints.length - 1].date;
+    const minDateStr = currentPoints[0].date;
+    let startStr = subtractMonths(maxDateStr, months);
+    if (startStr < minDateStr) startStr = minDateStr;
+    periodStartInput.value = startStr;
+    periodEndInput.value = maxDateStr;
+    setActivePresetButton(months);
+    drawChartForRange(startStr, maxDateStr);
+  }
+
+  periodBar.querySelectorAll(".period-btn").forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      applyPreset(Number(btn.dataset.preset));
+    });
+  });
+
+  periodApplyBtn.addEventListener("click", function() {
+    const s = periodStartInput.value, e = periodEndInput.value;
+    if (!s || !e || s > e) return;
+    setActivePresetButton(null);
+    drawChartForRange(s, e);
+  });
+
   function openModal(sku) {
     selectedSku = sku;
     renderBody();
     modalTitle.textContent = "📈 在庫推移（SKU: " + sku + "）";
-    const points = TREND[sku];
-    if (!points || points.length === 0) {
+    currentPoints = TREND[sku] || [];
+    if (currentPoints.length === 0) {
+      periodBar.style.display = "none";
       chartArea.innerHTML = '<div class="no-data">選択したSKUの在庫推移データがありません。</div>';
     } else {
-      chartArea.innerHTML = buildChartSvg(points);
-      wireChartHover();
+      periodBar.style.display = "flex";
+      const minDateStr = currentPoints[0].date;
+      const maxDateStr = currentPoints[currentPoints.length - 1].date;
+      periodStartInput.min = minDateStr;
+      periodStartInput.max = maxDateStr;
+      periodEndInput.min = minDateStr;
+      periodEndInput.max = maxDateStr;
+      applyPreset(12); // デフォルト：過去1年
     }
     backdrop.classList.add("open");
     document.body.setAttribute("tabindex", "-1");
@@ -1363,6 +1452,13 @@ def main():
 
     all_dates = sorted({fi["date"] for fi in file_infos})
     min_date, max_date = min(all_dates), max(all_dates)
+
+    # ---------- グラフ用：直近1年分の在庫推移データ（タブの絞り込みとは独立） ----------
+    trend_start_date = max(min_date, (pd.Timestamp(max_date) - DateOffset(years=1)).date())
+    trend_files = [fi for fi in file_infos if trend_start_date <= fi["date"] <= max_date]
+    trend_paths = sorted(fi["path"] for fi in trend_files)
+    df_trend_history = load_tempostar_data(trend_paths) if trend_paths else pd.DataFrame()
+    full_trend_map = compute_stock_trend_map(df_trend_history)
 
     # ---------- 楽天在庫（RMS 在庫API 2.0・非ブロッキング背景取得） ----------
     # 自動取得は「このブラウザセッションでまだ取得していない時（＝開いた直後やF5直後）」のみ。
@@ -1854,7 +1950,7 @@ def main():
                             ]
                             restock_columns = [c for c in restock_columns if c["key"] in df_view_r.columns]
 
-                            trend_map_r = compute_stock_trend_map(df_restock)
+                            trend_map_r = filter_trend_map(full_trend_map, df_view_r["商品コード"])
 
                             render_interactive_sku_table(
                                 df_view_r,
@@ -2138,7 +2234,7 @@ def main():
                 ]
                 sales_columns = [c for c in sales_columns if c["key"] in df_view.columns]
 
-                trend_map_s = compute_stock_trend_map(df_main)
+                trend_map_s = filter_trend_map(full_trend_map, df_view["商品コード"])
 
                 render_interactive_sku_table(
                     df_view,
