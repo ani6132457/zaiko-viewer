@@ -18,6 +18,10 @@ from pandas.tseries.offsets import DateOffset
 import base64
 import io
 
+# 追加（発注履歴スプレッドシート連携用）
+import gspread
+from google.oauth2.service_account import Credentials as GoogleCredentials
+
 # 追加（ZOZO在庫チェック用。外部ライブラリを増やさないよう標準ライブラリのみで実装。
 #         ※ html モジュールは冒頭で import 済みのものを流用）
 
@@ -1425,6 +1429,82 @@ def inject_scroll_preserver():
     components.html(scroll_js, height=0)
 
 
+# ==========================
+# 発注履歴スプレッドシート連携
+# ==========================
+ORDER_HISTORY_SPREADSHEET_ID = "19ss5Y5QUjSwPM8KP1kDrjkDsbn1rEMWWqKwXIowOXr8"
+ORDER_HISTORY_EDIT_URL = f"https://docs.google.com/spreadsheets/d/{ORDER_HISTORY_SPREADSHEET_ID}/edit?gid=0#gid=0"
+
+GOOGLE_SHEETS_SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets.readonly",
+    "https://www.googleapis.com/auth/drive.readonly",
+]
+
+
+@st.cache_resource(show_spinner=False)
+def get_gspread_client():
+    """secrets.toml の [gcp_service_account] を使ってGoogle Sheets APIクライアントを作る。"""
+    try:
+        if "gcp_service_account" not in st.secrets:
+            return None, "st.secretsに [gcp_service_account] が見つかりません。secrets.tomlの設定をご確認ください。"
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        creds = GoogleCredentials.from_service_account_info(creds_dict, scopes=GOOGLE_SHEETS_SCOPES)
+        client = gspread.authorize(creds)
+        return client, None
+    except Exception as e:
+        return None, f"Google Sheets認証でエラーが発生しました: {e}"
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def load_order_history_sheet(spreadsheet_id: str, _cache_bust: int = 0) -> tuple:
+    """
+    発注履歴スプレッドシートの1枚目のシートを読み込んでDataFrameで返す。
+    戻り値: (DataFrame, エラーメッセージ or None)
+    """
+    client, err = get_gspread_client()
+    if client is None:
+        return pd.DataFrame(), err
+    try:
+        sh = client.open_by_key(spreadsheet_id)
+        ws = sh.get_worksheet(0)
+        records = ws.get_all_records()
+        df = pd.DataFrame(records)
+        return df, None
+    except gspread.exceptions.APIError as e:
+        return pd.DataFrame(), f"スプレッドシートの読み込みに失敗しました（APIエラー）: {e}"
+    except Exception as e:
+        return pd.DataFrame(), f"スプレッドシートの読み込みに失敗しました: {e}"
+
+
+def render_order_history_tab():
+    st.markdown("### 📋 発注履歴")
+    st.caption(
+        "このタブは発注履歴スプレッドシートのプレビューです。実際の編集（関数式の入力なども含む）は "
+        "Googleスプレッドシート本体で行ってください。"
+    )
+
+    col_a, col_b = st.columns([1, 5])
+    with col_a:
+        st.link_button("📝 編集する（新しいタブで開く）", ORDER_HISTORY_EDIT_URL, use_container_width=True)
+    with col_b:
+        if st.button("🔄 最新の内容に更新", key="order_history_refresh"):
+            st.session_state["order_history_cache_bust"] = st.session_state.get("order_history_cache_bust", 0) + 1
+
+    cache_bust = st.session_state.get("order_history_cache_bust", 0)
+    df_history, err = load_order_history_sheet(ORDER_HISTORY_SPREADSHEET_ID, cache_bust)
+
+    if err:
+        st.error(err)
+        return
+
+    if df_history.empty:
+        st.info("発注履歴データがまだありません（またはシートが空です）。")
+        return
+
+    st.caption(f"{len(df_history):,} 行を読み込みました（最大1分キャッシュ・手動更新ボタンで即時反映）")
+    st.dataframe(df_history, hide_index=True, use_container_width=True)
+
+
 def main():
     st.set_page_config(page_title="Tempostar 売上集計", layout="wide")
     inject_scroll_preserver()
@@ -2750,8 +2830,8 @@ def main():
                     )
 
     # タブ順：最初に「在庫少商品（発注目安）」を開く
-    tab_restock, tab_sales, tab_delivery, tab_stockcheck, tab_zozo = st.tabs(
-        ["発注推奨一覧", "売上個数一覧", "納品推奨数システム", "在庫下げチェック", "ZOZO在庫チェック"]
+    tab_restock, tab_sales, tab_delivery, tab_stockcheck, tab_zozo, tab_orderhistory = st.tabs(
+        ["発注推奨一覧", "売上個数一覧", "納品推奨数システム", "在庫下げチェック", "ZOZO在庫チェック", "発注履歴"]
     )
 
     with tab_restock:
@@ -2768,6 +2848,9 @@ def main():
 
     with tab_zozo:
         render_zozo_tab()
+
+    with tab_orderhistory:
+        render_order_history_tab()
 
 
 if __name__ == "__main__":
