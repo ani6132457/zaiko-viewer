@@ -1501,8 +1501,53 @@ def render_order_history_tab():
         st.info("発注履歴データがまだありません（またはシートが空です）。")
         return
 
-    st.caption(f"{len(df_history):,} 行を読み込みました（最大1分キャッシュ・手動更新ボタンで即時反映）")
-    st.dataframe(df_history, hide_index=True, use_container_width=True)
+    # ---------- 検索 ----------
+    search_text = st.text_input("🔎 検索（全列を対象に部分一致）", "", key="order_history_search")
+
+    # ---------- 列ごとの絞り込み ----------
+    with st.expander("🔽 列で絞り込み", expanded=False):
+        filter_cols = st.multiselect(
+            "絞り込みたい列を選択",
+            df_history.columns.tolist(),
+            key="order_history_filter_cols",
+        )
+        active_filters = {}
+        for col in filter_cols:
+            uniq_vals = df_history[col].dropna().unique().tolist()
+            if len(uniq_vals) > 300:
+                st.caption(f"「{col}」は値の種類が多すぎるため（{len(uniq_vals)}種）絞り込み対象外です。検索窓をご利用ください。")
+                continue
+            uniq_vals = sorted(uniq_vals, key=str)
+            selected = st.multiselect(f"「{col}」の値", uniq_vals, key=f"order_history_filter_val_{col}")
+            if selected:
+                active_filters[col] = selected
+
+    df_filtered = df_history
+    for col, vals in active_filters.items():
+        df_filtered = df_filtered[df_filtered[col].isin(vals)]
+
+    if search_text:
+        mask = df_filtered.apply(
+            lambda row: row.astype(str).str.contains(search_text, case=False, na=False, regex=False).any(),
+            axis=1,
+        )
+        df_filtered = df_filtered[mask]
+
+    if len(df_filtered) != len(df_history):
+        st.caption(f"{len(df_history):,} 行中 {len(df_filtered):,} 行を表示（最大1分キャッシュ・手動更新ボタンで即時反映）")
+    else:
+        st.caption(f"{len(df_history):,} 行を読み込みました（最大1分キャッシュ・手動更新ボタンで即時反映）")
+
+    # スクロールを二重にしないため、全行が収まる高さを動的に計算して表示する
+    row_height = 35
+    table_height = row_height * (len(df_filtered) + 1) + 3
+    st.dataframe(
+        df_filtered,
+        hide_index=True,
+        use_container_width=True,
+        height=table_height,
+    )
+
 
 
 def main():
