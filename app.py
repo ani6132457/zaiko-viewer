@@ -1476,6 +1476,7 @@ def load_order_history_sheet(spreadsheet_id: str, _cache_bust: int = 0) -> tuple
         return pd.DataFrame(), f"スプレッドシートの読み込みに失敗しました: {e}"
 
 
+@st.fragment
 def render_order_history_tab():
     st.markdown("### 📋 発注履歴")
     st.caption(
