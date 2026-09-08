@@ -372,6 +372,11 @@
 
 <main>
 
+  <div id="restore-banner" style="display:none;align-items:center;gap:10px;background:#eef4ff;border:1px solid #b6cdfa;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:13px;color:#1a3d7c;">
+    <span>💾 前回の作業内容（アップロード済みCSV・入力済みの納品数・グループ）を自動的に復元しました。</span>
+    <button onclick="clearSavedState()" style="margin-left:auto;border:1px solid #b6cdfa;background:#fff;color:#1a3d7c;border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer;white-space:nowrap;">🗑 保存データをクリア</button>
+  </div>
+
   <!-- アップロード -->
   <div class="upload-section" style="grid-template-columns:1fr 1fr 1fr 1fr 1fr">
     <div class="upload-card" id="card-inv" ondragover="onDrag(event,'inv')" ondragleave="offDrag('inv')" ondrop="onDrop(event,'inv')">
@@ -429,17 +434,21 @@
     </div>
     <div class="setting-item">
       <label>自社売上 集計開始日</label>
-      <input type="date" id="sales-start-date" onchange="updateCompanySales()">
+      <input type="date" id="sales-start-date" onchange="updateCompanySales(); autosaveState();">
     </div>
     <div class="setting-item">
       <label>自社売上 集計終了日</label>
-      <input type="date" id="sales-end-date" onchange="updateCompanySales()">
+      <input type="date" id="sales-end-date" onchange="updateCompanySales(); autosaveState();">
     </div>
   </div>
 
   <button class="run-btn" id="run-btn" onclick="runAnalysis()" disabled>
     ▶ 分析を実行
   </button>
+  <div style="display:flex;align-items:center;gap:10px;margin-top:6px;">
+    <span id="save-status" style="font-size:12px;color:#8a94a6;"></span>
+    <button onclick="clearSavedState()" style="margin-left:auto;border:1px solid var(--border-md);background:transparent;color:#8a94a6;border-radius:6px;padding:3px 10px;font-size:12px;cursor:pointer;">🗑 保存データをクリア</button>
+  </div>
 
   <!-- 結果 -->
   <div id="results">
@@ -606,7 +615,160 @@ let stockSourceLabel = '自社'; // Streamlit側から注入（例: "楽天(リ�
   }
 })();
 
-// ── 自社売上個数（期間指定・テンポスター連携）──
+// ── ローカル自動保存・復元（Streamlitの裏側での再読み込みでCSVや入力内容が消えるのを防ぐ）──
+const AUTOSAVE_KEY = 'nouhin_suishou_v5_autosave';
+
+let _autosaveDebounceTimer = null;
+let isRestoringState = false; // 復元処理中は自動保存をスキップする（復元途中の一時状態で上書きしないため）
+function autosaveStateDebounced(delay) {
+  if (isRestoringState) return;
+  clearTimeout(_autosaveDebounceTimer);
+  _autosaveDebounceTimer = setTimeout(autosaveState, delay || 600);
+}
+
+function autosaveState() {
+  if (isRestoringState) return;
+  try {
+    const deliveryMap = {};
+    data.forEach(r => {
+      if ((r.deliveryQty !== null && r.deliveryQty !== undefined) || r.group) {
+        deliveryMap[r.cs_no] = { deliveryQty: r.deliveryQty, group: r.group };
+      }
+    });
+    const state = {
+      rawInv, rawDel, rawOrd, rawItems,
+      masterMap, masterIdSeq,
+      groupList,
+      deliveryMap,
+      settings: {
+        baseDate: document.getElementById('base-date') ? document.getElementById('base-date').value : '',
+        recentDays: document.getElementById('recent-days') ? document.getElementById('recent-days').value : '',
+        targetDays: document.getElementById('target-days') ? document.getElementById('target-days').value : '',
+        salesStart: document.getElementById('sales-start-date') ? document.getElementById('sales-start-date').value : '',
+        salesEnd: document.getElementById('sales-end-date') ? document.getElementById('sales-end-date').value : '',
+      },
+      savedAt: new Date().toISOString(),
+    };
+    localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(state));
+    showSaveStatus(state.savedAt, false);
+  } catch (e) {
+    console.warn('自動保存に失敗しました:', e);
+    showSaveStatus(null, true);
+  }
+}
+
+function showSaveStatus(isoStr, failed) {
+  const el = document.getElementById('save-status');
+  if (!el) return;
+  if (failed) {
+    el.textContent = '⚠ データが大きすぎるなどの理由で自動保存できませんでした';
+    el.style.color = '#dc2626';
+    return;
+  }
+  if (!isoStr) { el.textContent = ''; return; }
+  const d = new Date(isoStr);
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  const ss = String(d.getSeconds()).padStart(2, '0');
+  el.textContent = `💾 自動保存済み（最終: ${hh}:${mm}:${ss}）`;
+  el.style.color = '#8a94a6';
+}
+
+function clearSavedState() {
+  if (!confirm('このブラウザに保存されている自動復元用データを削除します。今の画面の内容はそのまま残ります。よろしいですか？')) return;
+  try { localStorage.removeItem(AUTOSAVE_KEY); } catch (e) {}
+  showSaveStatus(null, false);
+  const banner = document.getElementById('restore-banner');
+  if (banner) banner.style.display = 'none';
+}
+
+function restoreAutosavedState() {
+  let raw;
+  try {
+    raw = localStorage.getItem(AUTOSAVE_KEY);
+  } catch (e) {
+    return;
+  }
+  if (!raw) return;
+
+  let state;
+  try {
+    state = JSON.parse(raw);
+  } catch (e) {
+    return;
+  }
+  if (!state) return;
+
+  isRestoringState = true;
+
+  rawInv = state.rawInv || null;
+  rawDel = state.rawDel || null;
+  rawOrd = state.rawOrd || null;
+  rawItems = state.rawItems || null;
+
+  const markLoaded = (type, label) => {
+    const card = document.getElementById('card-' + type);
+    const status = document.getElementById('status-' + type);
+    if (card) card.classList.add('loaded');
+    if (status) status.textContent = '✓ ' + label;
+  };
+  if (rawInv) markLoaded('inv', '復元済み（自動保存より）');
+  if (rawDel) markLoaded('del', '復元済み（自動保存より）');
+  if (rawOrd) markLoaded('ord', '復元済み（自動保存より）');
+  if (rawItems) markLoaded('items', '復元済み（自動保存より）');
+
+  // SKUマスターはStreamlit側から自動注入されている場合はそちらを優先し、
+  // 注入がない場合のみ自動保存データから復元する
+  const hasInjectedMaster = Array.isArray(window.__SKU_MASTER__) && window.__SKU_MASTER__.length > 0;
+  if (!hasInjectedMaster && Array.isArray(state.masterMap) && state.masterMap.length > 0) {
+    masterMap = state.masterMap;
+    masterIdSeq = state.masterIdSeq || masterMap.length;
+    markLoaded('master', `復元済み（${masterMap.length}件・自動保存より）`);
+    renderMaster();
+  }
+
+  if (state.settings) {
+    const setVal = (id, v) => { const el = document.getElementById(id); if (el && v) el.value = v; };
+    setVal('base-date', state.settings.baseDate);
+    setVal('recent-days', state.settings.recentDays);
+    setVal('target-days', state.settings.targetDays);
+    setVal('sales-start-date', state.settings.salesStart);
+    setVal('sales-end-date', state.settings.salesEnd);
+  }
+
+  if (Array.isArray(state.groupList) && state.groupList.length > 0) {
+    groupList = state.groupList;
+  }
+
+  checkReady();
+
+  let restored = false;
+  if (rawInv && rawDel) {
+    runAnalysis();
+    const deliveryMap = state.deliveryMap || {};
+    data.forEach(r => {
+      const saved = deliveryMap[r.cs_no];
+      if (saved) {
+        r.deliveryQty = (saved.deliveryQty !== undefined) ? saved.deliveryQty : null;
+        r.group = saved.group || null;
+      }
+    });
+    updateDeliveryCount();
+    renderGroupPanel();
+    render();
+    restored = true;
+  }
+
+  if (restored) {
+    const banner = document.getElementById('restore-banner');
+    if (banner) banner.style.display = 'flex';
+  }
+  if (state.savedAt) showSaveStatus(state.savedAt, false);
+
+  isRestoringState = false;
+}
+
+
 function sumSales(sku, startStr, endStr) {
   if (!sku || !salesMap[sku]) return null;
   const s = startStr.replace(/-/g, '');
@@ -820,6 +982,7 @@ function deleteSelectedDelivery() {
   selectedForDelete.clear();
   renderGroupPanel();
   render();
+  autosaveState();
 }
 
 function deleteAllDelivery() {
@@ -833,6 +996,7 @@ function deleteAllDelivery() {
   selectedForDelete.clear();
   renderGroupPanel();
   render();
+  autosaveState();
 }
 
 function updateDelivery(id, val) {
@@ -841,6 +1005,7 @@ function updateDelivery(id, val) {
   const n = val === '' ? null : Math.max(0, parseInt(val) || 0);
   row.deliveryQty = n;
   updateDeliveryCount();
+  autosaveStateDebounced();
 }
 
 function updateDeliveryCount() {
@@ -879,6 +1044,7 @@ function loadFile(type, file) {
     document.getElementById('card-'+type).classList.add('loaded');
     document.getElementById('status-'+type).textContent = '✓ ' + file.name;
     checkReady();
+    autosaveState();
   };
   reader.readAsText(file, encoding);
 }
@@ -943,6 +1109,7 @@ function loadMasterFile(file) {
     document.getElementById('card-master').classList.add('loaded');
     document.getElementById('status-master').textContent = '✓ ' + file.name + `（${masterMap.length}件）`;
     renderMaster();
+    autosaveState();
   };
   reader.readAsArrayBuffer(file);
 }
@@ -950,16 +1117,19 @@ function loadMasterFile(file) {
 function addMasterRow() {
   masterMap.push({ _id: 'm' + (masterIdSeq++), cs_no: '', sku: '' });
   renderMaster();
+  autosaveState();
 }
 
 function updateMasterCell(id, field, value) {
   const row = masterMap.find(m => m._id === id);
   if (row) row[field] = value;
+  autosaveStateDebounced();
 }
 
 function deleteMasterRow(id) {
   masterMap = masterMap.filter(m => m._id !== id);
   renderMaster();
+  autosaveState();
 }
 
 function sortMaster(key) {
@@ -1186,6 +1356,7 @@ function runAnalysis() {
   updateCompanySales(false);
   renderGroupPanel();
   render();
+  autosaveState();
 
   // スクロール
   setTimeout(() => document.getElementById('results').scrollIntoView({behavior:'smooth', block:'start'}), 100);
@@ -1470,6 +1641,7 @@ function createGroup() {
   groupList.push(name);
   input.value = '';
   renderGroupPanel();
+  autosaveState();
 }
 
 function deleteGroupDef(name) {
@@ -1479,6 +1651,7 @@ function deleteGroupDef(name) {
   if (groupFilter === name) groupFilter = null;
   renderGroupPanel();
   render();
+  autosaveState();
 }
 
 function assignSelectedToGroup() {
@@ -1494,6 +1667,7 @@ function assignSelectedToGroup() {
   selectedForDelete.clear();
   renderGroupPanel();
   render();
+  autosaveState();
 }
 
 function toggleGroupFilter(name) {
@@ -1566,6 +1740,9 @@ function renderGroupPanel() {
   }
   chipsEl.innerHTML = html;
 }
+
+// ── ページ読み込み時に自動保存データがあれば復元 ──
+restoreAutosavedState();
 </script>
 </body>
 </html>
