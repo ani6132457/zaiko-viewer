@@ -1872,6 +1872,65 @@ def main():
     box-shadow: 0 1px 3px rgba(0,0,0,0.05);
 }
 .metric-chip strong { color: #1a1d23; font-size: 16px; margin-left: 4px; }
+
+/* ===== 在庫アラートタブ専用スタイル（他タブと視覚的に区別するため） ===== */
+.alert-hero {
+    background: linear-gradient(135deg, #fff5f2 0%, #fff0e6 100%);
+    border: 1px solid #f3c9b8;
+    border-left: 6px solid #e0562f;
+    border-radius: 12px;
+    padding: 18px 22px;
+    margin-bottom: 18px;
+    box-shadow: 0 2px 8px rgba(224,86,47,0.10);
+}
+.alert-hero h2 {
+    margin: 0 0 6px 0;
+    font-size: 21px;
+    font-weight: 800;
+    color: #b23a17;
+    letter-spacing: 0.01em;
+}
+.alert-hero p {
+    margin: 0;
+    font-size: 13px;
+    color: #8a5340;
+}
+.alert-filter-card {
+    background: #fffaf8;
+    border: 1px solid #f3c9b8;
+    border-radius: 12px;
+    padding: 20px 18px 24px 18px;
+    margin-bottom: 16px;
+    box-shadow: 0 1px 4px rgba(224,86,47,0.07);
+}
+.alert-filter-card h3 {
+    margin: 0 0 14px 0;
+    font-size: 15px;
+    font-weight: 700;
+    color: #b23a17;
+    letter-spacing: 0.01em;
+}
+.alert-metric-bar { display: flex; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+.alert-metric-chip {
+    background: #fff5f2;
+    border: 1px solid #f3c9b8;
+    border-radius: 8px;
+    padding: 8px 16px;
+    font-size: 13px;
+    color: #8a5340;
+    box-shadow: 0 1px 3px rgba(224,86,47,0.06);
+}
+.alert-metric-chip strong { color: #b23a17; font-size: 16px; margin-left: 4px; }
+.alert-empty-ok {
+    background: #f0faf3;
+    border: 1px solid #bfe6cb;
+    border-left: 6px solid #2e9d55;
+    border-radius: 12px;
+    padding: 16px 20px;
+    color: #1f6b3a;
+    font-weight: 600;
+    margin-top: 8px;
+}
 </style>
 """,
         unsafe_allow_html=True,
@@ -2145,10 +2204,18 @@ def main():
     def render_alert_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, amazon_stock_map, amazon_fetching, amazon_errors, amazon_fetched_at):
         # --- 在庫アラートタブ ---
         # 発注推奨一覧タブの絞り込み条件とは独立して、全SKUから在庫切れ間近の商品を拾う。
+        st.markdown(
+            '<div class="alert-hero">'
+            '<h2>⚠️ 在庫アラート</h2>'
+            '<p>在庫切れ・在庫切れ間近のSKUを一覧で確認できます。他のタブとは独立した絞り込み条件です。</p>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
         left, right = st.columns([1, 3])
 
         with left:
-            st.markdown('<div class="filter-card"><h3>🔍 絞り込み条件</h3>', unsafe_allow_html=True)
+            st.markdown('<div class="alert-filter-card"><h3>🔍 絞り込み条件</h3>', unsafe_allow_html=True)
             st.caption(f"データ最終日：{max_date}")
 
             with st.form("alert_form"):
@@ -2182,9 +2249,6 @@ def main():
             render_rakuten_refresh_control(
                 rakuten_fetched_at, rakuten_fetching, rakuten_errors, key="alert"
             )
-            render_amazon_refresh_control(
-                amazon_fetched_at, amazon_fetching, amazon_errors, key="alert"
-            )
 
             if submit_alert:
                 st.session_state["alert_applied"] = True
@@ -2216,7 +2280,7 @@ def main():
                                 cond_a |= df_alert[col].astype(str).str.contains(keyword_a, case=False, na=False)
                         df_alert = df_alert[cond_a]
 
-                    # 在庫は全SKUを対象にするため、更新理由に関わらず全行から現在庫を取る
+                    # 在庫は全SKUを対象にするため、更新理由に関わらず全行から現在庫（テンポスター側）を取る
                     if "変動後" in df_alert.columns:
                         stock_group_a = (
                             df_alert.groupby("商品コード", dropna=False)["変動後"]
@@ -2263,14 +2327,46 @@ def main():
                     alert_view["現在庫"] = pd.to_numeric(alert_view["現在庫"], errors="coerce").fillna(0).astype(int)
                     alert_view["売上個数合計"] = pd.to_numeric(alert_view["売上個数合計"], errors="coerce").fillna(0).astype(int)
 
-                    # 楽天在庫・Amazon FBA在庫
-                    alert_view["楽天在庫"] = (
-                        alert_view["商品コード"].astype(str).str.strip().map(rakuten_stock_map)
-                    )
-                    alert_view["Amazon FBA在庫"] = (
+                    # 楽天(リアルタイム)在庫があればそちらを優先し、無ければテンポスターの現在庫にフォールバックする
+                    # （納品推奨数システムの「楽天リアルタイム在庫」と同じ考え方で、表示は1つの「現在庫」列に統合する）
+                    rakuten_lookup_a = {}
+                    if rakuten_stock_map:
+                        rakuten_lookup_a = {str(k).strip(): v for k, v in rakuten_stock_map.items() if v is not None}
+
+                    tempostar_stock_before_merge_a = alert_view.set_index(
                         alert_view["商品コード"].astype(str).str.strip()
-                        .map(lambda k: amazon_stock_map.get(k, {}).get("fulfillable"))
+                    )["現在庫"].to_dict()
+
+                    def _merge_stock(row):
+                        key = str(row["商品コード"]).strip()
+                        if key in rakuten_lookup_a:
+                            return rakuten_lookup_a[key]
+                        return row["現在庫"]
+
+                    alert_view["現在庫"] = alert_view.apply(_merge_stock, axis=1)
+                    alert_view["現在庫"] = pd.to_numeric(alert_view["現在庫"], errors="coerce").fillna(0).astype(int)
+
+                    fallback_count_a = sum(
+                        1 for k in tempostar_stock_before_merge_a if k not in rakuten_lookup_a
                     )
+                    if rakuten_lookup_a:
+                        stock_source_label_a = "楽天(リアルタイム)"
+                        if fallback_count_a > 0:
+                            st.caption(
+                                f"ℹ️ 現在庫は楽天(リアルタイム)在庫を優先表示しています。"
+                                f"楽天側に在庫データがない{fallback_count_a}SKUは、テンポスターの在庫で補完しています。"
+                            )
+                        else:
+                            st.caption("ℹ️ 現在庫は楽天(リアルタイム)在庫を表示しています。")
+                    else:
+                        stock_source_label_a = "テンポスター(フォールバック)"
+                        if rakuten_fetching:
+                            st.info("📦 楽天在庫を裏で取得中です。取得完了までテンポスターの在庫データで表示しています。")
+                        elif rakuten_errors:
+                            st.warning(
+                                "楽天在庫の取得に失敗したため、テンポスターの在庫データで表示しています。"
+                                f"（エラー: {rakuten_errors[0]}）"
+                            )
 
                     img_master_a = load_image_master()
                     base_url_a = "https://image.rakuten.co.jp/hype/cabinet"
@@ -2298,8 +2394,26 @@ def main():
                     is_low = alert_view["_days_num"].notna() & (alert_view["_days_num"] <= alert_days)
                     alert_view = alert_view[is_out | is_low].copy()
 
+                    # 在庫切れSKUについては、実際に在庫が0になった日付をトレンド履歴から逆算する
+                    # （直近1年分のトレンドデータを使うため、アラート集計期間より過去まで遡って判定できる）
+                    trend_map_a = filter_trend_map(full_trend_map, alert_view["商品コード"])
+
+                    def _find_zero_date(sku):
+                        points = trend_map_a.get(str(sku).strip(), [])
+                        zero_date = None
+                        for p in reversed(points):
+                            if p["value"] <= 0:
+                                zero_date = p["date"]
+                            else:
+                                break
+                        return zero_date
+
                     def _alert_message(row):
                         if row["現在庫"] <= 0:
+                            zero_date = _find_zero_date(row["商品コード"])
+                            if zero_date:
+                                md = pd.to_datetime(zero_date).strftime("%m/%d")
+                                return f"{md}に在庫が無くなりました"
                             return "在庫が無くなりました"
                         days = row["_days_num"]
                         if days is not None and days <= alert_days:
@@ -2308,16 +2422,28 @@ def main():
 
                     def _alert_date(row):
                         if row["現在庫"] <= 0:
-                            return end_a
+                            zero_date = _find_zero_date(row["商品コード"])
+                            if zero_date:
+                                return pd.to_datetime(zero_date).date()
+                            return end_a  # トレンド履歴が無く特定できない場合のフォールバック
                         days = row["_days_num"]
                         if days is None:
                             return None
                         return end_a + pd.Timedelta(days=days)
 
-                    st.info(f"アラート条件：現在庫が0以下、または現在の売れ行き（直近{alert_months}ヶ月）で在庫残日数が{alert_days}日以内の商品")
+                    st.markdown(
+                        f'<div class="alert-metric-bar" style="margin-top:10px;">'
+                        f'<div class="alert-metric-chip">🔎 アラート条件<strong style="font-size:13px;">'
+                        f'現在庫が0以下、または直近{alert_months}ヶ月の売れ行きで在庫残{alert_days}日以内</strong></div>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
 
                     if alert_view.empty:
-                        st.success("✅ 対象の商品はありません。")
+                        st.markdown(
+                            '<div class="alert-empty-ok">✅ 対象の商品はありません。</div>',
+                            unsafe_allow_html=True,
+                        )
                     else:
                         alert_view["アラート"] = alert_view.apply(_alert_message, axis=1)
                         alert_view["予測在庫切れ日"] = alert_view.apply(_alert_date, axis=1)
@@ -2327,17 +2453,17 @@ def main():
 
                         display_cols_a = [
                             "画像", "商品コード", "商品基本コード", "商品名", "属性1名", "属性2名",
-                            "売上個数合計", "現在庫", "在庫残日数", "楽天在庫", "Amazon FBA在庫",
+                            "売上個数合計", "現在庫",
                             "予測在庫切れ日", "アラート",
                         ]
                         display_cols_a = [c for c in display_cols_a if c in alert_view.columns]
                         df_view_a = alert_view[display_cols_a].copy()
 
                         st.markdown(
-                            f'<div class="metric-bar">'
-                            f'<div class="metric-chip">対象SKU数<strong>{len(df_view_a):,}</strong></div>'
-                            f'<div class="metric-chip">集計期間<strong>{start_a} ～ {end_a}</strong></div>'
-                            f'<div class="metric-chip">指定日数<strong>{alert_days}日以内</strong></div>'
+                            f'<div class="alert-metric-bar">'
+                            f'<div class="alert-metric-chip">対象SKU数<strong>{len(df_view_a):,}</strong></div>'
+                            f'<div class="alert-metric-chip">集計期間<strong>{start_a} ～ {end_a}</strong></div>'
+                            f'<div class="alert-metric-chip">指定日数<strong>{alert_days}日以内</strong></div>'
                             f'</div>',
                             unsafe_allow_html=True,
                         )
@@ -2351,9 +2477,6 @@ def main():
                             {"key": "属性2名", "label": "属性2名", "type": "text"},
                             {"key": "売上個数合計", "label": "売上個数合計", "type": "number"},
                             {"key": "現在庫", "label": "現在庫", "type": "number"},
-                            {"key": "在庫残日数", "label": "在庫残日数", "type": "text"},
-                            {"key": "楽天在庫", "label": "楽天在庫", "type": "number"},
-                            {"key": "Amazon FBA在庫", "label": "Amazon FBA在庫", "type": "number"},
                             {"key": "予測在庫切れ日", "label": "予測在庫切れ日", "type": "text"},
                             {"key": "アラート", "label": "アラート", "type": "alert"},
                         ]
@@ -2363,8 +2486,6 @@ def main():
                             df_view_a["予測在庫切れ日"] = df_view_a["予測在庫切れ日"].apply(
                                 lambda d: d.strftime("%Y-%m-%d") if pd.notnull(d) else ""
                             )
-
-                        trend_map_a = filter_trend_map(full_trend_map, df_view_a["商品コード"])
 
                         render_interactive_sku_table(
                             df_view_a,
