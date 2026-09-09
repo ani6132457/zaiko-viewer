@@ -554,7 +554,20 @@
 // ── 状態 ──
 let rawInv = null, rawDel = null, rawOrd = null, rawItems = null;
 let data = [];
-let selectedStatuses = new Set();
+let selectedStatusesByMode = { all: new Set(), delivery: new Set() }; // タブ（全件/納品数入力済み）ごとに独立させる
+function currentStatusSet() {
+  return selectedStatusesByMode[viewMode] || selectedStatusesByMode.all;
+}
+function syncStatusCheckboxesToMode() {
+  const set = currentStatusSet();
+  document.querySelectorAll('.status-check').forEach(el => {
+    const status = el.dataset.status;
+    const checked = set.has(status);
+    el.classList.toggle('active', checked);
+    const input = el.querySelector('input');
+    if (input) input.checked = checked;
+  });
+}
 let currentPage = 1;
 const PER_PAGE = 100;
 let sortKey = 'recommend', sortDir = -1; // デフォルト: 推奨納品数 降順
@@ -803,8 +816,9 @@ function switchTab(mode) {
   document.getElementById('group-panel').style.display = mode === 'delivery' ? 'flex' : 'none';
   groupFilter = null;
   selectedForDelete.clear();
-  if (mode === 'delivery') renderGroupPanel();
   if (mode === 'master') { renderMaster(); return; }
+  syncStatusCheckboxesToMode();
+  if (mode === 'delivery') renderGroupPanel();
   currentPage = 1;
   render();
 }
@@ -1348,7 +1362,8 @@ function runAnalysis() {
     });
   }
 
-  selectedStatuses.clear();
+  selectedStatusesByMode.all.clear();
+  selectedStatusesByMode.delivery.clear();
   document.querySelectorAll('.status-check').forEach(el => el.classList.remove('active'));
   currentPage = 1;
 
@@ -1422,7 +1437,7 @@ function getFiltered() {
   let rows = data.filter(r => {
     if (q && !r.name.toLowerCase().includes(q) && !r.cs_no.toLowerCase().includes(q) && !r.color.toLowerCase().includes(q) && !r.maker_no.toLowerCase().includes(q)) return false;
     if (cat && r.category !== cat) return false;
-    if (selectedStatuses.size > 0 && !selectedStatuses.has(getStatusLabel(r))) return false;
+    if (currentStatusSet().size > 0 && !currentStatusSet().has(getStatusLabel(r))) return false;
     if (viewMode === 'delivery' && !(r.deliveryQty > 0)) return false;
     if (viewMode === 'delivery' && groupFilter !== null) {
       if (groupFilter === '__none__') { if (r.group) return false; }
@@ -1448,11 +1463,12 @@ function getFiltered() {
 
 function toggleStatus(status, checkbox) {
   const label = checkbox.closest('.status-check');
+  const set = currentStatusSet();
   if (checkbox.checked) {
-    selectedStatuses.add(status);
+    set.add(status);
     label.classList.add('active');
   } else {
-    selectedStatuses.delete(status);
+    set.delete(status);
     label.classList.remove('active');
   }
   currentPage = 1;
@@ -1460,7 +1476,7 @@ function toggleStatus(status, checkbox) {
 }
 
 function resetStatus() {
-  selectedStatuses.clear();
+  currentStatusSet().clear();
   document.querySelectorAll('.status-check').forEach(el => {
     el.classList.remove('active');
     el.querySelector('input').checked = false;

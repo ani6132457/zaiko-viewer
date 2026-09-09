@@ -2743,9 +2743,14 @@ def main():
             f"売上データ {len(sales_map)}SKU分（期間は画面上部で指定可） ｜ "
             f"売上個数予想：{forecast_start_d} ～ {forecast_end_d}"
         )
-        # iframe自体のスクロールバーは出さず、アプリ全体のスクロールと
-        # テーブル内（商品行）のスクロールの2つだけになるようにする
-        components.html(html_content, height=1700, scrolling=False)
+        # 固定height + scrolling=False だと、内容が高さを超えたときに
+        # 下側が完全に見切れて（スクロールしても）復帰できなくなるため、
+        # コンテンツの高さに自動追従する st.iframe（対応していれば）を使う。
+        # 未対応の古いStreamlitでは、フォールバックとして高さに余裕を持たせたcomponents.htmlを使う。
+        if hasattr(st, "iframe"):
+            st.iframe(html_content, height="content", width="stretch")
+        else:
+            components.html(html_content, height=2600, scrolling=True)
 
     def render_stock_check_tab():
         # --- 在庫下げチェックタブ ---
