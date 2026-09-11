@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>在庫下げチェック</title>
+<script src="https://cdn.jsdelivr.net/npm/encoding-japanese@2.2.0/encoding.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Meiryo, sans-serif;
+    color: #1a1d23;
+    background: #fff;
+  }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 4px 4px 24px 4px; }
+  h1 { font-size: 19px; margin: 0 0 6px 0; }
+  .caption { font-size: 13px; color: #666; margin-bottom: 16px; line-height: 1.6; }
+
+  .upload-section {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 14px;
+  }
+  .upload-card {
+    border: 1.5px dashed #d8dde8;
+    border-radius: 10px;
+    padding: 14px 16px;
+    background: #fafbfc;
+  }
+  .upload-card.loaded { border-color: #4C78A8; background: #f2f6fb; }
+  .upload-card label.title { display:block; font-size:13px; font-weight:700; margin-bottom:8px; color:#333; }
+  .upload-card input[type="file"] { font-size: 12px; width: 100%; }
+  .upload-card .status { font-size: 12px; color: #4C78A8; margin-top: 6px; font-weight:600; }
+
+  .run-btn {
+    display: block;
+    width: 100%;
+    padding: 12px;
+    font-size: 15px;
+    font-weight: 700;
+    color: #fff;
+    background: linear-gradient(135deg,#4C78A8,#375a7f);
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+    margin-bottom: 20px;
+  }
+  .run-btn:hover { opacity: 0.9; }
+  .run-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .section { display:none; }
+  .section.visible { display:block; }
+
+  .user-card {
+    background: #fafbfc;
+    border: 1px solid #e0e4ea;
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-bottom: 16px;
+  }
+  .user-card h3 { margin: 0 0 10px 0; font-size: 14px; }
+  .user-btns { margin-bottom: 10px; }
+  .user-btns button {
+    border: 1px solid #d8dde8; background:#fff; border-radius:6px;
+    padding: 4px 12px; font-size: 12px; cursor: pointer; margin-right: 8px;
+  }
+  .user-grid { display:grid; grid-template-columns: repeat(4, 1fr); gap: 6px 12px; }
+  .user-grid label { font-size: 13px; display:flex; align-items:center; gap:6px; cursor:pointer; }
+
+  .metric-bar { display: flex; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+  .metric-chip {
+    background: #ffffff; border: 1px solid #e0e4ea; border-radius: 8px;
+    padding: 8px 16px; font-size: 13px; color: #444; box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  }
+  .metric-chip strong { color: #1a1d23; font-size: 16px; margin-left: 4px; }
+  .metric-chip-danger {
+    background: #fff0ee; border: 1px solid #f2b3ac; border-radius: 8px;
+    padding: 8px 16px; font-size: 13px; color: #7a2b20; box-shadow: 0 1px 3px rgba(192,57,43,0.08);
+  }
+  .metric-chip-danger strong { color: #c0392b; font-size: 16px; margin-left: 4px; }
+
+  .banner-ok {
+    background: #f0faf3; border: 1px solid #bfe6cb; border-left: 6px solid #2e9d55;
+    border-radius: 10px; padding: 14px 18px; margin: 10px 0 16px 0; color: #1f6b3a;
+    font-weight: 700; font-size: 14px;
+  }
+  .banner-error {
+    background: #fdecea; border: 1px solid #f2b3ac; border-left: 6px solid #c0392b;
+    border-radius: 10px; padding: 14px 18px; margin: 10px 0 16px 0; color: #7a2b20;
+    font-weight: 700; font-size: 14px;
+  }
+
+  h4 { font-size: 15px; margin: 18px 0 8px 0; }
+  h5 { font-size: 13px; margin: 16px 0 4px 0; color:#444; }
+  .subcaption { font-size: 12px; color: #888; margin-bottom: 8px; }
+
+  table.sku-table { border-collapse: collapse; font-size: 13px; width: 100%; background:#fff; }
+  .sku-table th {
+    background:#f0f2f7; color:#444; font-size:12px; font-weight:700;
+    padding:8px 10px; border-bottom:2px solid #d8dde8; white-space:nowrap; text-align:left;
+  }
+  .sku-table td { padding:7px 10px; border-bottom:1px solid #eef0f5; vertical-align:middle; color:#222; }
+  .sku-table td.num, .sku-table th.num { text-align:right; font-variant-numeric: tabular-nums; }
+  .table-scroll { overflow-x:auto; border:1px solid #eef0f5; border-radius:8px; margin-bottom:10px; }
+  .tag-diff { background:#fff0ee; color:#c0392b; border-radius:12px; padding:2px 10px; font-size:12px; font-weight:700; }
+  .tag-unmapped { background:#fff7e6; color:#a3690a; border-radius:12px; padding:2px 10px; font-size:12px; font-weight:700; }
+
+  details.sku-detail {
+    border:1px solid #e0e4ea; border-radius:8px; margin-bottom:8px; background:#fff;
+  }
+  details.sku-detail summary {
+    padding: 10px 14px; cursor:pointer; font-size:13px; font-weight:600; color:#333;
+    list-style: none;
+  }
+  details.sku-detail summary::-webkit-details-marker { display:none; }
+  details.sku-detail summary:before { content: "▾ "; color:#888; }
+  details.sku-detail[open] summary:before { content: "▾ "; }
+  details.sku-detail .detail-body { padding: 0 14px 14px 14px; }
+
+  details.normal-list {
+    border:1px solid #e0e4ea; border-radius:8px; margin-top:14px; background:#fafbfc;
+  }
+  details.normal-list summary { padding: 10px 14px; cursor:pointer; font-size:13px; font-weight:600; }
+  details.normal-list .detail-body { padding: 0 14px 14px 14px; }
+
+  .empty-note { color:#888; font-size:13px; padding: 10px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🔍 在庫下げチェック</h1>
+  <div class="caption">
+    納品書CSVと変動ログCSVをアップロードして「実行」を押すと、SKUマスターでCS品番⇔SKUを紐付けたうえで、
+    選択したユーザーの在庫操作が納品数どおりに反映されているかをチェックします。
+    （納品日と在庫操作日が異なる前提のため、日付は比較に使いません）
+  </div>
+
+  <div class="upload-section">
+    <div class="upload-card" id="card-delivery">
+      <label class="title">① 納品書CSV（複数選択可）</label>
+      <input type="file" id="file-delivery" accept=".csv" multiple>
+      <div class="status" id="status-delivery"></div>
+    </div>
+    <div class="upload-card" id="card-log">
+      <label class="title">② 変動ログCSV（複数選択可）</label>
+      <input type="file" id="file-log" accept=".csv" multiple>
+      <div class="status" id="status-log"></div>
+    </div>
+  </div>
+
+  <button class="run-btn" id="run-btn" onclick="runCheck()" disabled>▶ 実行</button>
+
+  <div id="master-warning" class="banner-error" style="display:none;"></div>
+
+  <div class="section" id="result-section">
+    <div class="user-card">
+      <h3>③ チェック対象にするユーザー（在庫を下げた人）を選択</h3>
+      <div class="user-btns">
+        <button onclick="selectAllUsers(true)">全選択</button>
+        <button onclick="selectAllUsers(false)">全解除</button>
+      </div>
+      <div class="user-grid" id="user-grid"></div>
+    </div>
+
+    <div id="no-user-note" class="empty-note" style="display:none;">ユーザーを1人以上選択してください。</div>
+
+    <div id="results-body" style="display:none;">
+      <div class="metric-bar" id="metric-bar"></div>
+      <div id="status-banner"></div>
+      <div id="issues-area"></div>
+      <details class="normal-list" id="normal-details">
+        <summary id="normal-summary">正常に減少していたSKU一覧</summary>
+        <div class="detail-body" id="normal-body"></div>
+      </details>
+    </div>
+  </div>
+</div>
+
+<script>
+window.__SKU_MASTER__ = window.__SKU_MASTER__ || [];
+
+(function() {
+
+let deliveryRows = [];   // 全納品書CSVの生データ
+let logRows = [];        // 全変動ログCSVの生データ
+let deliveryLoadedCount = 0;
+let logLoadedCount = 0;
+
+let mappedDelivered = [];   // SKUごとに集計済みの納品データ [{SKU, 納品数合計, 商品名, CS品番, 納品書番号}]
+let unmappedDelivered = []; // SKUマスターに一致しなかったCS品番ごとの集計 [{CS品番, 納品数合計, 商品名}]
+let allUsers = [];
+let hasHacchusho = false;
+
+const runBtn = document.getElementById("run-btn");
+const masterWarning = document.getElementById("master-warning");
+const resultSection = document.getElementById("result-section");
+const userGrid = document.getElementById("user-grid");
+const noUserNote = document.getElementById("no-user-note");
+const resultsBody = document.getElementById("results-body");
+const metricBar = document.getElementById("metric-bar");
+const statusBanner = document.getElementById("status-banner");
+const issuesArea = document.getElementById("issues-area");
+const normalDetails = document.getElementById("normal-details");
+const normalSummary = document.getElementById("normal-summary");
+const normalBody = document.getElementById("normal-body");
+
+// ── CSV パース（BOM対応・Shift-JIS/UTF-8自動判定） ──
+function parseCSV(text) {
+  text = text.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const lines = text.split("\n").filter(l => l.trim() !== "");
+  if (lines.length === 0) return [];
+  const strip = s => s.trim().replace(/^"(.*)"$/, "$1").trim();
+  const headers = lines[0].split(",").map(h => strip(h));
+  return lines.slice(1).map(line => {
+    const vals = line.split(",");
+    const obj = {};
+    headers.forEach((h, i) => obj[h] = strip(vals[i] !== undefined ? vals[i] : ""));
+    return obj;
+  });
+}
+
+function readFileFlexible(file) {
+  return new Promise(function(resolve) {
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      const buffer = e.target.result;
+      let text;
+      try {
+        text = new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+      } catch (err) {
+        try {
+          text = new TextDecoder("shift_jis").decode(buffer);
+        } catch (err2) {
+          text = new TextDecoder("utf-8").decode(buffer);
+        }
+      }
+      resolve(parseCSV(text));
+    };
+    reader.onerror = function() { resolve([]); };
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+function escapeHtml(s) {
+  return String(s === null || s === undefined ? "" : s).replace(/[&<>"']/g, function(c) {
+    return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];
+  });
+}
+
+function fmtNum(v) {
+  if (v === null || v === undefined || v === "" || v === "—") return "—";
+  const n = Number(v);
+  if (isNaN(n)) return "—";
+  return n.toLocaleString("ja-JP");
+}
+
+function checkReady() {
+  runBtn.disabled = !(deliveryRows.length > 0 && logRows.length > 0);
+}
+
+async function handleFiles(inputEl, targetArrayName, statusElId, cardElId) {
+  const files = Array.from(inputEl.files || []);
+  if (files.length === 0) return;
+  let combined = [];
+  for (const f of files) {
+    const rows = await readFileFlexible(f);
+    combined = combined.concat(rows);
+  }
+  if (targetArrayName === "delivery") {
+    deliveryRows = combined;
+  } else {
+    logRows = combined;
+  }
+  document.getElementById(statusElId).textContent = "✓ " + files.length + "ファイル読み込み済み（" + combined.length + "行）";
+  document.getElementById(cardElId).classList.add("loaded");
+  checkReady();
+}
+
+document.getElementById("file-delivery").addEventListener("change", function() {
+  handleFiles(this, "delivery", "status-delivery", "card-delivery");
+});
+document.getElementById("file-log").addEventListener("change", function() {
+  handleFiles(this, "log", "status-log", "card-log");
+});
+
+function toNum(v) {
+  const n = parseFloat(v);
+  return isNaN(n) ? 0 : n;
+}
+
+function runCheck() {
+  masterWarning.style.display = "none";
+
+  // ---------- 列チェック ----------
+  const requiredDeliveryCols = ["CS品番", "納品数"];
+  const requiredLogCols = ["商品コード", "増減値", "ユーザー"];
+
+  const deliveryHeaders = deliveryRows.length > 0 ? Object.keys(deliveryRows[0]) : [];
+  const logHeaders = logRows.length > 0 ? Object.keys(logRows[0]) : [];
+
+  const missingDelivery = requiredDeliveryCols.filter(c => deliveryHeaders.indexOf(c) === -1);
+  const missingLog = requiredLogCols.filter(c => logHeaders.indexOf(c) === -1);
+
+  if (missingDelivery.length > 0) {
+    masterWarning.style.display = "block";
+    masterWarning.textContent = "納品書CSVに必要な列（" + requiredDeliveryCols.join(", ") + "）が見つかりません。検出された列：" + deliveryHeaders.join(", ");
+    resultSection.classList.remove("visible");
+    return;
+  }
+  if (missingLog.length > 0) {
+    masterWarning.style.display = "block";
+    masterWarning.textContent = "変動ログCSVに必要な列（" + requiredLogCols.join(", ") + "）が見つかりません。検出された列：" + logHeaders.join(", ");
+    resultSection.classList.remove("visible");
+    return;
+  }
+
+  // ---------- SKUマスターでCS品番→SKUを変換 ----------
+  const skuMaster = window.__SKU_MASTER__ || [];
+  if (skuMaster.length === 0) {
+    masterWarning.style.display = "block";
+    masterWarning.textContent = "『SKUマスター』フォルダにCSV（列名: CS品番, SKU）が見つからないため、在庫下げチェックを実行できません。";
+    resultSection.classList.remove("visible");
+    return;
+  }
+  const csToSku = {};
+  skuMaster.forEach(function(m) { csToSku[String(m.cs_no).trim()] = m.sku; });
+
+  const hasHacchushoLocal = deliveryHeaders.indexOf("納品書番号") !== -1;
+  hasHacchusho = hasHacchushoLocal;
+  const hasShohin = deliveryHeaders.indexOf("商品名") !== -1;
+
+  const mappedBySku = {};   // sku -> {納品数合計, 商品名, csSet, hachushoSet}
+  const unmappedByCs = {};  // cs品番 -> {納品数合計, 商品名}
+
+  deliveryRows.forEach(function(row) {
+    const cs = String(row["CS品番"] || "").trim();
+    if (!cs) return;
+    const qty = Math.trunc(toNum(row["納品数"]));
+    const sku = csToSku[cs];
+
+    if (sku) {
+      if (!mappedBySku[sku]) {
+        mappedBySku[sku] = { sku: sku, qty: 0, name: "", csSet: new Set(), hachushoSet: new Set() };
+      }
+      mappedBySku[sku].qty += qty;
+      if (hasShohin && row["商品名"]) mappedBySku[sku].name = row["商品名"];
+      mappedBySku[sku].csSet.add(cs);
+      if (hasHacchusho && row["納品書番号"]) mappedBySku[sku].hachushoSet.add(row["納品書番号"]);
+    } else {
+      if (!unmappedByCs[cs]) {
+        unmappedByCs[cs] = { cs: cs, qty: 0, name: "" };
+      }
+      unmappedByCs[cs].qty += qty;
+      if (hasShohin && row["商品名"]) unmappedByCs[cs].name = row["商品名"];
+    }
+  });
+
+  mappedDelivered = Object.keys(mappedBySku).map(function(sku) {
+    const d = mappedBySku[sku];
+    return {
+      SKU: sku,
+      納品数合計: Math.round(d.qty),
+      商品名: d.name,
+      CS品番: Array.from(d.csSet).sort().join("、"),
+      納品書番号: Array.from(d.hachushoSet).sort().join("、"),
+    };
+  });
+
+  unmappedDelivered = Object.keys(unmappedByCs).map(function(cs) {
+    const d = unmappedByCs[cs];
+    return { CS品番: cs, 納品数合計: Math.round(d.qty), 商品名: d.name };
+  });
+
+  if (mappedDelivered.length === 0 && unmappedDelivered.length === 0) {
+    masterWarning.style.display = "block";
+    masterWarning.textContent = "納品書CSVから有効なCS品番の行が見つかりませんでした。";
+    resultSection.classList.remove("visible");
+    return;
+  }
+  if (mappedDelivered.length === 0) {
+    masterWarning.style.display = "block";
+    masterWarning.textContent = "SKUマスターに一致するCS品番が1件もありませんでした。";
+    resultSection.classList.remove("visible");
+    return;
+  }
+
+  // ---------- ユーザー抽出 ----------
+  const userSet = new Set();
+  logRows.forEach(function(row) {
+    let u = (row["ユーザー"] || "").toString().trim();
+    if (u === "" || u === "nan" || u === "None") return;
+    userSet.add(u);
+  });
+  allUsers = Array.from(userSet).sort();
+
+  if (allUsers.length === 0) {
+    masterWarning.style.display = "block";
+    masterWarning.textContent = "変動ログCSVに『ユーザー』が入っている行がありません（手動操作の記録がありません）。";
+    resultSection.classList.remove("visible");
+    return;
+  }
+
+  // ---------- ユーザー選択UIを描画 ----------
+  userGrid.innerHTML = "";
+  allUsers.forEach(function(u) {
+    const label = document.createElement("label");
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.value = u;
+    cb.addEventListener("change", recompute);
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(u));
+    userGrid.appendChild(label);
+  });
+
+  resultSection.classList.add("visible");
+  recompute();
+}
+
+function selectAllUsers(checked) {
+  userGrid.querySelectorAll('input[type="checkbox"]').forEach(function(cb) { cb.checked = checked; });
+  recompute();
+}
+
+function getSelectedUsers() {
+  return Array.from(userGrid.querySelectorAll('input[type="checkbox"]:checked')).map(function(cb) { return cb.value; });
+}
+
+function recompute() {
+  const selectedUsers = getSelectedUsers();
+
+  if (selectedUsers.length === 0) {
+    noUserNote.style.display = "block";
+    resultsBody.style.display = "none";
+    return;
+  }
+  noUserNote.style.display = "none";
+  resultsBody.style.display = "block";
+
+  // 選択ユーザー分の増減値をSKUごとに合算
+  const selectedSet = new Set(selectedUsers);
+  const decreaseBySku = {};
+  logRows.forEach(function(row) {
+    const u = (row["ユーザー"] || "").toString().trim();
+    if (!selectedSet.has(u)) return;
+    const sku = String(row["商品コード"] || "").trim();
+    if (!sku) return;
+    const zougen = toNum(row["増減値"]);
+    decreaseBySku[sku] = (decreaseBySku[sku] || 0) - zougen;
+  });
+
+  // 突合
+  const result = mappedDelivered.map(function(d) {
+    const decrease = Math.round(decreaseBySku[d.SKU] || 0);
+    const diff = d.納品数合計 - decrease;
+    return Object.assign({}, d, { 減少数: decrease, 差分: diff, 正常: diff === 0 });
+  });
+
+  const normalRows = result.filter(function(r) { return r.正常; });
+  const abnormalRows = result.filter(function(r) { return !r.正常; })
+    .sort(function(a, b) { return Math.abs(b.差分) - Math.abs(a.差分); });
+
+  const unmappedCount = unmappedDelivered.length;
+  const totalTarget = result.length + unmappedCount;
+  const totalIssues = abnormalRows.length + unmappedCount;
+  const hasIssues = totalIssues > 0;
+
+  // ---------- メトリックバー ----------
+  metricBar.innerHTML =
+    '<div class="metric-chip">対象SKU数<strong>' + totalTarget.toLocaleString("ja-JP") + '</strong></div>' +
+    '<div class="metric-chip">正常<strong>' + normalRows.length.toLocaleString("ja-JP") + '</strong></div>' +
+    '<div class="' + (hasIssues ? "metric-chip-danger" : "metric-chip") + '">異常（合計）<strong>' + totalIssues.toLocaleString("ja-JP") + '</strong></div>';
+
+  // ---------- バナー ----------
+  if (!hasIssues) {
+    statusBanner.innerHTML = '<div class="banner-ok">✅ 選択したユーザーの操作で、対象SKUはすべて納品数どおりに在庫が減少しています。</div>';
+    issuesArea.innerHTML = "";
+  } else {
+    statusBanner.innerHTML = '<div class="banner-error">❌ 異常が' + totalIssues + '件見つかりました（納品数と減少数が一致しないSKU ' +
+      abnormalRows.length + '件、SKUマスター未登録のCS品番 ' + unmappedCount + '件）</div>';
+
+    let html = '<h4>⚠️ 異常一覧（納品数の不一致・SKUマスター未登録をまとめて表示）</h4>';
+    html += '<div class="table-scroll"><table class="sku-table"><thead><tr>' +
+      '<th>種別</th><th>SKU</th><th>CS品番</th><th>商品名</th>' +
+      '<th class="num">納品数合計</th><th class="num">減少数</th><th class="num">差分</th>' +
+      '</tr></thead><tbody>';
+
+    abnormalRows.forEach(function(r) {
+      html += '<tr>' +
+        '<td><span class="tag-diff">差分あり</span></td>' +
+        '<td>' + escapeHtml(r.SKU) + '</td>' +
+        '<td>' + escapeHtml(r.CS品番) + '</td>' +
+        '<td>' + escapeHtml(r.商品名) + '</td>' +
+        '<td class="num">' + fmtNum(r.納品数合計) + '</td>' +
+        '<td class="num">' + fmtNum(r.減少数) + '</td>' +
+        '<td class="num">' + fmtNum(r.差分) + '</td>' +
+        '</tr>';
+    });
+    unmappedDelivered.forEach(function(r) {
+      html += '<tr>' +
+        '<td><span class="tag-unmapped">SKUマスター未登録</span></td>' +
+        '<td>—</td>' +
+        '<td>' + escapeHtml(r.CS品番) + '</td>' +
+        '<td>' + escapeHtml(r.商品名) + '</td>' +
+        '<td class="num">' + fmtNum(r.納品数合計) + '</td>' +
+        '<td class="num">—</td>' +
+        '<td class="num">—</td>' +
+        '</tr>';
+    });
+    html += '</tbody></table></div>';
+
+    if (abnormalRows.length > 0) {
+      html += '<h5>SKUごとの変動ログ詳細</h5>';
+      html += '<div class="subcaption">参考として、選択ユーザーに関わらずそのSKUの変動ログを全件表示しています（受注取込による自動減少も含む）。</div>';
+
+      const logCandidateCols = ["更新日時", "更新理由", "変動前", "変動後", "増減値", "ユーザー"];
+      const logDetailCols = logCandidateCols.filter(function(c) { return logHeadersHas(c); });
+
+      abnormalRows.forEach(function(r) {
+        const label = r.SKU + (r.商品名 ? "｜" + r.商品名 : "") +
+          "｜納品数" + r.納品数合計 + " / 減少数" + r.減少数 + " / 差分" + r.差分;
+
+        let skuLogs = logRows.filter(function(row) { return String(row["商品コード"] || "").trim() === r.SKU; });
+        if (logHeadersHas("更新日時")) {
+          skuLogs = skuLogs.slice().sort(function(a, b) {
+            return String(a["更新日時"]).localeCompare(String(b["更新日時"]));
+          });
+        }
+
+        html += '<details class="sku-detail" open><summary>' + escapeHtml(label) + '</summary><div class="detail-body">';
+        if (skuLogs.length === 0) {
+          html += '<div class="empty-note">このSKUに該当する変動ログはありません。</div>';
+        } else {
+          html += '<div class="table-scroll"><table class="sku-table"><thead><tr>';
+          logDetailCols.forEach(function(c) { html += '<th>' + escapeHtml(c) + '</th>'; });
+          html += '</tr></thead><tbody>';
+          skuLogs.forEach(function(row) {
+            html += '<tr>';
+            logDetailCols.forEach(function(c) { html += '<td>' + escapeHtml(row[c]) + '</td>'; });
+            html += '</tr>';
+          });
+          html += '</tbody></table></div>';
+        }
+        html += '</div></details>';
+      });
+    }
+
+    issuesArea.innerHTML = html;
+  }
+
+  // ---------- 正常SKU一覧 ----------
+  normalSummary.textContent = "正常に減少していたSKU一覧（" + normalRows.length + "件）";
+  if (normalRows.length === 0) {
+    normalBody.innerHTML = '<div class="empty-note">該当するSKUはありません。</div>';
+  } else {
+    let nHtml = '<div class="table-scroll"><table class="sku-table"><thead><tr>' +
+      '<th>SKU</th><th>CS品番</th><th>商品名</th><th class="num">納品数合計</th><th class="num">減少数</th><th class="num">差分</th>' +
+      (hasHacchusho ? '<th>納品書番号</th>' : '') +
+      '</tr></thead><tbody>';
+    normalRows.forEach(function(r) {
+      nHtml += '<tr>' +
+        '<td>' + escapeHtml(r.SKU) + '</td>' +
+        '<td>' + escapeHtml(r.CS品番) + '</td>' +
+        '<td>' + escapeHtml(r.商品名) + '</td>' +
+        '<td class="num">' + fmtNum(r.納品数合計) + '</td>' +
+        '<td class="num">' + fmtNum(r.減少数) + '</td>' +
+        '<td class="num">' + fmtNum(r.差分) + '</td>' +
+        (hasHacchusho ? '<td>' + escapeHtml(r.納品書番号) + '</td>' : '') +
+        '</tr>';
+    });
+    nHtml += '</tbody></table></div>';
+    normalBody.innerHTML = nHtml;
+  }
+}
+
+function logHeadersHas(col) {
+  return logRows.length > 0 && Object.prototype.hasOwnProperty.call(logRows[0], col);
+}
+
+window.runCheck = runCheck;
+window.selectAllUsers = selectAllUsers;
+
+})();
+</script>
+</body>
+</html>

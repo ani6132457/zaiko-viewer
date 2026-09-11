@@ -2929,281 +2929,38 @@ def main():
             components.html(html_content, height=2600, scrolling=True)
 
     def render_stock_check_tab():
-        # --- 在庫下げチェックタブ ---
-        # 納品書CSV（複数可）と変動ログCSV（複数可）をアップロードし、
-        # 選択したユーザーの在庫操作で、納品数どおりに在庫が減っているかを確認する。
-        st.caption(
-            "納品書CSVと変動ログCSVをアップロードすると、SKUマスターでCS品番⇔SKUを紐付けたうえで、"
-            "選択したユーザーの在庫操作が納品数どおりに反映されているかをチェックします。"
-            "（納品日と在庫操作日が異なる前提のため、日付は比較に使いません）"
-        )
-
-        up_col1, up_col2 = st.columns(2)
-        with up_col1:
-            delivery_uploads = st.file_uploader(
-                "① 納品書CSV（複数選択可）",
-                type="csv",
-                accept_multiple_files=True,
-                key="stockcheck_delivery_files",
-            )
-        with up_col2:
-            log_uploads = st.file_uploader(
-                "② 変動ログCSV（複数選択可）",
-                type="csv",
-                accept_multiple_files=True,
-                key="stockcheck_log_files",
-            )
-
-        if not delivery_uploads or not log_uploads:
-            st.info("納品書CSVと変動ログCSVの両方を1ファイル以上アップロードしてください。")
-            return
-
-        # ---------- 読み込み ----------
-        delivery_dfs, delivery_fail = [], []
-        for f in delivery_uploads:
-            df_f = read_csv_flexible(f)
-            if df_f is None:
-                delivery_fail.append(f.name)
-            else:
-                delivery_dfs.append(df_f)
-
-        log_dfs, log_fail = [], []
-        for f in log_uploads:
-            df_f = read_csv_flexible(f)
-            if df_f is None:
-                log_fail.append(f.name)
-            else:
-                log_dfs.append(df_f)
-
-        if delivery_fail:
-            st.error(f"納品書CSVの読み込みに失敗しました（文字コード不明）：{', '.join(delivery_fail)}")
-        if log_fail:
-            st.error(f"変動ログCSVの読み込みに失敗しました（文字コード不明）：{', '.join(log_fail)}")
-        if not delivery_dfs or not log_dfs:
-            return
-
-        df_delivery = pd.concat(delivery_dfs, ignore_index=True)
-        df_log = pd.concat(log_dfs, ignore_index=True)
-
-        required_delivery_cols = {"CS品番", "納品数"}
-        required_log_cols = {"商品コード", "増減値", "ユーザー"}
-        if not required_delivery_cols.issubset(df_delivery.columns):
+        # --- 在庫下げチェックタブ（HTML/JS埋め込み） ---
+        # ファイルアップロード・ユーザー選択・集計・表示まで全てブラウザ内で完結させ、
+        # SKUマスターだけサーバー側から自動注入する。
+        html_path = "在庫下げチェック.html"
+        if not os.path.exists(html_path):
             st.error(
-                f"納品書CSVに必要な列（{', '.join(required_delivery_cols)}）が見つかりません。"
-                f"検出された列：{', '.join(df_delivery.columns)}"
-            )
-            return
-        if not required_log_cols.issubset(df_log.columns):
-            st.error(
-                f"変動ログCSVに必要な列（{', '.join(required_log_cols)}）が見つかりません。"
-                f"検出された列：{', '.join(df_log.columns)}"
+                f"『{html_path}』が見つかりません。app.py と同じフォルダに配置してください。"
             )
             return
 
-        # ---------- SKUマスターでCS品番→SKUを変換 ----------
         sku_master = load_sku_master()
         if not sku_master:
             st.warning(
                 "『SKUマスター』フォルダにCSV（列名: CS品番, SKU）が見つからないため、"
                 "在庫下げチェックを実行できません。"
             )
-            return
-        cs_to_sku = {m["cs_no"]: m["sku"] for m in sku_master}
 
-        df_delivery = df_delivery.copy()
-        df_delivery["CS品番"] = df_delivery["CS品番"].astype(str).str.strip()
-        df_delivery["納品数"] = pd.to_numeric(df_delivery["納品数"], errors="coerce").fillna(0).astype(int)
-        df_delivery["SKU"] = df_delivery["CS品番"].map(cs_to_sku)
+        with open(html_path, "r", encoding="utf-8") as f:
+            html_content = f.read()
 
-        unmapped_raw = df_delivery[df_delivery["SKU"].isna()].copy()
-        unmapped_agg = {"納品数": "sum"}
-        if "商品名" in unmapped_raw.columns:
-            unmapped_agg["商品名"] = "last"
-        unmapped = (
-            unmapped_raw.groupby("CS品番", dropna=False).agg(unmapped_agg).reset_index()
-            if not unmapped_raw.empty
-            else unmapped_raw
+        injected_script = (
+            "<script>"
+            f"window.__SKU_MASTER__ = {json.dumps(sku_master, ensure_ascii=False)};"
+            "</script>"
         )
-        unmapped = unmapped.rename(columns={"納品数": "納品数合計"})
-        df_delivery_mapped = df_delivery.dropna(subset=["SKU"]).copy()
+        # 本体スクリプトが動く前に注入データを読み込ませるため、<head>の直後に挿入
+        html_content = html_content.replace("<head>", "<head>" + injected_script, 1)
 
-        if df_delivery_mapped.empty:
-            st.warning("SKUマスターに一致するCS品番が1件もありませんでした。")
-            return
-
-        # ---------- 納品数をSKUごとに合算 ----------
-        agg_dict = {"納品数": "sum"}
-        if "商品名" in df_delivery_mapped.columns:
-            agg_dict["商品名"] = "last"
-        if "納品書番号" in df_delivery_mapped.columns:
-            agg_dict["納品書番号"] = lambda s: "、".join(sorted(set(s.astype(str))))
-
-        delivered = df_delivery_mapped.groupby("SKU", dropna=False).agg(agg_dict).reset_index()
-        delivered = delivered.rename(columns={"納品数": "納品数合計"})
-
-        # CS品番一覧（同じSKUに複数CS品番が紐づくケースの確認用）
-        cs_list = (
-            df_delivery_mapped.groupby("SKU")["CS品番"]
-            .apply(lambda s: "、".join(sorted(set(s))))
-            .reset_index()
-            .rename(columns={"CS品番": "CS品番"})
-        )
-        delivered = delivered.merge(cs_list, on="SKU", how="left")
-
-        # ---------- ユーザー選択（チェックボックス・複数選択可） ----------
-        df_log = df_log.copy()
-        df_log["ユーザー"] = df_log["ユーザー"].astype(str).str.strip()
-        df_log.loc[df_log["ユーザー"].isin(["nan", "None", ""]), "ユーザー"] = None
-        users = sorted(df_log["ユーザー"].dropna().unique().tolist())
-
-        if not users:
-            st.warning("変動ログCSVに『ユーザー』が入っている行がありません（手動操作の記録がありません）。")
-            return
-
-        st.markdown("**③ チェック対象にするユーザー（在庫を下げた人）を選択**")
-        btn_col1, btn_col2, _ = st.columns([1, 1, 6])
-        if btn_col1.button("全選択", key="stockcheck_select_all"):
-            for u in users:
-                st.session_state[f"stockcheck_user_{u}"] = True
-        if btn_col2.button("全解除", key="stockcheck_select_none"):
-            for u in users:
-                st.session_state[f"stockcheck_user_{u}"] = False
-
-        checkbox_cols = st.columns(4)
-        selected_users = []
-        for i, u in enumerate(users):
-            with checkbox_cols[i % 4]:
-                checked = st.checkbox(u, value=st.session_state.get(f"stockcheck_user_{u}", False), key=f"stockcheck_user_{u}")
-            if checked:
-                selected_users.append(u)
-
-        if not selected_users:
-            st.info("ユーザーを1人以上選択してください。")
-            return
-
-        # ---------- 選択ユーザー分の増減値をSKUごとに合算 ----------
-        df_log["商品コード"] = df_log["商品コード"].astype(str).str.strip()
-        df_log["増減値"] = pd.to_numeric(df_log["増減値"], errors="coerce").fillna(0).astype(int)
-        df_log_f = df_log[df_log["ユーザー"].isin(selected_users)]
-
-        log_sum = (
-            df_log_f.groupby("商品コード")["増減値"]
-            .sum()
-            .reset_index()
-            .rename(columns={"商品コード": "SKU", "増減値": "増減値合計"})
-        )
-        log_sum["減少数"] = -log_sum["増減値合計"]
-
-        # ---------- 突合 ----------
-        result = delivered.merge(log_sum[["SKU", "減少数"]], on="SKU", how="left")
-        result["減少数"] = result["減少数"].fillna(0).astype(int)
-        result["差分（納品数−減少数）"] = result["納品数合計"] - result["減少数"]
-        result["正常"] = result["差分（納品数−減少数）"] == 0
-
-        normal_count = int(result["正常"].sum())
-        abnormal_view = result[~result["正常"]].copy().sort_values(
-            "差分（納品数−減少数）", key=lambda s: s.abs(), ascending=False
-        )
-
-        # 「SKUマスター未登録」も広い意味での異常として統合して扱う
-        unmapped_count = len(unmapped)
-        total_issue_count = len(abnormal_view) + unmapped_count
-        has_issues = total_issue_count > 0
-
-        # ---------- サマリー（異常件数のチップだけ赤くする） ----------
-        issue_chip_class = "metric-chip-danger" if has_issues else "metric-chip"
-        st.markdown(
-            f'<div class="metric-bar">'
-            f'<div class="metric-chip">対象SKU数<strong>{len(result):,}</strong></div>'
-            f'<div class="metric-chip">正常<strong>{normal_count:,}</strong></div>'
-            f'<div class="{issue_chip_class}">異常（合計）<strong>{total_issue_count:,}</strong></div>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-
-        display_cols = ["SKU", "CS品番"]
-        if "商品名" in abnormal_view.columns:
-            display_cols.append("商品名")
-        display_cols += ["納品数合計", "減少数", "差分（納品数−減少数）"]
-        if "納品書番号" in abnormal_view.columns:
-            display_cols.append("納品書番号")
-        display_cols = [c for c in display_cols if c in abnormal_view.columns]
-
-        if not has_issues:
-            st.markdown(
-                '<div class="stockcheck-ok-banner">✅ 選択したユーザーの操作で、'
-                '対象SKUはすべて納品数どおりに在庫が減少しています。</div>',
-                unsafe_allow_html=True,
-            )
+        if hasattr(st, "iframe"):
+            st.iframe(html_content, height="content", width="stretch")
         else:
-            st.markdown(
-                f'<div class="stockcheck-error-banner">❌ 異常が{total_issue_count}件見つかりました'
-                f'（納品数と減少数が一致しないSKU {len(abnormal_view)}件、'
-                f'SKUマスター未登録のCS品番 {unmapped_count}件）</div>',
-                unsafe_allow_html=True,
-            )
-
-            st.markdown("#### ⚠️ 異常一覧（納品数の不一致・SKUマスター未登録をまとめて表示）")
-
-            # 「差分あり」と「SKUマスター未登録」を1つの表に統合する
-            unified_rows = []
-            for _, row in abnormal_view.iterrows():
-                unified_rows.append({
-                    "種別": "差分あり",
-                    "SKU": row["SKU"],
-                    "CS品番": row.get("CS品番", ""),
-                    "商品名": row.get("商品名", "") if "商品名" in abnormal_view.columns else "",
-                    "納品数合計": row["納品数合計"],
-                    "減少数": row["減少数"],
-                    "差分（納品数−減少数）": row["差分（納品数−減少数）"],
-                })
-            for _, row in unmapped.iterrows():
-                unified_rows.append({
-                    "種別": "SKUマスター未登録",
-                    "SKU": "—",
-                    "CS品番": row.get("CS品番", ""),
-                    "商品名": row.get("商品名", "") if "商品名" in unmapped.columns else "",
-                    "納品数合計": row.get("納品数合計", "—"),
-                    "減少数": "—",
-                    "差分（納品数−減少数）": "—",
-                })
-            issues_df = pd.DataFrame(unified_rows)
-
-            st.dataframe(
-                issues_df,
-                hide_index=True,
-                use_container_width=True,
-            )
-
-            if not abnormal_view.empty:
-                st.markdown("##### SKUごとの変動ログ詳細")
-                st.caption("参考として、選択ユーザーに関わらずそのSKUの変動ログを全件表示しています（受注取込による自動減少も含む）。")
-
-                log_detail_cols = [c for c in ["更新日時", "更新理由", "変動前", "変動後", "増減値", "ユーザー"] if c in df_log.columns]
-
-                for _, row in abnormal_view.iterrows():
-                    sku_i = row["SKU"]
-                    label = f"{sku_i}"
-                    if "商品名" in row and pd.notna(row.get("商品名")):
-                        label += f"｜{row['商品名']}"
-                    label += f"｜納品数{row['納品数合計']} / 減少数{row['減少数']} / 差分{row['差分（納品数−減少数）']}"
-
-                    with st.expander(label, expanded=True):
-                        log_rows = df_log[df_log["商品コード"] == sku_i].copy()
-                        if "更新日時" in log_rows.columns:
-                            log_rows = log_rows.sort_values("更新日時")
-                        if log_rows.empty:
-                            st.caption("このSKUに該当する変動ログはありません。")
-                        else:
-                            st.dataframe(
-                                log_rows[log_detail_cols],
-                                hide_index=True,
-                                use_container_width=True,
-                            )
-
-        with st.expander(f"正常に減少していたSKU一覧（{normal_count}件）"):
-            normal_view = result[result["正常"]][display_cols] if not result.empty else result
-            st.dataframe(normal_view, hide_index=True, use_container_width=True)
+            components.html(html_content, height=2600, scrolling=True)
 
     def make_zozo_html_table(df: pd.DataFrame) -> str:
         """ZOZO在庫チェック用のHTMLテーブル（既存のsku-tableスタイルを流用）。"""
