@@ -1910,6 +1910,40 @@ def main():
 }
 .metric-chip strong { color: #1a1d23; font-size: 16px; margin-left: 4px; }
 
+/* ===== 在庫下げチェックタブ：異常時に赤く強調するためのスタイル ===== */
+.metric-chip-danger {
+    background: #fff0ee;
+    border: 1px solid #f2b3ac;
+    border-radius: 8px;
+    padding: 8px 16px;
+    font-size: 13px;
+    color: #7a2b20;
+    box-shadow: 0 1px 3px rgba(192,57,43,0.08);
+}
+.metric-chip-danger strong { color: #c0392b; font-size: 16px; margin-left: 4px; }
+.stockcheck-error-banner {
+    background: #fdecea;
+    border: 1px solid #f2b3ac;
+    border-left: 6px solid #c0392b;
+    border-radius: 10px;
+    padding: 14px 18px;
+    margin: 10px 0 16px 0;
+    color: #7a2b20;
+    font-weight: 700;
+    font-size: 14px;
+}
+.stockcheck-ok-banner {
+    background: #f0faf3;
+    border: 1px solid #bfe6cb;
+    border-left: 6px solid #2e9d55;
+    border-radius: 10px;
+    padding: 14px 18px;
+    margin: 10px 0 16px 0;
+    color: #1f6b3a;
+    font-weight: 700;
+    font-size: 14px;
+}
+
 /* ===== 在庫アラートタブ専用スタイル（他タブと視覚的に区別するため） ===== */
 .alert-hero {
     background: linear-gradient(135deg, #fff5f2 0%, #fff0e6 100%);
@@ -3067,13 +3101,18 @@ def main():
             "差分（納品数−減少数）", key=lambda s: s.abs(), ascending=False
         )
 
-        # ---------- サマリー ----------
+        # 「SKUマスター未登録」も広い意味での異常として統合して扱う
+        unmapped_count = len(unmapped)
+        total_issue_count = len(abnormal_view) + unmapped_count
+        has_issues = total_issue_count > 0
+
+        # ---------- サマリー（異常があれば赤いステータスバーにする） ----------
+        chip_class = "metric-chip-danger" if has_issues else "metric-chip"
         st.markdown(
             f'<div class="metric-bar">'
-            f'<div class="metric-chip">対象SKU数<strong>{len(result):,}</strong></div>'
-            f'<div class="metric-chip">正常<strong>{normal_count:,}</strong></div>'
-            f'<div class="metric-chip">異常<strong>{len(abnormal_view):,}</strong></div>'
-            f'<div class="metric-chip">SKUマスター未登録CS品番<strong>{len(unmapped):,}</strong></div>'
+            f'<div class="{chip_class}">対象SKU数<strong>{len(result):,}</strong></div>'
+            f'<div class="{chip_class}">正常<strong>{normal_count:,}</strong></div>'
+            f'<div class="{chip_class}">異常（合計）<strong>{total_issue_count:,}</strong></div>'
             f'</div>',
             unsafe_allow_html=True,
         )
@@ -3086,44 +3125,77 @@ def main():
             display_cols.append("納品書番号")
         display_cols = [c for c in display_cols if c in abnormal_view.columns]
 
-        st.markdown("#### ⚠️ 在庫が正常に下がっていないSKU")
-        if abnormal_view.empty:
-            st.success("✅ 選択したユーザーの操作で、対象SKUはすべて納品数どおりに在庫が減少しています。")
+        if not has_issues:
+            st.markdown(
+                '<div class="stockcheck-ok-banner">✅ 選択したユーザーの操作で、'
+                '対象SKUはすべて納品数どおりに在庫が減少しています。</div>',
+                unsafe_allow_html=True,
+            )
         else:
+            st.markdown(
+                f'<div class="stockcheck-error-banner">❌ 異常が{total_issue_count}件見つかりました'
+                f'（納品数と減少数が一致しないSKU {len(abnormal_view)}件、'
+                f'SKUマスター未登録のCS品番 {unmapped_count}件）</div>',
+                unsafe_allow_html=True,
+            )
+
+            st.markdown("#### ⚠️ 異常一覧（納品数の不一致・SKUマスター未登録をまとめて表示）")
+
+            # 「差分あり」と「SKUマスター未登録」を1つの表に統合する
+            unified_rows = []
+            for _, row in abnormal_view.iterrows():
+                unified_rows.append({
+                    "種別": "差分あり",
+                    "SKU": row["SKU"],
+                    "CS品番": row.get("CS品番", ""),
+                    "商品名": row.get("商品名", "") if "商品名" in abnormal_view.columns else "",
+                    "納品数合計": row["納品数合計"],
+                    "減少数": row["減少数"],
+                    "差分（納品数−減少数）": row["差分（納品数−減少数）"],
+                })
+            for _, row in unmapped.iterrows():
+                unified_rows.append({
+                    "種別": "SKUマスター未登録",
+                    "SKU": "—",
+                    "CS品番": row.get("CS品番", ""),
+                    "商品名": row.get("商品名", "") if "商品名" in unmapped.columns else "",
+                    "納品数合計": "—",
+                    "減少数": "—",
+                    "差分（納品数−減少数）": "—",
+                })
+            issues_df = pd.DataFrame(unified_rows)
+
             st.dataframe(
-                abnormal_view[display_cols],
+                issues_df,
                 hide_index=True,
                 use_container_width=True,
             )
 
-            st.markdown("##### SKUごとの変動ログ詳細")
-            st.caption("参考として、選択ユーザーに関わらずそのSKUの変動ログを全件表示しています（受注取込による自動減少も含む）。")
+            if not abnormal_view.empty:
+                st.markdown("##### SKUごとの変動ログ詳細")
+                st.caption("参考として、選択ユーザーに関わらずそのSKUの変動ログを全件表示しています（受注取込による自動減少も含む）。")
 
-            log_detail_cols = [c for c in ["更新日時", "更新理由", "変動前", "変動後", "増減値", "ユーザー"] if c in df_log.columns]
+                log_detail_cols = [c for c in ["更新日時", "更新理由", "変動前", "変動後", "増減値", "ユーザー"] if c in df_log.columns]
 
-            for _, row in abnormal_view.iterrows():
-                sku_i = row["SKU"]
-                label = f"{sku_i}"
-                if "商品名" in row and pd.notna(row.get("商品名")):
-                    label += f"｜{row['商品名']}"
-                label += f"｜納品数{row['納品数合計']} / 減少数{row['減少数']} / 差分{row['差分（納品数−減少数）']}"
+                for _, row in abnormal_view.iterrows():
+                    sku_i = row["SKU"]
+                    label = f"{sku_i}"
+                    if "商品名" in row and pd.notna(row.get("商品名")):
+                        label += f"｜{row['商品名']}"
+                    label += f"｜納品数{row['納品数合計']} / 減少数{row['減少数']} / 差分{row['差分（納品数−減少数）']}"
 
-                with st.expander(label):
-                    log_rows = df_log[df_log["商品コード"] == sku_i].copy()
-                    if "更新日時" in log_rows.columns:
-                        log_rows = log_rows.sort_values("更新日時")
-                    if log_rows.empty:
-                        st.caption("このSKUに該当する変動ログはありません。")
-                    else:
-                        st.dataframe(
-                            log_rows[log_detail_cols],
-                            hide_index=True,
-                            use_container_width=True,
-                        )
-
-        if not unmapped.empty:
-            with st.expander(f"SKUマスターに一致するCS品番が見つからなかった行（{len(unmapped)}件・チェック対象外）"):
-                st.dataframe(unmapped, hide_index=True, use_container_width=True)
+                    with st.expander(label, expanded=True):
+                        log_rows = df_log[df_log["商品コード"] == sku_i].copy()
+                        if "更新日時" in log_rows.columns:
+                            log_rows = log_rows.sort_values("更新日時")
+                        if log_rows.empty:
+                            st.caption("このSKUに該当する変動ログはありません。")
+                        else:
+                            st.dataframe(
+                                log_rows[log_detail_cols],
+                                hide_index=True,
+                                use_container_width=True,
+                            )
 
         with st.expander(f"正常に減少していたSKU一覧（{normal_count}件）"):
             normal_view = result[result["正常"]][display_cols] if not result.empty else result
