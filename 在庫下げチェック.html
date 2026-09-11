@@ -29,9 +29,11 @@
     background: #fafbfc;
   }
   .upload-card.loaded { border-color: #4C78A8; background: #f2f6fb; }
+  .upload-card.dragover { border-color: #2e9d55; background: #eefaf1; border-style: solid; }
   .upload-card label.title { display:block; font-size:13px; font-weight:700; margin-bottom:8px; color:#333; }
   .upload-card input[type="file"] { font-size: 12px; width: 100%; }
   .upload-card .status { font-size: 12px; color: #4C78A8; margin-top: 6px; font-weight:600; }
+  .drop-hint { font-size: 11px; color: #999; margin-top: 6px; }
 
   .run-btn {
     display: block;
@@ -65,8 +67,29 @@
     border: 1px solid #d8dde8; background:#fff; border-radius:6px;
     padding: 4px 12px; font-size: 12px; cursor: pointer; margin-right: 8px;
   }
-  .user-grid { display:grid; grid-template-columns: repeat(4, 1fr); gap: 6px 12px; }
-  .user-grid label { font-size: 13px; display:flex; align-items:center; gap:6px; cursor:pointer; }
+  .user-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
+  .user-grid label {
+    font-size: 16px;
+    font-weight: 600;
+    display:flex;
+    align-items:center;
+    gap:10px;
+    cursor:pointer;
+    padding: 12px 16px;
+    border: 2px solid #d8dde8;
+    border-radius: 10px;
+    background: #fff;
+    transition: background 0.12s ease, border-color 0.12s ease;
+  }
+  .user-grid label:hover { background: #f5f7fc; border-color: #b9c4d6; }
+  .user-grid label:has(input:checked), .user-grid label.checked { background: #eaf1f8; border-color: #4C78A8; }
+  .user-grid input[type="checkbox"] {
+    width: 22px;
+    height: 22px;
+    cursor: pointer;
+    accent-color: #4C78A8;
+    flex-shrink: 0;
+  }
 
   .metric-bar { display: flex; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
   .metric-chip {
@@ -150,11 +173,13 @@
     <div class="upload-card" id="card-delivery">
       <label class="title">① 納品書CSV（複数選択可）</label>
       <input type="file" id="file-delivery" accept=".csv" multiple>
+      <div class="drop-hint">ここにファイルをドラッグ＆ドロップも可能</div>
       <div class="status" id="status-delivery"></div>
     </div>
     <div class="upload-card" id="card-log">
       <label class="title">② 変動ログCSV（複数選択可）</label>
       <input type="file" id="file-log" accept=".csv" multiple>
+      <div class="drop-hint">ここにファイルをドラッグ＆ドロップも可能</div>
       <div class="status" id="status-log"></div>
     </div>
   </div>
@@ -197,6 +222,7 @@ let mappedDelivered = [];   // SKUごとに集計済みの納品データ [{SKU,
 let unmappedDelivered = []; // SKUマスターに一致しなかったCS品番ごとの集計 [{CS品番, 納品数合計, 商品名}]
 let allUsers = [];
 let hasHacchusho = false;
+let hasMakerNo = false;
 
 // チップクリックによる絞り込み用のキャッシュ
 let activeFilter = null; // null | "all" | "normal" | "issues"
@@ -270,8 +296,10 @@ function checkReady() {
   runBtn.disabled = !(deliveryRows.length > 0 && logRows.length > 0);
 }
 
-async function handleFiles(inputEl, targetArrayName, statusElId, cardElId) {
-  const files = Array.from(inputEl.files || []);
+async function handleFiles(fileList, targetArrayName, statusElId, cardElId) {
+  const files = Array.from(fileList || []).filter(function(f) {
+    return f.name.toLowerCase().endsWith(".csv");
+  });
   if (files.length === 0) return;
   let combined = [];
   for (const f of files) {
@@ -289,10 +317,54 @@ async function handleFiles(inputEl, targetArrayName, statusElId, cardElId) {
 }
 
 document.getElementById("file-delivery").addEventListener("change", function() {
-  handleFiles(this, "delivery", "status-delivery", "card-delivery");
+  handleFiles(this.files, "delivery", "status-delivery", "card-delivery");
 });
 document.getElementById("file-log").addEventListener("change", function() {
-  handleFiles(this, "log", "status-log", "card-log");
+  handleFiles(this.files, "log", "status-log", "card-log");
+});
+
+// ── ドラッグ＆ドロップ対応 ──
+function setupDropZone(cardId, inputId, targetArrayName, statusElId) {
+  const card = document.getElementById(cardId);
+  const input = document.getElementById(inputId);
+
+  ["dragenter", "dragover"].forEach(function(evt) {
+    card.addEventListener(evt, function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      card.classList.add("dragover");
+    });
+  });
+  ["dragleave", "dragend"].forEach(function(evt) {
+    card.addEventListener(evt, function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      card.classList.remove("dragover");
+    });
+  });
+  card.addEventListener("drop", function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    card.classList.remove("dragover");
+    const files = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
+    if (files.length === 0) return;
+    try {
+      const dt = new DataTransfer();
+      files.forEach(function(f) { dt.items.add(f); });
+      input.files = dt.files;
+    } catch (err) {
+      // DataTransferの再構築に対応していない環境でも、読み込み自体は続行する
+    }
+    handleFiles(files, targetArrayName, statusElId, cardId);
+  });
+}
+
+setupDropZone("card-delivery", "file-delivery", "delivery", "status-delivery");
+setupDropZone("card-log", "file-log", "log", "status-log");
+
+// ドロップゾーンの外にファイルを落とした時、ブラウザがそのままファイルを開いてしまうのを防ぐ
+["dragover", "drop"].forEach(function(evt) {
+  document.addEventListener(evt, function(e) { e.preventDefault(); });
 });
 
 function toNum(v) {
@@ -341,9 +413,11 @@ function runCheck() {
   const hasHacchushoLocal = deliveryHeaders.indexOf("納品書番号") !== -1;
   hasHacchusho = hasHacchushoLocal;
   const hasShohin = deliveryHeaders.indexOf("商品名") !== -1;
+  const hasMakerNoLocal = deliveryHeaders.indexOf("メーカー品番") !== -1;
+  hasMakerNo = hasMakerNoLocal;
 
-  const mappedBySku = {};   // sku -> {納品数合計, 商品名, csSet, hachushoSet}
-  const unmappedByCs = {};  // cs品番 -> {納品数合計, 商品名}
+  const mappedBySku = {};   // sku -> {納品数合計, 商品名, メーカー品番, csSet, hachushoSet}
+  const unmappedByCs = {};  // cs品番 -> {納品数合計, 商品名, メーカー品番}
 
   deliveryRows.forEach(function(row) {
     const cs = String(row["CS品番"] || "").trim();
@@ -353,18 +427,20 @@ function runCheck() {
 
     if (sku) {
       if (!mappedBySku[sku]) {
-        mappedBySku[sku] = { sku: sku, qty: 0, name: "", csSet: new Set(), hachushoSet: new Set() };
+        mappedBySku[sku] = { sku: sku, qty: 0, name: "", makerNo: "", csSet: new Set(), hachushoSet: new Set() };
       }
       mappedBySku[sku].qty += qty;
       if (hasShohin && row["商品名"]) mappedBySku[sku].name = row["商品名"];
+      if (hasMakerNoLocal && row["メーカー品番"]) mappedBySku[sku].makerNo = row["メーカー品番"];
       mappedBySku[sku].csSet.add(cs);
       if (hasHacchusho && row["納品書番号"]) mappedBySku[sku].hachushoSet.add(row["納品書番号"]);
     } else {
       if (!unmappedByCs[cs]) {
-        unmappedByCs[cs] = { cs: cs, qty: 0, name: "" };
+        unmappedByCs[cs] = { cs: cs, qty: 0, name: "", makerNo: "" };
       }
       unmappedByCs[cs].qty += qty;
       if (hasShohin && row["商品名"]) unmappedByCs[cs].name = row["商品名"];
+      if (hasMakerNoLocal && row["メーカー品番"]) unmappedByCs[cs].makerNo = row["メーカー品番"];
     }
   });
 
@@ -374,6 +450,7 @@ function runCheck() {
       SKU: sku,
       納品数合計: Math.round(d.qty),
       商品名: d.name,
+      メーカー品番: d.makerNo,
       CS品番: Array.from(d.csSet).sort().join("、"),
       納品書番号: Array.from(d.hachushoSet).sort().join("、"),
     };
@@ -381,7 +458,7 @@ function runCheck() {
 
   unmappedDelivered = Object.keys(unmappedByCs).map(function(cs) {
     const d = unmappedByCs[cs];
-    return { CS品番: cs, 納品数合計: Math.round(d.qty), 商品名: d.name };
+    return { CS品番: cs, 納品数合計: Math.round(d.qty), 商品名: d.name, メーカー品番: d.makerNo };
   });
 
   if (mappedDelivered.length === 0 && unmappedDelivered.length === 0) {
@@ -420,7 +497,10 @@ function runCheck() {
     const cb = document.createElement("input");
     cb.type = "checkbox";
     cb.value = u;
-    cb.addEventListener("change", recompute);
+    cb.addEventListener("change", function() {
+      label.classList.toggle("checked", cb.checked);
+      recompute();
+    });
     label.appendChild(cb);
     label.appendChild(document.createTextNode(u));
     userGrid.appendChild(label);
@@ -431,7 +511,10 @@ function runCheck() {
 }
 
 function selectAllUsers(checked) {
-  userGrid.querySelectorAll('input[type="checkbox"]').forEach(function(cb) { cb.checked = checked; });
+  userGrid.querySelectorAll('input[type="checkbox"]').forEach(function(cb) {
+    cb.checked = checked;
+    cb.closest("label").classList.toggle("checked", checked);
+  });
   recompute();
 }
 
@@ -498,8 +581,7 @@ function recompute() {
   if (!hasIssues) {
     statusBanner.innerHTML = '<div class="banner-ok">✅ 選択したユーザーの操作で、対象SKUはすべて納品数どおりに在庫が減少しています。</div>';
   } else {
-    statusBanner.innerHTML = '<div class="banner-error">❌ 異常が' + totalIssues + '件見つかりました（納品数と減少数が一致しないSKU ' +
-      abnormalRows.length + '件、SKUマスター未登録のCS品番 ' + unmappedCount + '件）</div>';
+    statusBanner.innerHTML = '<div class="banner-error">❌ 納品数と減少数が一致しないSKUが' + totalIssues + '件見つかりました。</div>';
   }
 
   // 初回のみ：異常があれば異常一覧をデフォルト表示、無ければ何も表示しない
@@ -523,7 +605,9 @@ function updateChipActiveStates() {
 function buildRowsTable(rows, includeType) {
   let html = '<div class="table-scroll"><table class="sku-table"><thead><tr>';
   if (includeType) html += '<th>種別</th>';
-  html += '<th>SKU</th><th>CS品番</th><th>商品名</th>' +
+  html += '<th>SKU</th><th>CS品番</th>' +
+    (hasMakerNo ? '<th>メーカー品番</th>' : '') +
+    '<th>商品名</th>' +
     '<th class="num">納品数合計</th><th class="num">減少数</th><th class="num">差分</th>' +
     (hasHacchusho ? '<th>納品書番号</th>' : '') +
     '</tr></thead><tbody>';
@@ -534,6 +618,7 @@ function buildRowsTable(rows, includeType) {
     }
     html += '<td>' + escapeHtml(r.SKU) + '</td>' +
       '<td>' + escapeHtml(r.CS品番) + '</td>' +
+      (hasMakerNo ? '<td>' + escapeHtml(r.メーカー品番) + '</td>' : '') +
       '<td>' + escapeHtml(r.商品名) + '</td>' +
       '<td class="num">' + fmtNum(r.納品数合計) + '</td>' +
       '<td class="num">' + fmtNum(r.減少数) + '</td>' +
@@ -620,7 +705,9 @@ function renderFilteredArea() {
     let html = '<h4>⚠️ 異常一覧（納品数の不一致・SKUマスター未登録をまとめて表示）</h4>';
     html += '<div class="filter-hint">「異常（合計）」チップをもう一度押すと閉じます。</div>';
     html += '<div class="table-scroll"><table class="sku-table"><thead><tr>' +
-      '<th>種別</th><th>SKU</th><th>CS品番</th><th>商品名</th>' +
+      '<th>種別</th><th>SKU</th><th>CS品番</th>' +
+      (hasMakerNo ? '<th>メーカー品番</th>' : '') +
+      '<th>商品名</th>' +
       '<th class="num">納品数合計</th><th class="num">減少数</th><th class="num">差分</th>' +
       '</tr></thead><tbody>';
     lastAbnormalRows.forEach(function(r) {
@@ -628,6 +715,7 @@ function renderFilteredArea() {
         '<td><span class="tag-diff">差分あり</span></td>' +
         '<td>' + escapeHtml(r.SKU) + '</td>' +
         '<td>' + escapeHtml(r.CS品番) + '</td>' +
+        (hasMakerNo ? '<td>' + escapeHtml(r.メーカー品番) + '</td>' : '') +
         '<td>' + escapeHtml(r.商品名) + '</td>' +
         '<td class="num">' + fmtNum(r.納品数合計) + '</td>' +
         '<td class="num">' + fmtNum(r.減少数) + '</td>' +
@@ -649,6 +737,7 @@ function buildUnmappedIssueRows() {
       '<td><span class="tag-unmapped">SKUマスター未登録</span></td>' +
       '<td>—</td>' +
       '<td>' + escapeHtml(r.CS品番) + '</td>' +
+      (hasMakerNo ? '<td>' + escapeHtml(r.メーカー品番) + '</td>' : '') +
       '<td>' + escapeHtml(r.商品名) + '</td>' +
       '<td class="num">' + fmtNum(r.納品数合計) + '</td>' +
       '<td class="num">—</td>' +
@@ -660,7 +749,9 @@ function buildUnmappedIssueRows() {
 
 function buildAllRowsTable(mappedRows) {
   let html = '<div class="table-scroll"><table class="sku-table"><thead><tr>' +
-    '<th>種別</th><th>SKU</th><th>CS品番</th><th>商品名</th>' +
+    '<th>種別</th><th>SKU</th><th>CS品番</th>' +
+    (hasMakerNo ? '<th>メーカー品番</th>' : '') +
+    '<th>商品名</th>' +
     '<th class="num">納品数合計</th><th class="num">減少数</th><th class="num">差分</th>' +
     (hasHacchusho ? '<th>納品書番号</th>' : '') +
     '</tr></thead><tbody>';
@@ -669,6 +760,7 @@ function buildAllRowsTable(mappedRows) {
       '<td>' + (r.正常 ? '<span class="tag-ok">正常</span>' : '<span class="tag-diff">差分あり</span>') + '</td>' +
       '<td>' + escapeHtml(r.SKU) + '</td>' +
       '<td>' + escapeHtml(r.CS品番) + '</td>' +
+      (hasMakerNo ? '<td>' + escapeHtml(r.メーカー品番) + '</td>' : '') +
       '<td>' + escapeHtml(r.商品名) + '</td>' +
       '<td class="num">' + fmtNum(r.納品数合計) + '</td>' +
       '<td class="num">' + fmtNum(r.減少数) + '</td>' +
@@ -681,6 +773,7 @@ function buildAllRowsTable(mappedRows) {
       '<td><span class="tag-unmapped">SKUマスター未登録</span></td>' +
       '<td>—</td>' +
       '<td>' + escapeHtml(r.CS品番) + '</td>' +
+      (hasMakerNo ? '<td>' + escapeHtml(r.メーカー品番) + '</td>' : '') +
       '<td>' + escapeHtml(r.商品名) + '</td>' +
       '<td class="num">' + fmtNum(r.納品数合計) + '</td>' +
       '<td class="num">—</td>' +
