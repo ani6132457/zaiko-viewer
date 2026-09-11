@@ -79,6 +79,15 @@
     padding: 8px 16px; font-size: 13px; color: #7a2b20; box-shadow: 0 1px 3px rgba(192,57,43,0.08);
   }
   .metric-chip-danger strong { color: #c0392b; font-size: 16px; margin-left: 4px; }
+  .metric-chip, .metric-chip-danger {
+    cursor: pointer;
+    transition: box-shadow 0.12s ease, transform 0.12s ease;
+    user-select: none;
+  }
+  .metric-chip:hover, .metric-chip-danger:hover { box-shadow: 0 2px 6px rgba(0,0,0,0.12); transform: translateY(-1px); }
+  .metric-chip.active { border: 2px solid #4C78A8; background: #eaf1f8; padding: 7px 15px; }
+  .metric-chip-danger.active { border: 2px solid #c0392b; background: #fbe0dc; padding: 7px 15px; }
+  .filter-hint { font-size: 12px; color: #888; margin: 4px 0 10px 0; }
 
   .banner-ok {
     background: #f0faf3; border: 1px solid #bfe6cb; border-left: 6px solid #2e9d55;
@@ -105,6 +114,7 @@
   .table-scroll { overflow-x:auto; border:1px solid #eef0f5; border-radius:8px; margin-bottom:10px; }
   .tag-diff { background:#fff0ee; color:#c0392b; border-radius:12px; padding:2px 10px; font-size:12px; font-weight:700; }
   .tag-unmapped { background:#fff7e6; color:#a3690a; border-radius:12px; padding:2px 10px; font-size:12px; font-weight:700; }
+  .tag-ok { background:#eafaf0; color:#1f8a4c; border-radius:12px; padding:2px 10px; font-size:12px; font-weight:700; }
 
   details.sku-detail {
     border:1px solid #e0e4ea; border-radius:8px; margin-bottom:8px; background:#fff;
@@ -168,11 +178,7 @@
     <div id="results-body" style="display:none;">
       <div class="metric-bar" id="metric-bar"></div>
       <div id="status-banner"></div>
-      <div id="issues-area"></div>
-      <details class="normal-list" id="normal-details">
-        <summary id="normal-summary">正常に減少していたSKU一覧</summary>
-        <div class="detail-body" id="normal-body"></div>
-      </details>
+      <div id="filtered-area"></div>
     </div>
   </div>
 </div>
@@ -192,6 +198,14 @@ let unmappedDelivered = []; // SKUマスターに一致しなかったCS品番�
 let allUsers = [];
 let hasHacchusho = false;
 
+// チップクリックによる絞り込み用のキャッシュ
+let activeFilter = null; // null | "all" | "normal" | "issues"
+let lastNormalRows = [];
+let lastAbnormalRows = [];
+let lastTotalTarget = 0;
+let lastTotalIssues = 0;
+let lastHasIssues = false;
+
 const runBtn = document.getElementById("run-btn");
 const masterWarning = document.getElementById("master-warning");
 const resultSection = document.getElementById("result-section");
@@ -200,10 +214,7 @@ const noUserNote = document.getElementById("no-user-note");
 const resultsBody = document.getElementById("results-body");
 const metricBar = document.getElementById("metric-bar");
 const statusBanner = document.getElementById("status-banner");
-const issuesArea = document.getElementById("issues-area");
-const normalDetails = document.getElementById("normal-details");
-const normalSummary = document.getElementById("normal-summary");
-const normalBody = document.getElementById("normal-body");
+const filteredArea = document.getElementById("filtered-area");
 
 // ── CSV パース（BOM対応・Shift-JIS/UTF-8自動判定） ──
 function parseCSV(text) {
@@ -291,6 +302,7 @@ function toNum(v) {
 
 function runCheck() {
   masterWarning.style.display = "none";
+  activeFilter = null;
 
   // ---------- 列チェック ----------
   const requiredDeliveryCols = ["CS品番", "納品数"];
@@ -466,27 +478,152 @@ function recompute() {
   const totalIssues = abnormalRows.length + unmappedCount;
   const hasIssues = totalIssues > 0;
 
-  // ---------- メトリックバー ----------
+  // キャッシュ（チップクリック時の再計算を省くため）
+  lastNormalRows = normalRows;
+  lastAbnormalRows = abnormalRows;
+  lastTotalTarget = totalTarget;
+  lastTotalIssues = totalIssues;
+  lastHasIssues = hasIssues;
+
+  // ---------- メトリックバー（クリックで絞り込み表示） ----------
   metricBar.innerHTML =
-    '<div class="metric-chip">対象SKU数<strong>' + totalTarget.toLocaleString("ja-JP") + '</strong></div>' +
-    '<div class="metric-chip">正常<strong>' + normalRows.length.toLocaleString("ja-JP") + '</strong></div>' +
-    '<div class="' + (hasIssues ? "metric-chip-danger" : "metric-chip") + '">異常（合計）<strong>' + totalIssues.toLocaleString("ja-JP") + '</strong></div>';
+    '<div class="metric-chip" data-filter="all">対象SKU数<strong>' + totalTarget.toLocaleString("ja-JP") + '</strong></div>' +
+    '<div class="metric-chip" data-filter="normal">正常<strong>' + normalRows.length.toLocaleString("ja-JP") + '</strong></div>' +
+    '<div class="' + (hasIssues ? "metric-chip-danger" : "metric-chip") + '" data-filter="issues">異常（合計）<strong>' + totalIssues.toLocaleString("ja-JP") + '</strong></div>';
+  metricBar.querySelectorAll("[data-filter]").forEach(function(chip) {
+    chip.addEventListener("click", function() { setFilter(chip.getAttribute("data-filter")); });
+  });
 
   // ---------- バナー ----------
   if (!hasIssues) {
     statusBanner.innerHTML = '<div class="banner-ok">✅ 選択したユーザーの操作で、対象SKUはすべて納品数どおりに在庫が減少しています。</div>';
-    issuesArea.innerHTML = "";
   } else {
     statusBanner.innerHTML = '<div class="banner-error">❌ 異常が' + totalIssues + '件見つかりました（納品数と減少数が一致しないSKU ' +
       abnormalRows.length + '件、SKUマスター未登録のCS品番 ' + unmappedCount + '件）</div>';
+  }
 
+  // 初回のみ：異常があれば異常一覧をデフォルト表示、無ければ何も表示しない
+  if (activeFilter === null) {
+    activeFilter = hasIssues ? "issues" : null;
+  }
+  renderFilteredArea();
+}
+
+function setFilter(filterName) {
+  activeFilter = (activeFilter === filterName) ? null : filterName; // 同じチップを再クリックで閉じる
+  renderFilteredArea();
+}
+
+function updateChipActiveStates() {
+  metricBar.querySelectorAll("[data-filter]").forEach(function(chip) {
+    chip.classList.toggle("active", chip.getAttribute("data-filter") === activeFilter);
+  });
+}
+
+function buildRowsTable(rows, includeType) {
+  let html = '<div class="table-scroll"><table class="sku-table"><thead><tr>';
+  if (includeType) html += '<th>種別</th>';
+  html += '<th>SKU</th><th>CS品番</th><th>商品名</th>' +
+    '<th class="num">納品数合計</th><th class="num">減少数</th><th class="num">差分</th>' +
+    (hasHacchusho ? '<th>納品書番号</th>' : '') +
+    '</tr></thead><tbody>';
+  rows.forEach(function(r) {
+    html += '<tr>';
+    if (includeType) {
+      html += '<td>' + (r.正常 ? '<span class="tag-ok">正常</span>' : '<span class="tag-diff">差分あり</span>') + '</td>';
+    }
+    html += '<td>' + escapeHtml(r.SKU) + '</td>' +
+      '<td>' + escapeHtml(r.CS品番) + '</td>' +
+      '<td>' + escapeHtml(r.商品名) + '</td>' +
+      '<td class="num">' + fmtNum(r.納品数合計) + '</td>' +
+      '<td class="num">' + fmtNum(r.減少数) + '</td>' +
+      '<td class="num">' + fmtNum(r.差分) + '</td>' +
+      (hasHacchusho ? '<td>' + escapeHtml(r.納品書番号) + '</td>' : '') +
+      '</tr>';
+  });
+  html += '</tbody></table></div>';
+  return html;
+}
+
+function buildLogDetails(rows) {
+  if (rows.length === 0) return "";
+  let html = '<h5>SKUごとの変動ログ詳細</h5>';
+  html += '<div class="subcaption">参考として、選択ユーザーに関わらずそのSKUの変動ログを全件表示しています（受注取込による自動減少も含む）。</div>';
+
+  const logCandidateCols = ["更新日時", "更新理由", "変動前", "変動後", "増減値", "ユーザー"];
+  const logDetailCols = logCandidateCols.filter(function(c) { return logHeadersHas(c); });
+
+  rows.forEach(function(r) {
+    const label = r.SKU + (r.商品名 ? "｜" + r.商品名 : "") +
+      "｜納品数" + r.納品数合計 + " / 減少数" + r.減少数 + " / 差分" + r.差分;
+
+    let skuLogs = logRows.filter(function(row) { return String(row["商品コード"] || "").trim() === r.SKU; });
+    if (logHeadersHas("更新日時")) {
+      skuLogs = skuLogs.slice().sort(function(a, b) {
+        return String(a["更新日時"]).localeCompare(String(b["更新日時"]));
+      });
+    }
+
+    html += '<details class="sku-detail" open><summary>' + escapeHtml(label) + '</summary><div class="detail-body">';
+    if (skuLogs.length === 0) {
+      html += '<div class="empty-note">このSKUに該当する変動ログはありません。</div>';
+    } else {
+      html += '<div class="table-scroll"><table class="sku-table"><thead><tr>';
+      logDetailCols.forEach(function(c) { html += '<th>' + escapeHtml(c) + '</th>'; });
+      html += '</tr></thead><tbody>';
+      skuLogs.forEach(function(row) {
+        html += '<tr>';
+        logDetailCols.forEach(function(c) { html += '<td>' + escapeHtml(row[c]) + '</td>'; });
+        html += '</tr>';
+      });
+      html += '</tbody></table></div>';
+    }
+    html += '</div></details>';
+  });
+  return html;
+}
+
+function renderFilteredArea() {
+  updateChipActiveStates();
+
+  if (activeFilter === null) {
+    filteredArea.innerHTML = "";
+    return;
+  }
+
+  if (activeFilter === "all") {
+    const allRows = lastAbnormalRows.concat(lastNormalRows);
+    const html = '<h4>📋 対象SKU一覧（正常・異常すべて）</h4>' +
+      '<div class="filter-hint">「対象SKU数」チップをもう一度押すと閉じます。</div>' +
+      buildAllRowsTable(allRows);
+    filteredArea.innerHTML = html;
+    return;
+  }
+
+  if (activeFilter === "normal") {
+    let html = '<h4>✅ 正常に減少していたSKU一覧（' + lastNormalRows.length + '件）</h4>';
+    html += '<div class="filter-hint">「正常」チップをもう一度押すと閉じます。</div>';
+    if (lastNormalRows.length === 0) {
+      html += '<div class="empty-note">該当するSKUはありません。</div>';
+    } else {
+      html += buildRowsTable(lastNormalRows, false);
+    }
+    filteredArea.innerHTML = html;
+    return;
+  }
+
+  if (activeFilter === "issues") {
+    if (!lastHasIssues) {
+      filteredArea.innerHTML = '<div class="empty-note">現在、異常はありません。</div>';
+      return;
+    }
     let html = '<h4>⚠️ 異常一覧（納品数の不一致・SKUマスター未登録をまとめて表示）</h4>';
+    html += '<div class="filter-hint">「異常（合計）」チップをもう一度押すと閉じます。</div>';
     html += '<div class="table-scroll"><table class="sku-table"><thead><tr>' +
       '<th>種別</th><th>SKU</th><th>CS品番</th><th>商品名</th>' +
       '<th class="num">納品数合計</th><th class="num">減少数</th><th class="num">差分</th>' +
       '</tr></thead><tbody>';
-
-    abnormalRows.forEach(function(r) {
+    lastAbnormalRows.forEach(function(r) {
       html += '<tr>' +
         '<td><span class="tag-diff">差分あり</span></td>' +
         '<td>' + escapeHtml(r.SKU) + '</td>' +
@@ -497,81 +634,62 @@ function recompute() {
         '<td class="num">' + fmtNum(r.差分) + '</td>' +
         '</tr>';
     });
-    unmappedDelivered.forEach(function(r) {
-      html += '<tr>' +
-        '<td><span class="tag-unmapped">SKUマスター未登録</span></td>' +
-        '<td>—</td>' +
-        '<td>' + escapeHtml(r.CS品番) + '</td>' +
-        '<td>' + escapeHtml(r.商品名) + '</td>' +
-        '<td class="num">' + fmtNum(r.納品数合計) + '</td>' +
-        '<td class="num">—</td>' +
-        '<td class="num">—</td>' +
-        '</tr>';
-    });
+    html += buildUnmappedIssueRows();
     html += '</tbody></table></div>';
-
-    if (abnormalRows.length > 0) {
-      html += '<h5>SKUごとの変動ログ詳細</h5>';
-      html += '<div class="subcaption">参考として、選択ユーザーに関わらずそのSKUの変動ログを全件表示しています（受注取込による自動減少も含む）。</div>';
-
-      const logCandidateCols = ["更新日時", "更新理由", "変動前", "変動後", "増減値", "ユーザー"];
-      const logDetailCols = logCandidateCols.filter(function(c) { return logHeadersHas(c); });
-
-      abnormalRows.forEach(function(r) {
-        const label = r.SKU + (r.商品名 ? "｜" + r.商品名 : "") +
-          "｜納品数" + r.納品数合計 + " / 減少数" + r.減少数 + " / 差分" + r.差分;
-
-        let skuLogs = logRows.filter(function(row) { return String(row["商品コード"] || "").trim() === r.SKU; });
-        if (logHeadersHas("更新日時")) {
-          skuLogs = skuLogs.slice().sort(function(a, b) {
-            return String(a["更新日時"]).localeCompare(String(b["更新日時"]));
-          });
-        }
-
-        html += '<details class="sku-detail" open><summary>' + escapeHtml(label) + '</summary><div class="detail-body">';
-        if (skuLogs.length === 0) {
-          html += '<div class="empty-note">このSKUに該当する変動ログはありません。</div>';
-        } else {
-          html += '<div class="table-scroll"><table class="sku-table"><thead><tr>';
-          logDetailCols.forEach(function(c) { html += '<th>' + escapeHtml(c) + '</th>'; });
-          html += '</tr></thead><tbody>';
-          skuLogs.forEach(function(row) {
-            html += '<tr>';
-            logDetailCols.forEach(function(c) { html += '<td>' + escapeHtml(row[c]) + '</td>'; });
-            html += '</tr>';
-          });
-          html += '</tbody></table></div>';
-        }
-        html += '</div></details>';
-      });
-    }
-
-    issuesArea.innerHTML = html;
+    html += buildLogDetails(lastAbnormalRows);
+    filteredArea.innerHTML = html;
+    return;
   }
+}
 
-  // ---------- 正常SKU一覧 ----------
-  normalSummary.textContent = "正常に減少していたSKU一覧（" + normalRows.length + "件）";
-  if (normalRows.length === 0) {
-    normalBody.innerHTML = '<div class="empty-note">該当するSKUはありません。</div>';
-  } else {
-    let nHtml = '<div class="table-scroll"><table class="sku-table"><thead><tr>' +
-      '<th>SKU</th><th>CS品番</th><th>商品名</th><th class="num">納品数合計</th><th class="num">減少数</th><th class="num">差分</th>' +
-      (hasHacchusho ? '<th>納品書番号</th>' : '') +
-      '</tr></thead><tbody>';
-    normalRows.forEach(function(r) {
-      nHtml += '<tr>' +
-        '<td>' + escapeHtml(r.SKU) + '</td>' +
-        '<td>' + escapeHtml(r.CS品番) + '</td>' +
-        '<td>' + escapeHtml(r.商品名) + '</td>' +
-        '<td class="num">' + fmtNum(r.納品数合計) + '</td>' +
-        '<td class="num">' + fmtNum(r.減少数) + '</td>' +
-        '<td class="num">' + fmtNum(r.差分) + '</td>' +
-        (hasHacchusho ? '<td>' + escapeHtml(r.納品書番号) + '</td>' : '') +
-        '</tr>';
-    });
-    nHtml += '</tbody></table></div>';
-    normalBody.innerHTML = nHtml;
-  }
+function buildUnmappedIssueRows() {
+  let html = "";
+  unmappedDelivered.forEach(function(r) {
+    html += '<tr>' +
+      '<td><span class="tag-unmapped">SKUマスター未登録</span></td>' +
+      '<td>—</td>' +
+      '<td>' + escapeHtml(r.CS品番) + '</td>' +
+      '<td>' + escapeHtml(r.商品名) + '</td>' +
+      '<td class="num">' + fmtNum(r.納品数合計) + '</td>' +
+      '<td class="num">—</td>' +
+      '<td class="num">—</td>' +
+      '</tr>';
+  });
+  return html;
+}
+
+function buildAllRowsTable(mappedRows) {
+  let html = '<div class="table-scroll"><table class="sku-table"><thead><tr>' +
+    '<th>種別</th><th>SKU</th><th>CS品番</th><th>商品名</th>' +
+    '<th class="num">納品数合計</th><th class="num">減少数</th><th class="num">差分</th>' +
+    (hasHacchusho ? '<th>納品書番号</th>' : '') +
+    '</tr></thead><tbody>';
+  mappedRows.forEach(function(r) {
+    html += '<tr>' +
+      '<td>' + (r.正常 ? '<span class="tag-ok">正常</span>' : '<span class="tag-diff">差分あり</span>') + '</td>' +
+      '<td>' + escapeHtml(r.SKU) + '</td>' +
+      '<td>' + escapeHtml(r.CS品番) + '</td>' +
+      '<td>' + escapeHtml(r.商品名) + '</td>' +
+      '<td class="num">' + fmtNum(r.納品数合計) + '</td>' +
+      '<td class="num">' + fmtNum(r.減少数) + '</td>' +
+      '<td class="num">' + fmtNum(r.差分) + '</td>' +
+      (hasHacchusho ? '<td>' + escapeHtml(r.納品書番号) + '</td>' : '') +
+      '</tr>';
+  });
+  unmappedDelivered.forEach(function(r) {
+    html += '<tr>' +
+      '<td><span class="tag-unmapped">SKUマスター未登録</span></td>' +
+      '<td>—</td>' +
+      '<td>' + escapeHtml(r.CS品番) + '</td>' +
+      '<td>' + escapeHtml(r.商品名) + '</td>' +
+      '<td class="num">' + fmtNum(r.納品数合計) + '</td>' +
+      '<td class="num">—</td>' +
+      '<td class="num">—</td>' +
+      (hasHacchusho ? '<td>—</td>' : '') +
+      '</tr>';
+  });
+  html += '</tbody></table></div>';
+  return html;
 }
 
 function logHeadersHas(col) {
