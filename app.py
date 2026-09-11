@@ -965,10 +965,11 @@ def render_interactive_sku_table(
   .pager button:disabled { opacity:0.4; cursor:default; }
   .pager .info { margin-left:auto; color:#666; }
 
-  .modal-backdrop { display:none; position:fixed; inset:0; background:rgba(20,22,28,0.55);
-    align-items:center; justify-content:center; z-index:1000; }
-  .modal-backdrop.open { display:flex; }
-  .modal-box { background:#fff; border-radius:12px; width:min(940px, 95vw); max-height:92vh;
+  .modal-backdrop { display:none; position:fixed; inset:0; background:rgba(20,22,28,0.55); z-index:999; }
+  .modal-backdrop.open { display:block; }
+  .modal-box-wrap { display:none; position:absolute; left:0; width:100%; z-index:1000; text-align:center; }
+  .modal-box-wrap.open { display:block; }
+  .modal-box { display:inline-block; text-align:left; background:#fff; border-radius:12px; width:min(940px, 95vw); max-height:640px;
     overflow-y:auto; padding:18px 20px 20px 20px; box-shadow:0 10px 40px rgba(0,0,0,0.25); }
   .modal-box h4 { margin:0 0 10px 0; font-size:15px; color:#1a1d23; }
   .modal-close { float:right; border:none; background:#f0f2f7; border-radius:6px; padding:5px 12px;
@@ -1014,7 +1015,8 @@ def render_interactive_sku_table(
   </div>
 </div>
 
-<div class="modal-backdrop" id="backdrop___KEY__">
+<div class="modal-backdrop" id="backdrop___KEY__"></div>
+<div class="modal-box-wrap" id="modalwrap___KEY__">
   <div class="modal-box">
     <button class="modal-close" id="closebtn___KEY__">✕ 閉じる</button>
     <h4 id="modaltitle___KEY__"></h4>
@@ -1057,6 +1059,7 @@ def render_interactive_sku_table(
   const pageinfo = document.getElementById("pageinfo_" + KEY);
   const totalinfo = document.getElementById("totalinfo_" + KEY);
   const backdrop = document.getElementById("backdrop_" + KEY);
+  const modalWrap = document.getElementById("modalwrap_" + KEY);
   const closeBtn = document.getElementById("closebtn_" + KEY);
   const modalTitle = document.getElementById("modaltitle_" + KEY);
   const chartArea = document.getElementById("chartarea_" + KEY);
@@ -1187,7 +1190,7 @@ def render_interactive_sku_table(
         tr.appendChild(td);
       });
       tr.addEventListener("click", function() {
-        openModal(sku);
+        openModal(sku, tr);
       });
       tbody.appendChild(tr);
     });
@@ -1337,7 +1340,20 @@ def render_interactive_sku_table(
     drawChartForRange(s, e);
   });
 
-  function openModal(sku) {
+  function positionModalNear(rowEl) {
+    const wrap = modalWrap;
+    if (!rowEl) {
+      wrap.style.top = "40px";
+      return;
+    }
+    const rect = rowEl.getBoundingClientRect();
+    const scrollY = window.pageYOffset || document.documentElement.scrollTop || 0;
+    let top = scrollY + rect.top - 20;
+    if (top < scrollY + 10) top = scrollY + 10;
+    wrap.style.top = top + "px";
+  }
+
+  function openModal(sku, rowEl) {
     selectedSku = sku;
     renderBody();
     modalTitle.textContent = "📈 在庫推移（SKU: " + sku + "）";
@@ -1356,19 +1372,23 @@ def render_interactive_sku_table(
       applyPreset(12); // デフォルト：過去1年
     }
     backdrop.classList.add("open");
+    modalWrap.classList.add("open");
+    positionModalNear(rowEl);
     document.body.setAttribute("tabindex", "-1");
     document.body.focus();
   }
 
   function closeModal() {
     backdrop.classList.remove("open");
+    modalWrap.classList.remove("open");
     selectedSku = null;
     renderBody();
   }
 
   closeBtn.addEventListener("click", closeModal);
-  backdrop.addEventListener("click", function(e) {
-    if (e.target === backdrop) closeModal();
+  backdrop.addEventListener("click", closeModal);
+  modalWrap.addEventListener("click", function(e) {
+    if (e.target === modalWrap) closeModal();
   });
   document.addEventListener("keydown", function(e) {
     if (e.key === "Escape" && backdrop.classList.contains("open")) closeModal();
@@ -2229,7 +2249,7 @@ def main():
             unsafe_allow_html=True,
         )
 
-        filter_col, _filter_spacer = st.columns([1, 1])
+        _filter_spacer_l, filter_col, _filter_spacer_r = st.columns([1, 2, 1])
         with filter_col:
             st.markdown('<div class="alert-filter-card"><h3>🔍 絞り込み条件</h3>', unsafe_allow_html=True)
             st.caption(f"データ最終日：{max_date}")
@@ -2238,7 +2258,7 @@ def main():
                 f1, f2, f3, f4 = st.columns([2, 1, 1, 1])
                 with f1:
                     st.text_input(
-                        "キーワード（商品コード / 商品基本コード / 商品名）",
+                        "キーワード",
                         key="alert_keyword",
                     )
                 with f2:
@@ -2254,7 +2274,7 @@ def main():
                     )
                 with f3:
                     st.number_input(
-                        "指定日数（この日数以内）",
+                        "在庫残日数",
                         min_value=1,
                         max_value=365,
                         key="alert_days",
@@ -2269,7 +2289,7 @@ def main():
         if submit_alert:
             st.session_state["alert_applied"] = True
 
-        results_col, _results_spacer = st.columns([9, 1])
+        _results_spacer_l, results_col, _results_spacer_r = st.columns([1, 18, 1])
         with results_col:
             if not st.session_state.get("alert_applied"):
                 st.info("上の条件を設定して『この条件で表示』を押してください。")
