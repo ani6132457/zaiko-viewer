@@ -3015,12 +3015,16 @@ def main():
         df_delivery["納品数"] = pd.to_numeric(df_delivery["納品数"], errors="coerce").fillna(0).astype(int)
         df_delivery["SKU"] = df_delivery["CS品番"].map(cs_to_sku)
 
+        unmapped_raw = df_delivery[df_delivery["SKU"].isna()].copy()
+        unmapped_agg = {"納品数": "sum"}
+        if "商品名" in unmapped_raw.columns:
+            unmapped_agg["商品名"] = "last"
         unmapped = (
-            df_delivery[df_delivery["SKU"].isna()][["CS品番", "商品名"]]
-            .drop_duplicates()
-            if "商品名" in df_delivery.columns
-            else df_delivery[df_delivery["SKU"].isna()][["CS品番"]].drop_duplicates()
+            unmapped_raw.groupby("CS品番", dropna=False).agg(unmapped_agg).reset_index()
+            if not unmapped_raw.empty
+            else unmapped_raw
         )
+        unmapped = unmapped.rename(columns={"納品数": "納品数合計"})
         df_delivery_mapped = df_delivery.dropna(subset=["SKU"]).copy()
 
         if df_delivery_mapped.empty:
@@ -3106,13 +3110,13 @@ def main():
         total_issue_count = len(abnormal_view) + unmapped_count
         has_issues = total_issue_count > 0
 
-        # ---------- サマリー（異常があれば赤いステータスバーにする） ----------
-        chip_class = "metric-chip-danger" if has_issues else "metric-chip"
+        # ---------- サマリー（異常件数のチップだけ赤くする） ----------
+        issue_chip_class = "metric-chip-danger" if has_issues else "metric-chip"
         st.markdown(
             f'<div class="metric-bar">'
-            f'<div class="{chip_class}">対象SKU数<strong>{len(result):,}</strong></div>'
-            f'<div class="{chip_class}">正常<strong>{normal_count:,}</strong></div>'
-            f'<div class="{chip_class}">異常（合計）<strong>{total_issue_count:,}</strong></div>'
+            f'<div class="metric-chip">対象SKU数<strong>{len(result):,}</strong></div>'
+            f'<div class="metric-chip">正常<strong>{normal_count:,}</strong></div>'
+            f'<div class="{issue_chip_class}">異常（合計）<strong>{total_issue_count:,}</strong></div>'
             f'</div>',
             unsafe_allow_html=True,
         )
@@ -3159,7 +3163,7 @@ def main():
                     "SKU": "—",
                     "CS品番": row.get("CS品番", ""),
                     "商品名": row.get("商品名", "") if "商品名" in unmapped.columns else "",
-                    "納品数合計": "—",
+                    "納品数合計": row.get("納品数合計", "—"),
                     "減少数": "—",
                     "差分（納品数−減少数）": "—",
                 })
