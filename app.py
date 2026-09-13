@@ -1856,25 +1856,17 @@ def main():
 .sku-table .stock-danger { color: #c0392b; font-size: 11px; font-weight: 700; }
 .sku-table .stock-warn   { color: #d35400; font-size: 11px; font-weight: 700; }
 
-/* ===== タブ ===== */
-[data-testid="stTab"] p {
-    font-size: 14px !important;
-    font-weight: 600 !important;
-}
-[data-testid="stTab"] {
-    padding: 8px 20px !important;
-}
-
-/* Streamlit標準ヘッダーを非表示にして、タブの固定表示と被らないようにする */
+/* ===== ナビゲーション（画面上部固定＋クリックで開くドロップダウン） ===== */
+/* Streamlit標準ヘッダーを非表示にして、ナビの固定表示と被らないようにする */
 [data-testid="stHeader"] {
     display: none;
 }
 [data-testid="stAppViewContainer"] > .main {
     padding-top: 1rem;
+    margin-top: 52px;
 }
 
-/* タブの見出し部分を画面上部に完全固定 */
-[data-testid="stTabs"] [role="tablist"] {
+.topnav {
     position: fixed;
     top: 0;
     left: 0;
@@ -1882,11 +1874,69 @@ def main():
     z-index: 9999;
     background: #ffffff;
     box-shadow: 0 2px 6px rgba(0,0,0,0.08);
-    padding: 6px 3rem;
+    padding: 0 3rem;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    height: 52px;
 }
-/* fixedにした分、タブの中身が隠れないよう本来あった位置に空白を確保 */
-[data-testid="stTabs"] {
-    margin-top: 56px;
+.nav-group {
+    position: relative;
+}
+.nav-toggle {
+    display: none;
+}
+.nav-group-label {
+    display: block;
+    padding: 8px 20px;
+    font-size: 14px;
+    font-weight: 600;
+    color: #444;
+    cursor: pointer;
+    border-radius: 6px;
+    user-select: none;
+}
+.nav-group-label:hover {
+    background: #f5f7fc;
+}
+.nav-group.active-group > .nav-group-label {
+    color: #ff4b4b;
+}
+.nav-caret {
+    font-size: 10px;
+    margin-left: 2px;
+}
+.dropdown {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    min-width: 190px;
+    background: #ffffff;
+    box-shadow: 0 6px 16px rgba(0,0,0,0.14);
+    border-radius: 0 0 10px 10px;
+    overflow: hidden;
+    z-index: 10000;
+}
+.nav-toggle:checked ~ .dropdown {
+    display: block;
+}
+.dropdown-item {
+    display: block;
+    padding: 10px 18px;
+    font-size: 13px;
+    font-weight: 500;
+    color: #444;
+    text-decoration: none;
+    white-space: nowrap;
+}
+.dropdown-item:hover {
+    background: #f5f7fc;
+}
+.dropdown-item.active-item {
+    color: #ff4b4b;
+    font-weight: 700;
+    background: #fff5f2;
 }
 
 /* ===== メトリクスバー ===== */
@@ -2959,36 +3009,70 @@ def main():
         else:
             components.html(html_content, height=2600, scrolling=True)
 
-    # タブ構成：まず大分類（テンポスター／ZOZO）で分け、その中に各機能タブを配置する
-    tab_group_tempostar, tab_group_zozo = st.tabs(["🏬 テンポスター機能", "📦 ZOZO機能"])
+    # ---------- ナビゲーション（大分類クリック→機能ドロップダウン） ----------
+    NAV_GROUPS = [
+        {
+            "key": "tempostar",
+            "label": "🏬 テンポスター機能",
+            "items": [
+                ("restock", "発注推奨一覧"),
+                ("alert", "在庫アラート"),
+                ("sales", "売上個数一覧"),
+                ("orderhistory", "発注履歴"),
+            ],
+        },
+        {
+            "key": "zozo",
+            "label": "📦 ZOZO機能",
+            "items": [
+                ("delivery", "納品推奨数システム"),
+                ("stockcheck", "在庫下げチェック"),
+            ],
+        },
+    ]
+    valid_tab_keys = [item_key for group in NAV_GROUPS for item_key, _ in group["items"]]
 
-    with tab_group_tempostar:
-        tab_restock, tab_alert, tab_sales, tab_orderhistory = st.tabs(
-            ["発注推奨一覧", "在庫アラート", "売上個数一覧", "発注履歴"]
+    try:
+        current_tab = st.query_params.get("tab", "restock")
+    except Exception:
+        try:
+            current_tab = st.experimental_get_query_params().get("tab", ["restock"])[0]
+        except Exception:
+            current_tab = "restock"
+    if isinstance(current_tab, list):
+        current_tab = current_tab[0] if current_tab else "restock"
+    if current_tab not in valid_tab_keys:
+        current_tab = "restock"
+
+    nav_html = ['<div class="topnav">']
+    for group in NAV_GROUPS:
+        group_active = any(item_key == current_tab for item_key, _ in group["items"])
+        toggle_id = f"nav-toggle-{group['key']}"
+        nav_html.append(f'<div class="nav-group{" active-group" if group_active else ""}">')
+        nav_html.append(f'<input type="checkbox" id="{toggle_id}" class="nav-toggle">')
+        nav_html.append(
+            f'<label for="{toggle_id}" class="nav-group-label">{group["label"]} <span class="nav-caret">▾</span></label>'
         )
+        nav_html.append('<div class="dropdown">')
+        for item_key, item_label in group["items"]:
+            active_class = " active-item" if item_key == current_tab else ""
+            nav_html.append(f'<a href="?tab={item_key}" class="dropdown-item{active_class}">{item_label}</a>')
+        nav_html.append('</div></div>')
+    nav_html.append('</div>')
+    st.markdown("".join(nav_html), unsafe_allow_html=True)
 
-        with tab_restock:
-            render_restock_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, all_sales_map, amazon_stock_map, amazon_fetching, amazon_errors, amazon_fetched_at)
-
-        with tab_alert:
-            render_alert_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, amazon_stock_map, amazon_fetching, amazon_errors, amazon_fetched_at)
-
-        with tab_sales:
-            render_sales_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, all_sales_map, amazon_stock_map, amazon_fetching, amazon_errors, amazon_fetched_at)
-
-        with tab_orderhistory:
-            render_order_history_tab()
-
-    with tab_group_zozo:
-        tab_delivery, tab_stockcheck = st.tabs(
-            ["納品推奨数システム", "在庫下げチェック"]
-        )
-
-        with tab_delivery:
-            render_delivery_tab(file_infos, rakuten_stock_map, rakuten_errors, rakuten_fetching, rakuten_fetched_at)
-
-        with tab_stockcheck:
-            render_stock_check_tab()
+    if current_tab == "restock":
+        render_restock_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, all_sales_map, amazon_stock_map, amazon_fetching, amazon_errors, amazon_fetched_at)
+    elif current_tab == "alert":
+        render_alert_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, amazon_stock_map, amazon_fetching, amazon_errors, amazon_fetched_at)
+    elif current_tab == "sales":
+        render_sales_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, all_sales_map, amazon_stock_map, amazon_fetching, amazon_errors, amazon_fetched_at)
+    elif current_tab == "orderhistory":
+        render_order_history_tab()
+    elif current_tab == "delivery":
+        render_delivery_tab(file_infos, rakuten_stock_map, rakuten_errors, rakuten_fetching, rakuten_fetched_at)
+    elif current_tab == "stockcheck":
+        render_stock_check_tab()
 
 
 if __name__ == "__main__":
