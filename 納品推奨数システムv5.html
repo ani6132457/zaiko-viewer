@@ -1771,6 +1771,29 @@ function renderGroupPanel() {
 
 // ── ページ読み込み時に自動保存データがあれば復元 ──
 restoreAutosavedState();
+
+// ── 埋め込みiframeの高さを、内容量の変化（絞り込みなど）にあわせて常に追従させる ──
+// ※ 高さが一度大きくなった後に縮まないケースがあるため、ResizeObserverと定期チェックの
+//   両方でStreamlit側に現在の実際の高さを送り続ける。
+(function() {
+  let _lastSentHeight = 0;
+  function sendFrameHeight() {
+    const h = Math.ceil(document.documentElement.getBoundingClientRect().height);
+    if (h > 0 && h !== _lastSentHeight) {
+      _lastSentHeight = h;
+      try {
+        window.parent.postMessage({ type: "streamlit:setFrameHeight", height: h }, "*");
+      } catch (e) {}
+    }
+  }
+  if (window.ResizeObserver) {
+    new ResizeObserver(sendFrameHeight).observe(document.body);
+  }
+  window.addEventListener("load", sendFrameHeight);
+  window.addEventListener("resize", sendFrameHeight);
+  setInterval(sendFrameHeight, 400);
+  sendFrameHeight();
+})();
 </script>
 </body>
 </html>
