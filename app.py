@@ -1911,8 +1911,8 @@ h1, h2, h3, h4,
 .sku-table .stock-danger { color: var(--coral); font-size: 11px; font-weight: 700; }
 .sku-table .stock-warn   { color: var(--sun); font-size: 11px; font-weight: 700; }
 
-/* ===== ナビゲーション（画面上部固定＋クリックで開くドロップダウン） ===== */
-/* Streamlit標準ヘッダーを非表示にして、ナビの固定表示と被らないようにする */
+/* ===== タブ（画面上部固定＋ポップなピル型タブ） ===== */
+/* Streamlit標準ヘッダーを非表示にして、タブの固定表示と被らないようにする */
 [data-testid="stHeader"] {
     display: none;
 }
@@ -1921,7 +1921,8 @@ h1, h2, h3, h4,
     margin-top: 60px;
 }
 
-.topnav {
+/* 大分類（外側）タブの見出し部分だけを画面上部に固定表示 */
+[data-testid="stTabs"] > [role="tablist"] {
     position: fixed;
     top: 0;
     left: 0;
@@ -1929,121 +1930,46 @@ h1, h2, h3, h4,
     z-index: 9999;
     background: #ffffff;
     box-shadow: 0 4px 14px rgba(42,36,64,0.10);
-    padding: 0 3rem;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    height: 60px;
+    padding: 6px 3rem;
+    gap: 6px;
 }
-.nav-group {
-    position: relative;
+/* 内側（機能）タブは固定せず、外側タブのすぐ下に通常表示する */
+[data-baseweb="tab-panel"] [data-testid="stTabs"] > [role="tablist"] {
+    position: static;
+    box-shadow: none;
+    padding: 0 0 6px 0;
+    margin-bottom: 12px;
+    border-bottom: 2px solid var(--violet-soft);
 }
-.nav-toggle {
-    display: none;
-}
-.nav-group-label {
-    display: block;
-    padding: 9px 22px;
-    font-size: 14px;
-    font-weight: 700;
-    color: var(--ink-soft);
-    cursor: pointer;
-    border-radius: 999px;
-    user-select: none;
+
+[data-testid="stTab"] {
+    font-family: 'M PLUS Rounded 1c', sans-serif !important;
+    border-radius: 999px !important;
+    padding: 9px 22px !important;
     transition: background 0.15s ease, color 0.15s ease;
 }
-.nav-group-label:hover {
-    background: var(--violet-soft);
-    color: var(--violet);
+[data-testid="stTab"] p {
+    font-size: 14px !important;
+    font-weight: 700 !important;
+    color: var(--ink-soft) !important;
 }
-.nav-group.active-group > .nav-group-label {
-    background: var(--accent-soft);
-    color: var(--accent);
+[data-testid="stTab"]:hover {
+    background: var(--violet-soft) !important;
 }
-.nav-caret {
-    font-size: 10px;
-    margin-left: 2px;
+[data-testid="stTab"]:hover p {
+    color: var(--violet) !important;
 }
-.dropdown {
-    opacity: 0;
-    transform: translateY(-6px) scale(0.98);
-    pointer-events: none;
-    position: absolute;
-    top: 100%;
-    left: 0;
-    margin-top: 12px;
-    min-width: 230px;
-    background: #ffffff;
-    box-shadow: 0 16px 36px rgba(42,36,64,0.20);
-    border-radius: 20px;
-    border: 2px solid var(--violet-soft);
-    overflow: visible;
-    padding: 8px;
-    z-index: 10000;
-    transition: opacity 0.18s ease, transform 0.18s ease;
+[data-testid="stTab"][aria-selected="true"] {
+    background: var(--accent-soft) !important;
 }
-.dropdown::before {
-    content: "";
-    position: absolute;
-    top: -9px;
-    left: 26px;
-    width: 16px;
-    height: 16px;
-    background: #ffffff;
-    border-left: 2px solid var(--violet-soft);
-    border-top: 2px solid var(--violet-soft);
-    border-radius: 4px 0 0 0;
-    transform: rotate(45deg);
+[data-testid="stTab"][aria-selected="true"] p {
+    color: var(--accent) !important;
 }
-.nav-toggle:checked ~ .dropdown {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-    pointer-events: auto;
-}
-/* 外側クリックで閉じるための透明オーバーレイ（ドロップダウン展開中のみ出現） */
-.nav-overlay {
-    display: none;
-    position: fixed;
-    inset: 0;
-    z-index: 9998;
-    cursor: default;
-}
-.nav-toggle:checked ~ .nav-overlay {
-    display: block;
-}
-.nav-group-label {
-    position: relative;
-    z-index: 10001;
-}
-.dropdown-item {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 14px;
-    margin-bottom: 4px;
-    border-radius: 14px;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--ink);
-    text-decoration: none;
-    white-space: nowrap;
-    transition: background 0.12s ease, transform 0.12s ease;
-}
-.dropdown-item:last-child {
-    margin-bottom: 0;
-}
-.dropdown-item .item-icon {
-    font-size: 16px;
-}
-.dropdown-item:hover {
-    background: var(--violet-soft);
-    color: var(--violet);
-    transform: translateX(3px);
-}
-.dropdown-item.active-item {
-    color: var(--accent);
-    font-weight: 800;
-    background: var(--accent-soft);
+/* Streamlit標準のタブ下線インジケーターもポップな色に */
+[data-baseweb="tab-highlight"] {
+    background-color: var(--accent) !important;
+    height: 3px !important;
+    border-radius: 3px !important;
 }
 
 /* ===== メトリクスバー ===== */
@@ -3145,74 +3071,36 @@ h1, h2, h3, h4,
         else:
             components.html(html_content, height=2600, scrolling=True)
 
-    # ---------- ナビゲーション（大分類クリック→機能ドロップダウン） ----------
-    NAV_GROUPS = [
-        {
-            "key": "tempostar",
-            "label": "🏬 テンポスター機能",
-            "items": [
-                ("restock", "🛒", "発注推奨一覧"),
-                ("alert", "🚨", "在庫アラート"),
-                ("sales", "📊", "売上個数一覧"),
-                ("orderhistory", "🗂️", "発注履歴"),
-            ],
-        },
-        {
-            "key": "zozo",
-            "label": "📦 ZOZO機能",
-            "items": [
-                ("delivery", "📥", "納品推奨数システム"),
-                ("stockcheck", "🧮", "在庫下げチェック"),
-            ],
-        },
-    ]
-    valid_tab_keys = [item_key for group in NAV_GROUPS for item_key, _, _ in group["items"]]
+    # ---------- タブ構成：大分類（テンポスター／ZOZO）→ 各機能タブ ----------
+    tab_group_tempostar, tab_group_zozo = st.tabs(["🏬 テンポスター機能", "📦 ZOZO機能"])
 
-    try:
-        current_tab = st.query_params.get("tab", "restock")
-    except Exception:
-        try:
-            current_tab = st.experimental_get_query_params().get("tab", ["restock"])[0]
-        except Exception:
-            current_tab = "restock"
-    if isinstance(current_tab, list):
-        current_tab = current_tab[0] if current_tab else "restock"
-    if current_tab not in valid_tab_keys:
-        current_tab = "restock"
-
-    nav_html = ['<div class="topnav">']
-    for group in NAV_GROUPS:
-        group_active = any(item_key == current_tab for item_key, _, _ in group["items"])
-        toggle_id = f"nav-toggle-{group['key']}"
-        nav_html.append(f'<div class="nav-group{" active-group" if group_active else ""}">')
-        nav_html.append(f'<input type="checkbox" id="{toggle_id}" class="nav-toggle">')
-        nav_html.append(
-            f'<label for="{toggle_id}" class="nav-group-label">{group["label"]} <span class="nav-caret">▾</span></label>'
+    with tab_group_tempostar:
+        tab_restock, tab_alert, tab_sales, tab_orderhistory = st.tabs(
+            ["🛒 発注推奨一覧", "🚨 在庫アラート", "📊 売上個数一覧", "🗂️ 発注履歴"]
         )
-        nav_html.append(f'<label for="{toggle_id}" class="nav-overlay" aria-hidden="true"></label>')
-        nav_html.append('<div class="dropdown">')
-        for item_key, item_icon, item_label in group["items"]:
-            active_class = " active-item" if item_key == current_tab else ""
-            nav_html.append(
-                f'<a href="?tab={item_key}" class="dropdown-item{active_class}">'
-                f'<span class="item-icon">{item_icon}</span>{item_label}</a>'
-            )
-        nav_html.append('</div></div>')
-    nav_html.append('</div>')
-    st.markdown("".join(nav_html), unsafe_allow_html=True)
 
-    if current_tab == "restock":
-        render_restock_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, all_sales_map, amazon_stock_map, amazon_fetching, amazon_errors, amazon_fetched_at)
-    elif current_tab == "alert":
-        render_alert_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, amazon_stock_map, amazon_fetching, amazon_errors, amazon_fetched_at)
-    elif current_tab == "sales":
-        render_sales_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, all_sales_map, amazon_stock_map, amazon_fetching, amazon_errors, amazon_fetched_at)
-    elif current_tab == "orderhistory":
-        render_order_history_tab()
-    elif current_tab == "delivery":
-        render_delivery_tab(file_infos, rakuten_stock_map, rakuten_errors, rakuten_fetching, rakuten_fetched_at)
-    elif current_tab == "stockcheck":
-        render_stock_check_tab()
+        with tab_restock:
+            render_restock_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, all_sales_map, amazon_stock_map, amazon_fetching, amazon_errors, amazon_fetched_at)
+
+        with tab_alert:
+            render_alert_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, amazon_stock_map, amazon_fetching, amazon_errors, amazon_fetched_at)
+
+        with tab_sales:
+            render_sales_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, all_sales_map, amazon_stock_map, amazon_fetching, amazon_errors, amazon_fetched_at)
+
+        with tab_orderhistory:
+            render_order_history_tab()
+
+    with tab_group_zozo:
+        tab_delivery, tab_stockcheck = st.tabs(
+            ["📥 納品推奨数システム", "🧮 在庫下げチェック"]
+        )
+
+        with tab_delivery:
+            render_delivery_tab(file_infos, rakuten_stock_map, rakuten_errors, rakuten_fetching, rakuten_fetched_at)
+
+        with tab_stockcheck:
+            render_stock_check_tab()
 
 
 if __name__ == "__main__":
