@@ -695,6 +695,15 @@ function clearSavedState() {
   if (banner) banner.style.display = 'none';
 }
 
+function isSameLocalDay(isoStr) {
+  if (!isoStr) return false;
+  const saved = new Date(isoStr);
+  const now = new Date();
+  return saved.getFullYear() === now.getFullYear()
+    && saved.getMonth() === now.getMonth()
+    && saved.getDate() === now.getDate();
+}
+
 function restoreAutosavedState() {
   let raw;
   try {
@@ -711,6 +720,12 @@ function restoreAutosavedState() {
     return;
   }
   if (!state) return;
+
+  // 保存日が今日でなければ（日をまたいでいたら）、古いデータとして破棄して復元しない
+  if (!isSameLocalDay(state.savedAt)) {
+    try { localStorage.removeItem(AUTOSAVE_KEY); } catch (e) {}
+    return;
+  }
 
   isRestoringState = true;
 
