@@ -23,9 +23,6 @@ import io
 import gspread
 from google.oauth2.service_account import Credentials as GoogleCredentials
 
-# 追加（ZOZO在庫チェック用。外部ライブラリを増やさないよう標準ライブラリのみで実装。
-#         ※ html モジュールは冒頭で import 済みのものを流用）
-
 
 # ==========================
 # Tempostar CSV 読み込み
@@ -2962,212 +2959,36 @@ def main():
         else:
             components.html(html_content, height=2600, scrolling=True)
 
-    def make_zozo_html_table(df: pd.DataFrame) -> str:
-        """ZOZO在庫チェック用のHTMLテーブル（既存のsku-tableスタイルを流用）。"""
-        stock_class_map = {"在庫なし": "stock-danger", "残り": "stock-warn"}
+    # タブ構成：まず大分類（テンポスター／ZOZO）で分け、その中に各機能タブを配置する
+    tab_group_tempostar, tab_group_zozo = st.tabs(["🏬 テンポスター機能", "📦 ZOZO機能"])
 
-        def stock_cell(v):
-            v = str(v)
-            if v == "在庫なし":
-                return f'<span class="stock-danger">{html.escape(v)}</span>'
-            if v.startswith("残り"):
-                return f'<span class="stock-warn">{html.escape(v)}</span>'
-            return html.escape(v)
-
-        thead = "<thead><tr>" + "".join(
-            f"<th>{html.escape(str(c))}</th>" for c in df.columns if c != "URL"
-        ) + "</tr></thead>"
-
-        body_rows = []
-        for _, row in df.iterrows():
-            tds = []
-            for col in df.columns:
-                if col == "URL":
-                    continue
-                if col == "商品名":
-                    url = row.get("URL", "")
-                    label = html.escape(str(row[col]))
-                    if url:
-                        tds.append(
-                            f"<td><a href='{html.escape(str(url))}' target='_blank' "
-                            f"style='color:#0073e6; text-decoration:none;'>{label}</a></td>"
-                        )
-                    else:
-                        tds.append(f"<td>{label}</td>")
-                elif col == "在庫状況":
-                    tds.append(f"<td>{stock_cell(row[col])}</td>")
-                else:
-                    tds.append(f"<td>{html.escape(str(row[col]))}</td>")
-            body_rows.append("<tr>" + "".join(tds) + "</tr>")
-
-        return f"""
-        <table class="sku-table">
-          {thead}
-          <tbody>{"".join(body_rows)}</tbody>
-        </table>
-        """
-
-    def render_zozo_tab():
-        st.markdown(
-            "Excelマクロ（ZozoStockChecker）で取得したZOZOTOWN「perky room」のCSVを読み込んで、"
-            "カラー×サイズごとの在庫状況（在庫あり／残りN点／在庫なし）を確認するための画面です。"
-        )
-        st.caption(
-            "先にExcel側で「① 在庫取得実行」→「② CSV出力」を実行し、出力されたCSVをここにドラッグ&ドロップしてください。"
+    with tab_group_tempostar:
+        tab_restock, tab_alert, tab_sales, tab_orderhistory = st.tabs(
+            ["発注推奨一覧", "在庫アラート", "売上個数一覧", "発注履歴"]
         )
 
-        uploaded = st.file_uploader(
-            "ZOZO在庫CSVをアップロード",
-            type="csv",
-            key="zozo_csv_uploader",
-        )
-        if not uploaded:
-            return
+        with tab_restock:
+            render_restock_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, all_sales_map, amazon_stock_map, amazon_fetching, amazon_errors, amazon_fetched_at)
 
-        df = read_csv_flexible(uploaded)
-        if df is None:
-            st.error("CSVの読み込みに失敗しました（文字コード不明）。Excelマクロが出力したCSVをそのまま使ってください。")
-            return
+        with tab_alert:
+            render_alert_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, amazon_stock_map, amazon_fetching, amazon_errors, amazon_fetched_at)
 
-        required_cols = {"ブランド", "商品名", "ZOZO品番", "店舗品番", "カラー", "サイズ", "在庫状況", "URL"}
-        if not required_cols.issubset(df.columns):
-            st.error(
-                f"必要な列（{', '.join(required_cols)}）が見つかりません。"
-                f"検出された列：{', '.join(df.columns)}"
-            )
-            return
+        with tab_sales:
+            render_sales_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, all_sales_map, amazon_stock_map, amazon_fetching, amazon_errors, amazon_fetched_at)
 
-        for col in required_cols:
-            df[col] = df[col].fillna("").astype(str)
+        with tab_orderhistory:
+            render_order_history_tab()
 
-        fetched_at = ""
-        if "取得日時" in df.columns and len(df) > 0:
-            fetched_at = str(df["取得日時"].iloc[0])
-        if fetched_at:
-            st.caption(f"📦 このCSVの取得日時: {fetched_at}（{uploaded.name}）")
-
-        # ---------- サマリー ----------
-        total = len(df)
-        n_none = int((df["在庫状況"] == "在庫なし").sum())
-        n_low = int(df["在庫状況"].astype(str).str.startswith("残り").sum())
-        n_ok = total - n_none - n_low
-        st.markdown(
-            f'<div class="metric-bar">'
-            f'<div class="metric-chip">SKU行数<strong>{total:,}</strong></div>'
-            f'<div class="metric-chip">在庫あり<strong>{n_ok:,}</strong></div>'
-            f'<div class="metric-chip">残りわずか<strong>{n_low:,}</strong></div>'
-            f'<div class="metric-chip">在庫なし<strong>{n_none:,}</strong></div>'
-            f'</div>',
-            unsafe_allow_html=True,
+    with tab_group_zozo:
+        tab_delivery, tab_stockcheck = st.tabs(
+            ["納品推奨数システム", "在庫下げチェック"]
         )
 
-        # ---------- フィルター ----------
-        fc1, fc2, fc3 = st.columns([2, 2, 3])
-        with fc1:
-            stock_filter = st.selectbox(
-                "在庫状況で絞り込み",
-                ["すべて", "在庫あり", "残りわずか（残りN点）", "在庫なし"],
-                key="zozo_stock_filter",
-            )
-        with fc2:
-            brand_options = ["すべて"] + sorted(df["ブランド"].replace("", pd.NA).dropna().unique().tolist())
-            brand_filter = st.selectbox("ブランドで絞り込み", brand_options, key="zozo_brand_filter")
-        with fc3:
-            keyword = st.text_input("商品名・カラーで検索", key="zozo_keyword_filter", placeholder="例：ハット、ブラック")
+        with tab_delivery:
+            render_delivery_tab(file_infos, rakuten_stock_map, rakuten_errors, rakuten_fetching, rakuten_fetched_at)
 
-        view = df.copy()
-        if stock_filter == "在庫あり":
-            view = view[view["在庫状況"] == "在庫あり"]
-        elif stock_filter == "残りわずか（残りN点）":
-            view = view[view["在庫状況"].astype(str).str.startswith("残り")]
-        elif stock_filter == "在庫なし":
-            view = view[view["在庫状況"] == "在庫なし"]
-
-        if brand_filter != "すべて":
-            view = view[view["ブランド"] == brand_filter]
-
-        if keyword:
-            mask = (
-                view["商品名"].astype(str).str.contains(keyword, case=False, na=False)
-                | view["カラー"].astype(str).str.contains(keyword, case=False, na=False)
-            )
-            view = view[mask]
-
-        # 欠品・残りわずかを上に表示（納品数を考える際に見やすいように）
-        stock_priority = {"在庫なし": 0}
-        view = view.copy()
-        view["_並び順"] = view["在庫状況"].apply(
-            lambda v: 0 if v == "在庫なし" else (1 if str(v).startswith("残り") else 2)
-        )
-        view = view.sort_values("_並び順").drop(columns="_並び順")
-
-        st.caption(f"表示中: {len(view):,} / {total:,} 行")
-        st.markdown(
-            make_zozo_html_table(
-                view[["ブランド", "商品名", "ZOZO品番", "店舗品番", "カラー", "サイズ", "在庫状況", "URL"]]
-            ),
-            unsafe_allow_html=True,
-        )
-
-        # ---------- SKUマスターとの紐づけ確認（検証用） ----------
-        with st.expander("🔗 SKUマスター（CS品番）との紐づけ確認（検証用）"):
-            st.caption(
-                "ZOZOの「店舗品番」と、SKUマスターの「CS品番」が一致するかを確認します。"
-                "一致すれば、木曜時点の在庫日報CSV（販売可能数合計）と今のZOZO在庫を比較できます。"
-                "※ 在庫日報CSVは現状「納品推奨数システム」タブ（ブラウザ内のみで処理）に読み込まれており、"
-                "Python側からはまだ参照できません。差分表示を作る場合は、このタブにも"
-                "在庫日報CSVのアップロード欄を別途追加する必要があります。"
-            )
-            sku_master = load_sku_master()
-            if not sku_master:
-                st.info("SKUマスターが読み込めていません（『SKUマスター』フォルダにCSVが必要です）。")
-            else:
-                cs_no_set = {m["cs_no"] for m in sku_master}
-                zozo_codes = df["店舗品番"].replace("", pd.NA).dropna().unique().tolist()
-                matched = [c for c in zozo_codes if c in cs_no_set]
-                unmatched = [c for c in zozo_codes if c not in cs_no_set]
-                st.markdown(
-                    f'<div class="metric-bar">'
-                    f'<div class="metric-chip">ZOZO店舗品番（ユニーク）<strong>{len(zozo_codes):,}</strong></div>'
-                    f'<div class="metric-chip">CS品番と一致<strong>{len(matched):,}</strong></div>'
-                    f'<div class="metric-chip">不一致<strong>{len(unmatched):,}</strong></div>'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
-                if unmatched:
-                    st.caption("一致しなかった店舗品番の例（先頭20件）：")
-                    st.write(unmatched[:20])
-                if matched:
-                    st.success(
-                        f"{len(matched)}件が一致しました。この形式で紐づけが可能そうです。"
-                        "次のステップとして、Tempostarの現在庫との差分表示を追加できます。"
-                    )
-
-    # タブ順：最初に「在庫少商品（発注目安）」を開く
-    tab_restock, tab_alert, tab_sales, tab_delivery, tab_stockcheck, tab_zozo, tab_orderhistory = st.tabs(
-        ["発注推奨一覧", "在庫アラート", "売上個数一覧", "納品推奨数システム", "在庫下げチェック", "ZOZO在庫チェック", "発注履歴"]
-    )
-
-    with tab_restock:
-        render_restock_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, all_sales_map, amazon_stock_map, amazon_fetching, amazon_errors, amazon_fetched_at)
-
-    with tab_alert:
-        render_alert_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, amazon_stock_map, amazon_fetching, amazon_errors, amazon_fetched_at)
-
-    with tab_sales:
-        render_sales_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, all_sales_map, amazon_stock_map, amazon_fetching, amazon_errors, amazon_fetched_at)
-
-    with tab_delivery:
-        render_delivery_tab(file_infos, rakuten_stock_map, rakuten_errors, rakuten_fetching, rakuten_fetched_at)
-
-    with tab_stockcheck:
-        render_stock_check_tab()
-
-    with tab_zozo:
-        render_zozo_tab()
-
-    with tab_orderhistory:
-        render_order_history_tab()
+        with tab_stockcheck:
+            render_stock_check_tab()
 
 
 if __name__ == "__main__":
