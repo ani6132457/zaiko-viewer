@@ -1971,14 +1971,29 @@ h1, h2, h3, h4,
     position: absolute;
     top: 100%;
     left: 0;
-    margin-top: 6px;
-    min-width: 200px;
+    margin-top: 12px;
+    min-width: 230px;
     background: #ffffff;
-    box-shadow: 0 10px 24px rgba(42,36,64,0.16);
-    border-radius: 16px;
-    overflow: hidden;
+    box-shadow: 0 16px 36px rgba(42,36,64,0.20);
+    border-radius: 20px;
+    border: 2px solid var(--violet-soft);
+    overflow: visible;
+    padding: 8px;
     z-index: 10000;
-    transition: opacity 0.16s ease, transform 0.16s ease;
+    transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.dropdown::before {
+    content: "";
+    position: absolute;
+    top: -9px;
+    left: 26px;
+    width: 16px;
+    height: 16px;
+    background: #ffffff;
+    border-left: 2px solid var(--violet-soft);
+    border-top: 2px solid var(--violet-soft);
+    border-radius: 4px 0 0 0;
+    transform: rotate(45deg);
 }
 .nav-toggle:checked ~ .dropdown {
     opacity: 1;
@@ -2001,21 +2016,33 @@ h1, h2, h3, h4,
     z-index: 10001;
 }
 .dropdown-item {
-    display: block;
-    padding: 11px 20px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    margin-bottom: 4px;
+    border-radius: 14px;
     font-size: 13px;
-    font-weight: 500;
+    font-weight: 600;
     color: var(--ink);
     text-decoration: none;
     white-space: nowrap;
+    transition: background 0.12s ease, transform 0.12s ease;
+}
+.dropdown-item:last-child {
+    margin-bottom: 0;
+}
+.dropdown-item .item-icon {
+    font-size: 16px;
 }
 .dropdown-item:hover {
     background: var(--violet-soft);
     color: var(--violet);
+    transform: translateX(3px);
 }
 .dropdown-item.active-item {
     color: var(--accent);
-    font-weight: 700;
+    font-weight: 800;
     background: var(--accent-soft);
 }
 
@@ -3124,22 +3151,22 @@ h1, h2, h3, h4,
             "key": "tempostar",
             "label": "🏬 テンポスター機能",
             "items": [
-                ("restock", "発注推奨一覧"),
-                ("alert", "在庫アラート"),
-                ("sales", "売上個数一覧"),
-                ("orderhistory", "発注履歴"),
+                ("restock", "🛒", "発注推奨一覧"),
+                ("alert", "🚨", "在庫アラート"),
+                ("sales", "📊", "売上個数一覧"),
+                ("orderhistory", "🗂️", "発注履歴"),
             ],
         },
         {
             "key": "zozo",
             "label": "📦 ZOZO機能",
             "items": [
-                ("delivery", "納品推奨数システム"),
-                ("stockcheck", "在庫下げチェック"),
+                ("delivery", "📥", "納品推奨数システム"),
+                ("stockcheck", "🧮", "在庫下げチェック"),
             ],
         },
     ]
-    valid_tab_keys = [item_key for group in NAV_GROUPS for item_key, _ in group["items"]]
+    valid_tab_keys = [item_key for group in NAV_GROUPS for item_key, _, _ in group["items"]]
 
     try:
         current_tab = st.query_params.get("tab", "restock")
@@ -3155,7 +3182,7 @@ h1, h2, h3, h4,
 
     nav_html = ['<div class="topnav">']
     for group in NAV_GROUPS:
-        group_active = any(item_key == current_tab for item_key, _ in group["items"])
+        group_active = any(item_key == current_tab for item_key, _, _ in group["items"])
         toggle_id = f"nav-toggle-{group['key']}"
         nav_html.append(f'<div class="nav-group{" active-group" if group_active else ""}">')
         nav_html.append(f'<input type="checkbox" id="{toggle_id}" class="nav-toggle">')
@@ -3164,9 +3191,12 @@ h1, h2, h3, h4,
         )
         nav_html.append(f'<label for="{toggle_id}" class="nav-overlay" aria-hidden="true"></label>')
         nav_html.append('<div class="dropdown">')
-        for item_key, item_label in group["items"]:
+        for item_key, item_icon, item_label in group["items"]:
             active_class = " active-item" if item_key == current_tab else ""
-            nav_html.append(f'<a href="?tab={item_key}" class="dropdown-item{active_class}">{item_label}</a>')
+            nav_html.append(
+                f'<a href="?tab={item_key}" class="dropdown-item{active_class}">'
+                f'<span class="item-icon">{item_icon}</span>{item_label}</a>'
+            )
         nav_html.append('</div></div>')
     nav_html.append('</div>')
     st.markdown("".join(nav_html), unsafe_allow_html=True)
