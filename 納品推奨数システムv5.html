@@ -1485,6 +1485,7 @@ function toggleStatus(status, checkbox) {
   }
   currentPage = 1;
   render();
+  if (window.__syncEmbedHeight) setTimeout(window.__syncEmbedHeight, 0);
 }
 
 function resetStatus() {
@@ -1495,6 +1496,7 @@ function resetStatus() {
   });
   currentPage = 1;
   render();
+  if (window.__syncEmbedHeight) setTimeout(window.__syncEmbedHeight, 0);
 }
 
 function statusChip(r) {
@@ -1616,7 +1618,7 @@ function render() {
      未反映納品は出荷日が ${periodStr} の納品書全行を対象。${tempostarInjected ? `<br>📦 ${stockSourceLabel}在庫＝${stockSourceLabel}の最新在庫（SKUマスターでCS品番と紐付け）。自社売上個数＝${salesStartLabel} 〜 ${salesEndLabel} の期間集計（上部の日付で変更可）。` : ''}`;
 }
 
-function changePage(d) { currentPage += d; render(); }
+function changePage(d) { currentPage += d; render(); if (window.__syncEmbedHeight) setTimeout(window.__syncEmbedHeight, 0); }
 
 function esc(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -1773,26 +1775,49 @@ function renderGroupPanel() {
 restoreAutosavedState();
 
 // ── 埋め込みiframeの高さを、内容量の変化（絞り込みなど）にあわせて常に追従させる ──
-// ※ 高さが一度大きくなった後に縮まないケースがあるため、ResizeObserverと定期チェックの
-//   両方でStreamlit側に現在の実際の高さを送り続ける。
+// ※ postMessageによる通知だけでは反映されない環境があったため、
+//   同一オリジン特性を利用して親ページ側の該当iframe要素を直接見つけて
+//   高さを書き換える方式も併用する（こちらがより確実）。
 (function() {
   let _lastSentHeight = 0;
-  function sendFrameHeight() {
-    const h = Math.ceil(document.documentElement.getBoundingClientRect().height);
-    if (h > 0 && h !== _lastSentHeight) {
-      _lastSentHeight = h;
-      try {
-        window.parent.postMessage({ type: "streamlit:setFrameHeight", height: h }, "*");
-      } catch (e) {}
-    }
+  function syncEmbedHeight() {
+    const h = Math.ceil(document.documentElement.getBoundingClientRect().height) + 4;
+    if (h <= 0 || h === _lastSentHeight) return;
+    _lastSentHeight = h;
+
+    // 方式1: Streamlitコンポーネント標準のpostMessageプロトコル
+    try {
+      window.parent.postMessage({ type: "streamlit:setFrameHeight", height: h }, "*");
+    } catch (e) {}
+
+    // 方式2: 親ドキュメント内から自分自身が表示されているiframe要素を直接探して高さを書き換える
+    // （Streamlit側が固定height指定のcomponents.htmlを使っている場合、iframe自体だけでなく
+    //   それを包む要素にも固定heightが付いていることがあるため、数階層分あわせて調整する）
+    try {
+      const frames = window.parent.document.querySelectorAll("iframe");
+      for (let i = 0; i < frames.length; i++) {
+        if (frames[i].contentWindow === window) {
+          frames[i].style.height = h + "px";
+          let el = frames[i].parentElement;
+          for (let depth = 0; el && depth < 4; depth++, el = el.parentElement) {
+            if (el.style && el.style.height) {
+              el.style.height = h + "px";
+            }
+          }
+          break;
+        }
+      }
+    } catch (e) {}
   }
+  window.__syncEmbedHeight = syncEmbedHeight;
+
   if (window.ResizeObserver) {
-    new ResizeObserver(sendFrameHeight).observe(document.body);
+    new ResizeObserver(syncEmbedHeight).observe(document.body);
   }
-  window.addEventListener("load", sendFrameHeight);
-  window.addEventListener("resize", sendFrameHeight);
-  setInterval(sendFrameHeight, 400);
-  sendFrameHeight();
+  window.addEventListener("load", syncEmbedHeight);
+  window.addEventListener("resize", syncEmbedHeight);
+  setInterval(syncEmbedHeight, 400);
+  syncEmbedHeight();
 })();
 </script>
 </body>
