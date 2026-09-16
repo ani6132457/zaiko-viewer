@@ -893,6 +893,7 @@ function renderStockChart(container, history) {
   const points = history.map((h, i) => `${xOf(i)},${yScale(h.stock)}`).join(' ');
 
   const fmtDate = d => (d && d.length === 8) ? `${d.slice(4,6)}/${d.slice(6,8)}` : d;
+  const fmtDateWithYear = d => (d && d.length === 8) ? `${d.slice(0,4)}/${d.slice(4,6)}/${d.slice(6,8)}` : d;
   let labelIdxs;
   if (n <= 6) {
     labelIdxs = history.map((_, i) => i);
@@ -907,13 +908,23 @@ function renderStockChart(container, history) {
     `<circle cx="${xOf(i)}" cy="${yScale(h.stock)}" r="2.5" fill="var(--accent)" />`
   ).join('');
 
+  // 横線メモリ（値の範囲に応じて10単位 or 100単位で引く）
+  const valueRange = maxV - minV;
+  const gridStep = valueRange <= 200 ? 10 : 100;
+  const gridStart = Math.ceil(minV / gridStep) * gridStep;
+  let gridLines = '';
+  for (let v = gridStart; v <= maxV; v += gridStep) {
+    const gy = yScale(v);
+    gridLines += `<line x1="${padding.left}" y1="${gy}" x2="${width-padding.right}" y2="${gy}" stroke="var(--border)" stroke-dasharray="2,2" />`;
+    gridLines += `<text x="${padding.left-6}" y="${gy+3}" font-size="9" fill="var(--text-muted)" text-anchor="end">${v}</text>`;
+  }
+
   container.innerHTML = `
     <div style="position:relative;">
       <svg id="stock-chart-svg" viewBox="0 0 ${width} ${height}" style="width:100%;height:auto;display:block;cursor:crosshair;">
+        ${gridLines}
         <line x1="${padding.left}" y1="${padding.top}" x2="${padding.left}" y2="${height-padding.bottom}" stroke="var(--border-md)" />
         <line x1="${padding.left}" y1="${height-padding.bottom}" x2="${width-padding.right}" y2="${height-padding.bottom}" stroke="var(--border-md)" />
-        <text x="${padding.left-6}" y="${padding.top+4}" font-size="10" fill="var(--text-muted)" text-anchor="end">${maxV}</text>
-        <text x="${padding.left-6}" y="${height-padding.bottom+4}" font-size="10" fill="var(--text-muted)" text-anchor="end">${minV}</text>
         <polyline points="${points}" fill="none" stroke="var(--accent)" stroke-width="2" />
         ${dots}
         ${xLabels}
@@ -953,7 +964,7 @@ function renderStockChart(container, history) {
 
     tooltip.style.left = `${px / scaleX}px`;
     tooltip.style.top = `${py / scaleY}px`;
-    tooltip.textContent = `${fmtDate(h.d)}：${h.stock}（前回比 ${diffText}）`;
+    tooltip.textContent = `${fmtDateWithYear(h.d)}：${h.stock}（前回比 ${diffText}）`;
     tooltip.style.display = 'block';
   }
 

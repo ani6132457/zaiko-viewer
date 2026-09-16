@@ -953,6 +953,7 @@ def render_interactive_sku_table(
   .sku-table th.sorted .arrow { opacity:1; color: var(--accent); }
   .sku-table td { padding:9px 10px; border-bottom:1px solid #f1eefc; vertical-align:middle; color:var(--ink); }
   .sku-table tbody tr { cursor:pointer; }
+  .sku-table td.cell-text-select { cursor:text; }
   .sku-table tbody tr:hover { background:var(--accent-soft); }
   .sku-table tbody tr.selected { background:var(--violet-soft); }
   .sku-table img { max-height:56px; width:auto; display:block; margin:auto; border-radius:8px; }
@@ -1200,10 +1201,14 @@ def render_interactive_sku_table(
         const td = document.createElement("td");
         if (col.type === "number" || col.type === "order") td.classList.add("num");
         if (col.key === "商品名") td.classList.add("name-cell");
+        if (col.type === "text") td.classList.add("cell-text-select");
         td.innerHTML = cellHtml(col, row[col.key]);
         tr.appendChild(td);
       });
-      tr.addEventListener("click", function() {
+      tr.addEventListener("click", function(e) {
+        // 商品コード・商品名などテキスト列の上でのクリックは、
+        // ダブルクリックによるテキスト選択・コピー操作の邪魔になるためグラフ表示を開かない
+        if (e.target.closest(".cell-text-select")) return;
         openModal(sku, tr);
       });
       tbody.appendChild(tr);
