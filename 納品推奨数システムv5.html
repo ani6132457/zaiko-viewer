@@ -315,8 +315,9 @@
   .filter-reset:hover { color: var(--text-muted); background: var(--surface2); }
   /* ── 在庫推移グラフ モーダル ── */
   .stock-modal-backdrop {
-    position: fixed;
-    inset: 0;
+    position: absolute;
+    left: 0;
+    width: 100%;
     background: rgba(0,0,0,0.42);
     z-index: 10000;
     display: flex;
@@ -983,6 +984,41 @@ function renderStockChart(container, history) {
   }, { passive: false });
 }
 
+// ── モーダルを「親ページ（Streamlit本体）から見て今画面に映っている範囲」に合わせて配置する ──
+// ページ全体を1本のスクロールにしているため、iframe自身はスクロールを持たない。
+// position:fixedはiframe自身の座標系に対して効いてしまい、画面外（ページ全体の中央）に
+// 表示されてしまうため、親ウィンドウの実際のスクロール位置を都度計算してabsolute配置する。
+function _findSelfIframeInParent() {
+  try {
+    const frames = window.parent.document.querySelectorAll('iframe');
+    for (let i = 0; i < frames.length; i++) {
+      if (frames[i].contentWindow === window) return frames[i];
+    }
+  } catch (e) {}
+  return null;
+}
+
+function positionModalToParentViewport(backdropEl) {
+  const box = backdropEl.querySelector(':scope > div') || backdropEl.firstElementChild;
+  let viewportH = window.innerHeight;
+  let visibleTop = 0;
+  try {
+    const el = _findSelfIframeInParent();
+    if (el) {
+      const rect = el.getBoundingClientRect();
+      viewportH = window.parent.innerHeight;
+      visibleTop = Math.max(0, -rect.top);
+      // iframeの下端より下にはみ出さないよう調整
+      const iframeH = el.getBoundingClientRect().height;
+      visibleTop = Math.min(visibleTop, Math.max(0, iframeH - viewportH));
+    }
+  } catch (e) {}
+  backdropEl.style.top = visibleTop + 'px';
+  backdropEl.style.height = viewportH + 'px';
+}
+
+let _modalRepositionHandler = null;
+
 function openStockModal(sku, label) {
   const title = document.getElementById('stock-modal-title');
   const body = document.getElementById('stock-modal-body');
@@ -991,11 +1027,26 @@ function openStockModal(sku, label) {
   title.textContent = `📈 在庫推移（${label || sku}）`;
   renderStockChart(body, stockHistoryMap[sku]);
   backdrop.style.display = 'flex';
+  positionModalToParentViewport(backdrop);
+
+  // 表示中に親ページ側がスクロール・リサイズされても追従させる
+  _modalRepositionHandler = () => positionModalToParentViewport(backdrop);
+  try {
+    window.parent.addEventListener('scroll', _modalRepositionHandler, true);
+    window.parent.addEventListener('resize', _modalRepositionHandler);
+  } catch (e) {}
 }
 
 function closeStockModal(event) {
   const backdrop = document.getElementById('stock-modal-backdrop');
   if (backdrop) backdrop.style.display = 'none';
+  if (_modalRepositionHandler) {
+    try {
+      window.parent.removeEventListener('scroll', _modalRepositionHandler, true);
+      window.parent.removeEventListener('resize', _modalRepositionHandler);
+    } catch (e) {}
+    _modalRepositionHandler = null;
+  }
 }
 
 function toggleSelectAllDelivery(checkbox) {
