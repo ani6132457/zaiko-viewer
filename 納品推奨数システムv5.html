@@ -376,7 +376,7 @@
   </div>
 
   <!-- アップロード -->
-  <div class="upload-section" style="grid-template-columns:1fr 1fr 1fr 1fr 1fr">
+  <div class="upload-section" style="grid-template-columns:1fr 1fr 1fr 1fr">
     <div class="upload-card" id="card-inv" ondragover="onDrag(event,'inv')" ondragleave="offDrag('inv')" ondrop="onDrop(event,'inv')">
       <input type="file" accept=".csv" id="file-inv" onchange="loadFile('inv', this.files[0])">
       <div class="upload-icon">📊</div>
@@ -391,24 +391,17 @@
       <div class="upload-desc">納品書_N_.csv</div>
       <div class="upload-status" id="status-del">ファイルを選択またはドロップ</div>
     </div>
-    <div class="upload-card" id="card-ord" ondragover="onDrag(event,'ord')" ondragleave="offDrag('ord')" ondrop="onDrop(event,'ord')">
-      <input type="file" accept=".csv" id="file-ord" onchange="loadFile('ord', this.files[0])">
-      <div class="upload-icon">🛒</div>
-      <div class="upload-label">③ 注文 CSV <span style="font-size:11px;color:var(--text-hint);font-weight:400">（任意）</span></div>
-      <div class="upload-desc">YYYY_MM_DD.csv（Shift-JIS）</div>
-      <div class="upload-status" id="status-ord">ファイルを選択またはドロップ</div>
-    </div>
     <div class="upload-card" id="card-items" ondragover="onDrag(event,'items')" ondragleave="offDrag('items')" ondrop="onDrop(event,'items')">
       <input type="file" accept=".csv" id="file-items" onchange="loadFile('items', this.files[0])">
       <div class="upload-icon">📋</div>
-      <div class="upload-label">④ 商品一覧 CSV <span style="font-size:11px;color:var(--text-hint);font-weight:400">（任意）</span></div>
+      <div class="upload-label">③ 商品一覧 CSV <span style="font-size:11px;color:var(--text-hint);font-weight:400">（任意）</span></div>
       <div class="upload-desc">商品一覧.csv（未出品判定用）</div>
       <div class="upload-status" id="status-items">ファイルを選択またはドロップ</div>
     </div>
     <div class="upload-card" id="card-master" ondragover="onDrag(event,'master')" ondragleave="offDrag('master')" ondrop="onDrop(event,'master')">
       <input type="file" accept=".csv" id="file-master" onchange="loadMasterFile(this.files[0])">
       <div class="upload-icon">🔗</div>
-      <div class="upload-label">⑤ SKUマスター CSV <span style="font-size:11px;color:var(--text-hint);font-weight:400">（任意）</span></div>
+      <div class="upload-label">④ SKUマスター CSV <span style="font-size:11px;color:var(--text-hint);font-weight:400">（任意）</span></div>
       <div class="upload-desc">CS品番,SKU（在庫下げCSV用）</div>
       <div class="upload-status" id="status-master">ファイルを選択またはドロップ</div>
     </div>
@@ -486,6 +479,9 @@
             <button class="export-btn" style="border-color:#c0392b;color:#c0392b" onclick="deleteAllDelivery()">🗑 一括削除（全件）</button>
           </span>
           <button class="export-btn" onclick="exportCSV()">⬇ CSVエクスポート</button>
+          <input type="file" accept=".csv" id="file-carry" style="display:none" onchange="handleCarryOverFile(this.files[0])">
+          <button class="export-btn" onclick="document.getElementById('file-carry').click()">⬆ CSVインポート（引き継ぎ）</button>
+          <span id="carry-import-status" style="font-size:12px;color:var(--text-muted);align-self:center;"></span>
           <button class="export-btn" style="border-color:#1a56db;color:#1a56db" onclick="exportStockDownCSV()">⬇ 在庫を下げるCSV</button>
         </div>
       </div>
@@ -521,7 +517,7 @@
 
     <div id="panel-master" style="display:none">
       <div class="info-bar">
-        📌 SKUマスターは画面上部の「⑤ SKUマスター CSV」から読み込みます。ここでは内容の確認・追加・編集・削除ができます。
+        📌 SKUマスターは画面上部の「④ SKUマスター CSV」から読み込みます。ここでは内容の確認・追加・編集・削除ができます。
       </div>
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;gap:8px;">
         <div style="font-size:12px;color:var(--text-muted)">登録件数: <b id="master-count">0</b> 件（編集内容はブラウザ上のみに保持されます。保存するには下のボタンでCSVをダウンロードし、同じファイル名で元のファイルを上書きしてください）</div>
@@ -550,7 +546,9 @@
 
 <script>
 // ── 状態 ──
-let rawInv = null, rawDel = null, rawOrd = null, rawItems = null;
+let rawInv = null, rawDel = null, rawItems = null;
+let rawCarryOver = null;
+let carryOverMap = {}; // 前回エクスポートCSVから読み込んだ「CS品番→{deliveryQty, group}」
 let data = [];
 let selectedStatusesByMode = { all: new Set(), delivery: new Set() }; // タブ（全件/納品数入力済み）ごとに独立させる
 function currentStatusSet() {
@@ -647,7 +645,7 @@ function autosaveState() {
       }
     });
     const state = {
-      rawInv, rawDel, rawOrd, rawItems,
+      rawInv, rawDel, rawItems, rawCarryOver,
       masterMap, masterIdSeq,
       groupList,
       deliveryMap,
@@ -729,8 +727,9 @@ function restoreAutosavedState() {
 
   rawInv = state.rawInv || null;
   rawDel = state.rawDel || null;
-  rawOrd = state.rawOrd || null;
   rawItems = state.rawItems || null;
+  rawCarryOver = state.rawCarryOver || null;
+  if (rawCarryOver) parseCarryOverCsv();
 
   const markLoaded = (type, label) => {
     const card = document.getElementById('card-' + type);
@@ -740,8 +739,11 @@ function restoreAutosavedState() {
   };
   if (rawInv) markLoaded('inv', '復元済み（自動保存より）');
   if (rawDel) markLoaded('del', '復元済み（自動保存より）');
-  if (rawOrd) markLoaded('ord', '復元済み（自動保存より）');
   if (rawItems) markLoaded('items', '復元済み（自動保存より）');
+  if (rawCarryOver) {
+    const statusEl = document.getElementById('carry-import-status');
+    if (statusEl) statusEl.textContent = '✓ 前回の引き継ぎ内容を復元済み';
+  }
 
   // SKUマスターはStreamlit側から自動注入されている場合はそちらを優先し、
   // 注入がない場合のみ自動保存データから復元する
@@ -1121,13 +1123,11 @@ function updateDeliveryCount() {
 // ── ファイルロード ──
 function loadFile(type, file) {
   if (!file) return;
-  // 注文CSVはShift-JIS、他はUTF-8
-  const encoding = type === 'ord' ? 'Shift-JIS' : 'UTF-8';
+  const encoding = 'UTF-8';
   const reader = new FileReader();
   reader.onload = e => {
     if (type === 'inv')   rawInv   = e.target.result;
     else if (type === 'del')   rawDel   = e.target.result;
-    else if (type === 'ord')   rawOrd   = e.target.result;
     else if (type === 'items') rawItems = e.target.result;
     document.getElementById('card-'+type).classList.add('loaded');
     document.getElementById('status-'+type).textContent = '✓ ' + file.name;
@@ -1136,8 +1136,75 @@ function loadFile(type, file) {
   };
   reader.readAsText(file, encoding);
 }
+
+// ── CSVインポート（引き継ぎ）：CSVエクスポートの横のボタンから、計算済みの結果に対して
+//    即座に「納品数(入力)」「グループ」を反映する ──
+function handleCarryOverFile(file) {
+  if (!file) return;
+  const statusEl = document.getElementById('carry-import-status');
+  const reader = new FileReader();
+  reader.onload = e => {
+    rawCarryOver = e.target.result;
+    parseCarryOverCsv();
+    const matchedCount = Object.keys(carryOverMap).length;
+    if (matchedCount === 0) {
+      if (statusEl) statusEl.textContent = '';
+      return;
+    }
+    if (Array.isArray(data) && data.length > 0) {
+      applyCarryOver();
+      updateDeliveryCount();
+      renderGroupPanel();
+      render();
+    }
+    if (statusEl) statusEl.textContent = `✓ ${file.name} を反映しました`;
+    autosaveState();
+  };
+  reader.readAsText(file, 'UTF-8');
+}
+
+// ── 引き継ぎCSV（本ツールが以前に出力した「納品推奨数_YYYYMMDD.csv」）を読み込み、
+//    CS品番ごとの{deliveryQty, group}を復元用マップにしておく。
+//    再計算（runAnalysis）のたびに、この内容を新しいdataへ引き継ぐ。
+function parseCarryOverCsv() {
+  carryOverMap = {};
+  if (!rawCarryOver) return;
+  const rows = parseCSV(rawCarryOver);
+  if (!rows.length) return;
+  const headers = Object.keys(rows[0]);
+  if (!headers.includes('CS品番')) {
+    alert(
+      '前回の納品推奨数CSVとして認識できませんでした。\n' +
+      `検出された列名: ${headers.join(', ')}\n\n` +
+      '本ツールの「⬇ CSVエクスポート」で出力したファイルをそのまま読み込んでください。'
+    );
+    rawCarryOver = null;
+    return;
+  }
+  rows.forEach(r => {
+    const csNo = (r['CS品番'] || '').trim();
+    if (!csNo) return;
+    const qtyRaw = (r['納品数(入力)'] || '').trim();
+    const qty = qtyRaw !== '' && !isNaN(Number(qtyRaw)) ? Number(qtyRaw) : null;
+    const group = (r['グループ'] || '').trim() || null;
+    if (qty !== null || group) {
+      carryOverMap[csNo] = { deliveryQty: qty, group };
+    }
+  });
+}
+
+// runAnalysis()で組み上げたdataに、引き継ぎCSVの内容（納品数・グループ）を反映する
+function applyCarryOver() {
+  if (!carryOverMap || Object.keys(carryOverMap).length === 0) return;
+  data.forEach(r => {
+    const c = carryOverMap[r.cs_no];
+    if (!c) return;
+    if (c.deliveryQty !== null && c.deliveryQty !== undefined) r.deliveryQty = c.deliveryQty;
+    if (c.group) r.group = c.group;
+  });
+}
 function checkReady() {
-  // 在庫日報と納品書の2つがあれば実行可能（注文CSVは任意）
+  // 在庫日報と納品書の2つがあれば実行可能
   document.getElementById('run-btn').disabled = !(rawInv && rawDel);
 }
 function onDrag(e, type) { e.preventDefault(); document.getElementById('card-'+type).classList.add('dragging'); }
@@ -1352,25 +1419,12 @@ function runAnalysis() {
     recentDelivery[key] = (recentDelivery[key] || 0) + qty;
   });
 
-  // 注文数を集計（CS品番=列7、注文数=列17）
-  const orderQty = {};
-  if (rawOrd) {
-    const ordLines = rawOrd.replace(/\r\n/g,'\n').replace(/\r/g,'\n').trim().split('\n');
-    ordLines.slice(1).forEach(line => {
-      const cols = line.split(',');
-      const key = (cols[7] || '').replace(/^"|"$/g,'').trim();
-      const qty = parseInt((cols[17] || '').replace(/^"|"$/g,'').trim()) || 0;
-      if (key) orderQty[key] = (orderQty[key] || 0) + qty;
-    });
-  }
-
   let _idSeq = 0;
   data = invRows.map(r => {
     const key = r['CS品番'];
     const currentStock = parseInt(r['販売可能数合計']) || 0;
     const unref = recentDelivery[key] || 0;
-    const orders = orderQty[key] || 0;
-    const realStock = Math.max(0, currentStock + unref - orders);
+    const realStock = Math.max(0, currentStock + unref);
     const sold30 = parseInt(r['直近30日販売数']) || 0;
     const sold7  = parseInt(r['直近7日販売数'])  || 0;
     const dailyRate = sold7 > 0 ? sold7/7 : sold30/30;
@@ -1385,7 +1439,7 @@ function runAnalysis() {
       cs_no: key || '', category: r['親商品タイプ'] || '',
       maker_no: r['メーカー品番'] || '',
       firstSaleDate: r['初回販売開始設定日'] || '',
-      currentStock, unref, orders, realStock, sold30, sold7, dailyRate, recommend, stockDays,
+      currentStock, unref, realStock, sold30, sold7, dailyRate, recommend, stockDays,
       sku, tempostarStock, companySales: null,
       forecastSales: sku && forecastSalesMap[sku] !== undefined ? forecastSalesMap[sku] : null,
       deliveryQty: null, group: null,
@@ -1424,7 +1478,7 @@ function runAnalysis() {
         category: r['商品タイプ'] || r['親商品タイプ'] || '',
         maker_no: r['メーカー品番'] || '',
         firstSaleDate: r['初回販売開始設定日'] || '',
-        currentStock: null, unref: 0, orders: 0, realStock: null,
+        currentStock: null, unref: 0, realStock: null,
         sold30: null, sold7: null, dailyRate: 0, recommend: null, stockDays: null,
         sku: unlistedSku, tempostarStock: unlistedTempoStock, companySales: null,
         forecastSales: unlistedSku && forecastSalesMap[unlistedSku] !== undefined ? forecastSalesMap[unlistedSku] : null,
@@ -1435,6 +1489,8 @@ function runAnalysis() {
       });
     });
   }
+
+  applyCarryOver();
 
   selectedStatusesByMode.all.clear();
   selectedStatusesByMode.delivery.clear();
@@ -1632,8 +1688,6 @@ function render() {
   const outOfStock = data.filter(r => !r.unlisted && r.realStock === 0).length;
   const withUnref  = data.filter(r => r.unref > 0).length;
   const totalUnref = data.reduce((s,r) => s+r.unref, 0);
-  const withOrders = data.filter(r => r.orders > 0).length;
-  const totalOrders = data.reduce((s,r) => s+r.orders, 0);
   const unlistedCount = data.filter(r => r.unlisted).length;
   const d0 = data.find(r => r.fromDateStr);
   const periodStr = d0 ? `${d0.fromDateStr} 〜 ${d0.baseDateStr}` : '—';
@@ -1654,12 +1708,6 @@ function render() {
       <div class="metric-value" style="color:var(--accent)">${withUnref.toLocaleString()}</div>
       <div class="metric-sub">合計 +${totalUnref.toLocaleString()} 点</div>
     </div>
-    ${rawOrd ? `
-    <div class="metric">
-      <div class="metric-label">注文数（差引済）</div>
-      <div class="metric-value" style="color:#d97706">${totalOrders.toLocaleString()}</div>
-      <div class="metric-sub">${withOrders} SKU に注文あり</div>
-    </div>` : ''}
     ${rawItems ? `
     <div class="metric">
       <div class="metric-label">未出品 SKU</div>
@@ -1676,7 +1724,7 @@ function render() {
   const salesStartLabel = document.getElementById('sales-start-date').value;
   const salesEndLabel = document.getElementById('sales-end-date').value;
   document.getElementById('info-bar').innerHTML =
-    `📌 実質在庫 ＝ 現在庫 ＋ 未反映納品${rawOrd ? ' － 注文数（注文CSV）' : ''}。推奨納品数 ＝ 目標在庫（日販速度 × ${targetDays}日）－ 実質在庫。
+    `📌 実質在庫 ＝ 現在庫 ＋ 未反映納品。推奨納品数 ＝ 目標在庫（日販速度 × ${targetDays}日）－ 実質在庫。
      未反映納品は出荷日が ${periodStr} の納品書全行を対象。${tempostarInjected ? `<br>📦 ${stockSourceLabel}在庫＝${stockSourceLabel}の最新在庫（SKUマスターでCS品番と紐付け）。自社売上個数＝${salesStartLabel} 〜 ${salesEndLabel} の期間集計（上部の日付で変更可）。` : ''}`;
 }
 
@@ -1699,9 +1747,9 @@ function toShiftJisCsvBlob(text) {
 
 // ── CSVエクスポート ──
 function buildCsvString(rows) {
-  const header = `商品名,CS品番,カラー,サイズ,メーカー品番,初回販売開始日,カテゴリ,ZOZO在庫,${stockSourceLabel}在庫,自社売上個数,売上個数予想,未反映納品数,実質在庫,直近30日販売数,直近7日販売数,推奨納品数,納品数(入力),ステータス\n`;
+  const header = `商品名,CS品番,カラー,サイズ,メーカー品番,初回販売開始日,カテゴリ,ZOZO在庫,${stockSourceLabel}在庫,自社売上個数,売上個数予想,未反映納品数,実質在庫,直近30日販売数,直近7日販売数,推奨納品数,納品数(入力),グループ,ステータス\n`;
   const body = rows.map(r =>
-    `"${r.name}",${r.cs_no},"${r.color}",${r.size},"${r.maker_no}","${r.firstSaleDate}","${r.category}",${r.currentStock!==null?r.currentStock:''},${r.tempostarStock!==null&&r.tempostarStock!==undefined?r.tempostarStock:''},${r.companySales!==null&&r.companySales!==undefined?r.companySales:''},${r.forecastSales!==null&&r.forecastSales!==undefined?r.forecastSales:''},${r.unref},${r.realStock!==null?r.realStock:''},${r.sold30!==null?r.sold30:''},${r.sold7!==null?r.sold7:''},${r.recommend!==null?r.recommend:''},${r.deliveryQty!==null&&r.deliveryQty!==undefined?r.deliveryQty:''},${getStatusLabel(r)}`
+    `"${r.name}",${r.cs_no},"${r.color}",${r.size},"${r.maker_no}","${r.firstSaleDate}","${r.category}",${r.currentStock!==null?r.currentStock:''},${r.tempostarStock!==null&&r.tempostarStock!==undefined?r.tempostarStock:''},${r.companySales!==null&&r.companySales!==undefined?r.companySales:''},${r.forecastSales!==null&&r.forecastSales!==undefined?r.forecastSales:''},${r.unref},${r.realStock!==null?r.realStock:''},${r.sold30!==null?r.sold30:''},${r.sold7!==null?r.sold7:''},${r.recommend!==null?r.recommend:''},${r.deliveryQty!==null&&r.deliveryQty!==undefined?r.deliveryQty:''},"${r.group||''}",${getStatusLabel(r)}`
   ).join('\n');
   return header + body;
 }
