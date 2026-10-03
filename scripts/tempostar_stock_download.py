@@ -189,23 +189,47 @@ def click_log_search_button(driver) -> None:
     time.sleep(3)
 
 
+def _is_chrome_temp_file(p: Path) -> bool:
+    """Chrome(Linux)がダウンロード中に作る隠しの一時ファイル（例: .com.google.Chrome.55uGza）かどうか。
+    拡張子が .tmp / .crdownload / .part と違う形式なので、別途ここで弾く。"""
+    return p.name.startswith(".")
+
+
 def wait_for_download(download_dir: Path, click_time: float):
     """ダウンロード専用フォルダに、完成したファイルが現れるのを待つ。"""
     deadline = time.time() + DOWNLOAD_WAIT_SECONDS
     while time.time() < deadline:
-        files = [p for p in download_dir.iterdir() if p.is_file()]
-        in_progress = [p for p in files if p.suffix.lower() in TEMP_SUFFIXES]
-        finished = [
+        try:
+            files = [p for p in download_dir.iterdir() if p.is_file()]
+        except FileNotFoundError:
+            # 列挙している間にファイルが消えた（＝まだ書き込み中）→ 少し待って再試行
+            time.sleep(2)
+            continue
+
+        in_progress = [
             p for p in files
-            if p.suffix.lower() not in TEMP_SUFFIXES and p.stat().st_mtime >= click_time - 1
+            if p.suffix.lower() in TEMP_SUFFIXES or _is_chrome_temp_file(p)
         ]
+        finished = []
+        for p in files:
+            if p in in_progress:
+                continue
+            try:
+                if p.stat().st_mtime >= click_time - 1:
+                    finished.append(p)
+            except FileNotFoundError:
+                continue  # 消えた（一時ファイルが完成前に掴まれた）→ 無視して次へ
+
         if finished and not in_progress:
-            newest = max(finished, key=lambda p: p.stat().st_mtime)
-            # サイズが安定するまで少し待つ（書き込み途中のファイルを掴まないため）
-            size1 = newest.stat().st_size
-            time.sleep(1.5)
-            if newest.stat().st_size == size1:
-                return newest
+            try:
+                newest = max(finished, key=lambda p: p.stat().st_mtime)
+                # サイズが安定するまで少し待つ（書き込み途中のファイルを掴まないため）
+                size1 = newest.stat().st_size
+                time.sleep(1.5)
+                if newest.stat().st_size == size1:
+                    return newest
+            except FileNotFoundError:
+                pass  # 消えた → 次のループでやり直す
         time.sleep(2)
     return None
 
