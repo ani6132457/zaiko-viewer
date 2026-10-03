@@ -7,12 +7,13 @@ import re
 import json
 import math
 import requests
+import hmac
 import threading
 import time
 import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import streamlit.components.v1 as components
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pandas.tseries.offsets import DateOffset
 
 # 追加（オーバーレイ表示用）
@@ -1644,6 +1645,343 @@ def render_order_history_tab():
 
 
 
+# ==========================
+# 各モールCSV自動取得（GitHub Actions 連携）
+# ==========================
+# 仕組み: このタブのボタン → GitHub API で Actions のワークフローを実行 →
+#         Actions 上でテンポスターから在庫変動ログを取得 → CSVをリポジトリにコミット →
+#         Streamlit Cloud が自動で更新され、アプリに反映される。
+#
+# 必要な secrets（Streamlit の Secrets に設定）:
+#   [fetch_tab]
+#   password = "このタブを開くためのパスワード"
+#   [github]
+#   token    = "github_pat_..."   # 対象リポジトリの Actions: Read and write 権限のみ
+#   repo     = "オーナー名/リポジトリ名"
+#   branch   = "main"                    # 省略可
+#   workflow = "tempostar_stock.yml"     # 省略可
+JST = timezone(timedelta(hours=9))
+FETCH_TAB_MAX_FAILS = 5      # パスワードを間違えられる回数（同一セッション内）
+FETCH_MAX_DAYS = 14          # 1回の依頼で取得できる最大日数
+FETCH_HISTORY_DAYS = 14      # 取得状況の一覧に出す日数
+_WEEKDAYS_JA = ["月", "火", "水", "木", "金", "土", "日"]
+
+
+def _fetch_github_cfg():
+    """secrets から GitHub 連携設定を読む。未設定なら None。"""
+    try:
+        gh = st.secrets.get("github", {})
+        token = gh.get("token")
+        repo = gh.get("repo")
+        if not token or not repo:
+            return None
+        return {
+            "token": str(token),
+            "repo": str(repo),
+            "branch": str(gh.get("branch", "main")),
+            "workflow": str(gh.get("workflow", "tempostar_stock.yml")),
+        }
+    except Exception:
+        return None
+
+
+def _fetch_tab_unlocked() -> bool:
+    """パスワード認証。secrets にパスワードが無い場合は使用不可（安全側に倒す）。"""
+    try:
+        expected = str(st.secrets["fetch_tab"]["password"])
+    except Exception:
+        expected = ""
+    if not expected:
+        st.error(
+            "パスワードが設定されていないため、このタブは使用できません。"
+            "Streamlit の Secrets に [fetch_tab] password を設定してください。"
+        )
+        return False
+
+    if st.session_state.get("fetch_tab_ok"):
+        return True
+
+    fails = st.session_state.get("fetch_tab_fails", 0)
+    if fails >= FETCH_TAB_MAX_FAILS:
+        st.error("パスワードを規定回数間違えたため、ロックしました。ページを再読み込みしてやり直してください。")
+        return False
+
+    with st.form("fetch_tab_login"):
+        entered = st.text_input("パスワード", type="password")
+        submitted = st.form_submit_button("開く")
+    if submitted:
+        if hmac.compare_digest(entered.encode("utf-8"), expected.encode("utf-8")):
+            st.session_state["fetch_tab_ok"] = True
+            st.session_state["fetch_tab_fails"] = 0
+            st.rerun()
+        else:
+            fails += 1
+            st.session_state["fetch_tab_fails"] = fails
+            remaining = FETCH_TAB_MAX_FAILS - fails
+            if remaining > 0:
+                st.error(f"パスワードが違います（あと{remaining}回）")
+            else:
+                st.rerun()  # 入力欄を消して、ロック表示に切り替える
+    return False
+
+
+def _fetched_dates() -> set:
+    """カレントフォルダにある tempostar_stock_YYYYMMDD.csv の日付一覧。"""
+    dates = set()
+    for path in glob.glob("tempostar_stock_*.csv"):
+        m = re.search(r"tempostar_stock_(\d{8})\.csv$", os.path.basename(path))
+        if m:
+            try:
+                dates.add(datetime.strptime(m.group(1), "%Y%m%d").date())
+            except ValueError:
+                pass
+    return dates
+
+
+def _gh_headers(cfg: dict) -> dict:
+    return {
+        "Authorization": f"Bearer {cfg['token']}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+
+
+def _gh_error_message(resp) -> str:
+    hints = {
+        401: "トークンが無効、または期限切れの可能性があります。",
+        403: "トークンの権限が足りない可能性があります（Actions: Read and write が必要です）。",
+        404: "リポジトリ名またはワークフローのファイル名が違う可能性があります（トークンの対象リポジトリも確認してください）。",
+        422: "ブランチ名が違う、またはワークフローが workflow_dispatch に対応していない可能性があります。",
+    }
+    detail = ""
+    try:
+        detail = str(resp.json().get("message", ""))
+    except Exception:
+        pass
+    text = f"GitHub がエラーを返しました（HTTP {resp.status_code}）。{hints.get(resp.status_code, '')}"
+    if detail:
+        text += f"（{detail}）"
+    return text
+
+
+def _gh_dispatch(cfg: dict, dates: list):
+    """ワークフローを実行する。戻り値: (成功したか, エラーメッセージ)"""
+    url = f"https://api.github.com/repos/{cfg['repo']}/actions/workflows/{cfg['workflow']}/dispatches"
+    try:
+        resp = requests.post(
+            url,
+            headers=_gh_headers(cfg),
+            json={"ref": cfg["branch"], "inputs": {"dates": ",".join(dates)}},
+            timeout=20,
+        )
+    except requests.RequestException as e:
+        return False, f"GitHub に接続できませんでした: {e}"
+    if resp.status_code == 204:
+        return True, ""
+    return False, _gh_error_message(resp)
+
+
+@st.cache_data(ttl=8, show_spinner=False)
+def _gh_recent_runs(cfg: dict, limit: int = 5):
+    """直近の実行履歴。短時間キャッシュ（タブを開いていない操作で毎回API呼び出しが走らないように）。"""
+    url = f"https://api.github.com/repos/{cfg['repo']}/actions/workflows/{cfg['workflow']}/runs"
+    try:
+        resp = requests.get(
+            url,
+            headers=_gh_headers(cfg),
+            params={"event": "workflow_dispatch", "per_page": limit},
+            timeout=15,
+        )
+    except requests.RequestException as e:
+        return [], f"GitHub に接続できませんでした: {e}"
+    if resp.status_code != 200:
+        return [], _gh_error_message(resp)
+    runs = []
+    for r in resp.json().get("workflow_runs", []):
+        runs.append(
+            {
+                "id": r.get("id"),
+                "status": r.get("status"),
+                "conclusion": r.get("conclusion"),
+                "created_at": r.get("created_at"),
+                "url": r.get("html_url"),
+            }
+        )
+    return runs, ""
+
+
+def _run_is_active(run: dict) -> bool:
+    return run.get("status") != "completed"
+
+
+def _run_status_label(run: dict) -> str:
+    status, conclusion = run.get("status"), run.get("conclusion")
+    if status in ("queued", "waiting", "requested", "pending"):
+        return "⏳ 待機中"
+    if status == "in_progress":
+        return "🔄 実行中"
+    if status == "completed":
+        return {
+            "success": "✅ 成功",
+            "failure": "❌ 失敗",
+            "cancelled": "⚪ キャンセル",
+            "timed_out": "❌ 時間切れ",
+        }.get(conclusion, f"⚪ 完了（{conclusion}）")
+    return str(status or "不明")
+
+
+def _run_started_label(run: dict) -> str:
+    try:
+        dt = datetime.strptime(run["created_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        return dt.astimezone(JST).strftime("%m/%d %H:%M")
+    except Exception:
+        return "—"
+
+
+def _update_fetch_polling(active: bool):
+    """自動更新（10秒ごと）の開始・停止を切り替える。切り替え時は画面全体を1回更新する。"""
+    polling = st.session_state.get("fetch_polling", False)
+    # 依頼直後は GitHub 側に実行が登録されるまで少し時間がかかるため、しばらくは待つ
+    waiting = st.session_state.get("fetch_poll_until", 0) > time.time()
+    if active and not polling:
+        # 別の人が実行した分など、実行中のものを見つけたら自動更新を始める
+        st.session_state["fetch_polling"] = True
+        st.rerun()
+    elif not active and polling and not waiting:
+        st.session_state["fetch_polling"] = False
+        st.rerun()
+
+
+def _render_fetch_runs_panel(cfg: dict):
+    """実行状況の表示。実行中は 10 秒ごとに自動更新し、終わったら画面全体を更新する。"""
+    runs, err = _gh_recent_runs(cfg)
+    if err:
+        st.warning(err)
+        _update_fetch_polling(False)
+        return
+    if not runs:
+        st.caption("まだ実行履歴がありません。")
+        _update_fetch_polling(False)
+        return
+
+    for r in runs:
+        st.markdown(
+            f"- {_run_status_label(r)}　{_run_started_label(r)} 開始　[GitHubで詳細を見る]({r['url']})"
+        )
+    _update_fetch_polling(any(_run_is_active(r) for r in runs))
+
+
+def _render_fetch_runs(cfg: dict):
+    every = "10s" if st.session_state.get("fetch_polling") else None
+    if hasattr(st, "fragment"):
+        st.fragment(run_every=every)(_render_fetch_runs_panel)(cfg)
+    else:
+        _render_fetch_runs_panel(cfg)
+
+
+def render_fetch_tab():
+    st.subheader("各モールCSV自動取得")
+    if not _fetch_tab_unlocked():
+        return
+
+    cfg = _fetch_github_cfg()
+    today = datetime.now(JST).date()
+    yesterday = today - timedelta(days=1)
+    fetched = _fetched_dates()
+
+    st.markdown("### 🏬 Tempostar 在庫変動ログ")
+    st.caption(
+        "GitHub Actions 上でテンポスターにログインし、指定した日の在庫変動ログ（CSV）を取得して保存します。"
+        "取得が終わるとアプリが自動で更新され、データに反映されます。当日分は取得できません（前日まで）。"
+    )
+
+    # ---------- 取得状況 ----------
+    st.markdown("**取得状況（直近）**")
+    rows = []
+    for i in range(FETCH_HISTORY_DAYS):
+        d = yesterday - timedelta(days=i)
+        rows.append(
+            {
+                "日付": f"{d.strftime('%Y-%m-%d')}（{_WEEKDAYS_JA[d.weekday()]}）",
+                "状態": "✅ 取得済み" if d in fetched else "⚠️ 未取得",
+            }
+        )
+    missing = sum(1 for r in rows if r["状態"].startswith("⚠️"))
+    st.caption(f"直近{FETCH_HISTORY_DAYS}日のうち未取得: {missing}日")
+    st.dataframe(pd.DataFrame(rows), hide_index=True)
+
+    if cfg is None:
+        st.error(
+            "GitHub 連携の設定がありません。Streamlit の Secrets に [github] の token と repo を設定してください。"
+        )
+        return
+
+    # ---------- 取得の依頼 ----------
+    st.markdown("**取得する期間**")
+    picked = st.date_input(
+        "開始日 → 終了日（1日だけなら同じ日を選択）",
+        value=(yesterday, yesterday),
+        min_value=yesterday - timedelta(days=365),
+        max_value=yesterday,
+        key="fetch_date_range",
+    )
+    if isinstance(picked, (tuple, list)):
+        if len(picked) == 2:
+            start, end = picked
+        elif len(picked) == 1:
+            start = end = picked[0]
+        else:
+            start = end = yesterday
+    else:
+        start = end = picked
+
+    all_days = [start + timedelta(days=i) for i in range((end - start).days + 1)]
+    too_many = len(all_days) > FETCH_MAX_DAYS
+    overwrite = st.checkbox("取得済みの日も再取得する（上書き）", value=False, key="fetch_overwrite")
+    targets = list(all_days) if overwrite else [d for d in all_days if d not in fetched]
+    skipped = [] if overwrite else [d for d in all_days if d in fetched]
+
+    if too_many:
+        st.error(f"一度に取得できるのは{FETCH_MAX_DAYS}日までです（{len(all_days)}日選択中）。期間を短くしてください。")
+        targets = []
+    else:
+        if targets:
+            st.info(
+                f"取得する日（{len(targets)}日）: " + "、".join(d.strftime("%m/%d") for d in targets)
+                + ("　※1日あたり数分かかります" if len(targets) > 1 else "")
+            )
+        else:
+            st.info("選択した日はすべて取得済みです。再取得する場合は上のチェックを入れてください。")
+        if skipped:
+            st.caption("取得済みのためスキップ: " + "、".join(d.strftime("%m/%d") for d in skipped))
+
+    # 実行中のものがあるときは新しい依頼を出さない（GitHub側で待ち行列の古い依頼が取り消されるため）
+    runs, _err = _gh_recent_runs(cfg)
+    running = any(_run_is_active(r) for r in runs)
+    if running:
+        st.warning("現在、取得を実行中です。終わってから次の依頼を出してください。")
+
+    if st.button("▶ 取得を開始", type="primary", disabled=(not targets or running), key="fetch_start"):
+        ok, msg = _gh_dispatch(cfg, [d.isoformat() for d in targets])
+        if ok:
+            _gh_recent_runs.clear()
+            st.session_state["fetch_polling"] = True
+            st.session_state["fetch_poll_until"] = time.time() + 45
+            st.success("取得を依頼しました。完了まで数分かかります（下の実行状況が自動で更新されます）。")
+        else:
+            st.error(msg)
+
+    # ---------- 実行状況 ----------
+    st.markdown("**実行状況**")
+    if st.button("🔄 状況を更新", key="fetch_refresh"):
+        _gh_recent_runs.clear()
+    _render_fetch_runs(cfg)
+
+    if st.button("🔒 ロックする", key="fetch_lock"):
+        st.session_state["fetch_tab_ok"] = False
+        st.rerun()
+
+
 def main():
     st.set_page_config(page_title="Tempostar 売上集計", layout="wide")
     inject_scroll_preserver()
@@ -3077,7 +3415,9 @@ h1, h2, h3, h4,
             components.html(html_content, height=2600, scrolling=True)
 
     # ---------- タブ構成：大分類（テンポスター／ZOZO）→ 各機能タブ ----------
-    tab_group_tempostar, tab_group_zozo = st.tabs(["🏬 テンポスター機能", "📦 ZOZO機能"])
+    tab_group_tempostar, tab_group_zozo, tab_group_fetch = st.tabs(
+        ["🏬 テンポスター機能", "📦 ZOZO機能", "🌐 各モールCSV自動取得"]
+    )
 
     with tab_group_tempostar:
         tab_restock, tab_alert, tab_sales, tab_orderhistory = st.tabs(
@@ -3106,6 +3446,9 @@ h1, h2, h3, h4,
 
         with tab_stockcheck:
             render_stock_check_tab()
+
+    with tab_group_fetch:
+        render_fetch_tab()
 
 
 if __name__ == "__main__":

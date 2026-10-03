@@ -1,0 +1,81 @@
+name: Tempostar在庫変動ログ取得
+
+# 手動実行のみ（Streamlitアプリの「各モールCSV自動取得」タブ、またはGitHubのActions画面から実行）
+on:
+  workflow_dispatch:
+    inputs:
+      dates:
+        description: "取得する日付（YYYY-MM-DD、カンマ区切り。空欄なら前日）"
+        required: false
+        default: ""
+
+# 同時に2つ動かさない（CSVのコミットが衝突しないように、順番待ちにする）
+concurrency:
+  group: tempostar-stock-fetch
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      # テンポスターの画面に表示される日時（日本時間）と揃えるため
+      TZ: Asia/Tokyo
+    steps:
+      - name: リポジトリを取得
+        uses: actions/checkout@v4
+
+      - name: Python をセットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Selenium をインストール
+        run: pip install selenium
+
+      - name: 在庫変動ログを取得
+        env:
+          TEMPOSTAR_COMPANY_ID: ${{ secrets.TEMPOSTAR_COMPANY_ID }}
+          TEMPOSTAR_USER_ID: ${{ secrets.TEMPOSTAR_USER_ID }}
+          TEMPOSTAR_PASSWORD: ${{ secrets.TEMPOSTAR_PASSWORD }}
+          # 入力値は環境変数経由で渡す（コマンドに直接埋め込まない）
+          INPUT_DATES: ${{ github.event.inputs.dates }}
+        run: |
+          python scripts/tempostar_stock_download.py \
+            --headless \
+            --dates "$INPUT_DATES" \
+            --out-dir . \
+            --debug-dir debug
+
+      # 一部の日付だけ失敗した場合でも、取得できたCSVは保存する
+      - name: 取得したCSVをコミット
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tempostar_stock_*.csv
+          if git diff --cached --quiet; then
+            echo "新しいCSVはありません"
+            exit 0
+          fi
+          git commit -m "chore: Tempostar在庫変動ログを追加"
+          for i in 1 2 3; do
+            git pull --rebase && git push && exit 0
+            echo "push に失敗したため再試行します ($i/3)"
+            sleep 5
+          done
+          echo "push に失敗しました"
+          exit 1
+
+      # 失敗時の原因調査用（スクリーンショット等。3日で自動削除）
+      - name: デバッグ情報を保存
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug
+          path: debug/
+          retention-days: 3
+          if-no-files-found: ignore
