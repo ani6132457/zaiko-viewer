@@ -37,6 +37,10 @@ DATE_TO_ID = "stockupdatedtto"      # 更新日(至)
 
 TEMP_SUFFIXES = {".tmp", ".crdownload", ".part"}
 
+# ログ一覧の行の依頼日時が、今回の依頼時刻よりこれ以上古い場合は対象にしない。
+# （依頼前の一覧の記録に失敗したときの保険。主な判定は「新しく増えた行かどうか」で行う）
+LOG_REQUEST_TOLERANCE = timedelta(minutes=10)
+
 MAX_POLL_ROUNDS = 24        # ログ一覧の再確認回数（1回あたり約8〜10秒 → 最大およそ3〜4分）
 DOWNLOAD_WAIT_SECONDS = 120  # クリック後、ファイルが落ちてくるのを待つ最大秒数
 
@@ -234,8 +238,62 @@ def wait_for_download(download_dir: Path, click_time: float):
     return None
 
 
-def download_newest_log(driver, download_dir: Path, request_time: datetime):
-    """ログダウンロード画面で今回依頼した行を探し、ダウンロードして保存ファイルのパスを返す。"""
+def read_log_rows(driver) -> list:
+    """ログ一覧の各行を (key, 依頼日時, 状態, 処理結果, 処理内容, 行要素) のリストで返す。
+    key は「依頼日時＋処理内容＋担当者」。状態は処理中→完了と変わるので、keyには含めない。"""
+    from selenium.webdriver.common.by import By
+
+    parsed = []
+    for row in driver.find_elements(By.CSS_SELECTOR, "table.m-table tbody tr"):
+        tds = row.find_elements(By.CSS_SELECTOR, "td")
+        if len(tds) < 9:
+            continue
+        req_text = tds[0].text.strip()      # 依頼日時
+        status_text = tds[4].text.strip()   # 状態
+        result_text = tds[5].text.strip()   # 処理結果
+        content_text = tds[6].text.strip()  # 処理内容
+        operator_text = tds[7].text.strip() # 担当者
+        try:
+            req_dt = datetime.strptime(req_text, "%Y/%m/%d %H:%M:%S")
+        except ValueError:
+            req_dt = None
+        key = (req_text, content_text, operator_text)
+        parsed.append((key, req_dt, status_text, result_text, content_text, row))
+    return parsed
+
+
+def snapshot_log_keys(driver) -> set:
+    """依頼を出す前に、ログダウンロード画面にすでにある行を記録する。
+    （あとで『今回の依頼で新しく増えた行』だけを対象にするため）"""
+    driver.get(LOG_DOWNLOAD_URL)
+    click_log_search_button(driver)
+    return {key for key, *_ in read_log_rows(driver)}
+
+
+def pick_new_log_row(parsed: list, known_keys: set, request_time: datetime):
+    """今回の依頼で新しく増えた『在庫変動履歴ファイル』の、完了・正常な行を返す（無ければ None）。
+    - known_keys（依頼前からあった行・この実行ですでに取得した行）は対象外
+    - 依頼時刻より大きく古い行は対象外（一覧の記録に失敗したときの保険）
+    戻り値: (依頼日時, key, 行要素)"""
+    candidates = []
+    for key, req_dt, status, result, content, row in parsed:
+        if req_dt is None or key in known_keys:
+            continue
+        if "在庫変動履歴ファイル" not in content:
+            continue
+        if req_dt < request_time - LOG_REQUEST_TOLERANCE:
+            continue
+        if "完了" in status and "正常" in result:
+            candidates.append((req_dt, key, row))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    return candidates[0]
+
+
+def download_newest_log(driver, download_dir: Path, request_time: datetime,
+                        snapshot_keys: set, used_keys: set):
+    """ログダウンロード画面で、今回の依頼で新しく増えた行を探してダウンロードする。"""
     from selenium.webdriver.common.by import By
 
     driver.get(LOG_DOWNLOAD_URL)
@@ -243,31 +301,12 @@ def download_newest_log(driver, download_dir: Path, request_time: datetime):
     for _ in range(MAX_POLL_ROUNDS):
         click_log_search_button(driver)
 
-        rows = driver.find_elements(By.CSS_SELECTOR, "table.m-table tbody tr")
-        candidates = []
-        for row in rows:
-            tds = row.find_elements(By.CSS_SELECTOR, "td")
-            if len(tds) < 9:
-                continue
-            req_text = tds[0].text.strip()      # 依頼日時
-            status_text = tds[4].text.strip()   # 状態
-            result_text = tds[5].text.strip()   # 処理結果
-            content_text = tds[6].text.strip()  # 処理内容
-            try:
-                req_dt = datetime.strptime(req_text, "%Y/%m/%d %H:%M:%S")
-            except ValueError:
-                continue
-            if (
-                req_dt >= request_time - timedelta(minutes=2)
-                and "在庫変動履歴ファイル" in content_text
-                and "完了" in status_text
-                and "正常" in result_text
-            ):
-                candidates.append((req_dt, row))
-
-        if candidates:
-            candidates.sort(key=lambda x: x[0], reverse=True)
-            link = candidates[0][1].find_element(By.CSS_SELECTOR, "a.download__lnk")
+        picked = pick_new_log_row(read_log_rows(driver), snapshot_keys | used_keys, request_time)
+        if picked:
+            req_dt, key, row = picked
+            log(f"今回の依頼のログ行を特定: 依頼日時 {req_dt.strftime('%Y/%m/%d %H:%M:%S')}")
+            link = row.find_element(By.CSS_SELECTOR, "a.download__lnk")
+            used_keys.add(key)  # この実行の中で、同じ行を二度取得しない
             click_time = time.time()
             link.click()
             return wait_for_download(download_dir, click_time)
@@ -295,7 +334,7 @@ def save_debug(driver, debug_dir, label: str) -> None:
         log(f"デバッグ情報の保存に失敗: {e}")
 
 
-def fetch_one_day(driver, target: date, download_dir: Path, out_dir: Path) -> Path:
+def fetch_one_day(driver, target: date, download_dir: Path, out_dir: Path, used_keys: set) -> Path:
     display = target.strftime("%Y/%m/%d")
     file_stamp = target.strftime("%Y%m%d")
 
@@ -306,6 +345,11 @@ def fetch_one_day(driver, target: date, download_dir: Path, out_dir: Path) -> Pa
 
     driver.get(STOCK_HISTORY_URL)
     login_if_needed(driver)
+
+    # 依頼を出す前に、ログ一覧の現在の行を記録する（今回の依頼で増えた行だけを対象にするため）
+    snapshot_keys = snapshot_log_keys(driver)
+    log(f"依頼前のログ一覧: {len(snapshot_keys)} 件を記録")
+
     driver.get(STOCK_HISTORY_URL)
     time.sleep(3)
 
@@ -314,7 +358,7 @@ def fetch_one_day(driver, target: date, download_dir: Path, out_dir: Path) -> Pa
     request_time = now_jst_naive()
     click_create_log_button(driver)
 
-    downloaded = download_newest_log(driver, download_dir, request_time)
+    downloaded = download_newest_log(driver, download_dir, request_time, snapshot_keys, used_keys)
     if not downloaded:
         raise RuntimeError("在庫変動ログのダウンロードファイルが見つかりませんでした（時間切れ）")
 
@@ -356,13 +400,14 @@ def main(argv=None) -> int:
     download_dir = Path(tempfile.mkdtemp(prefix="tempostar_dl_"))
     driver = None
     succeeded, failed = [], []
+    used_keys = set()  # この実行で取得済みのログ行（日付をまたいで同じ行を使い回さない）
     try:
         driver = setup_driver(download_dir, args.headless)
         for target in targets:
             label = target.strftime("%Y-%m-%d")
             log(f"--- {label} の取得を開始 ---")
             try:
-                path = fetch_one_day(driver, target, download_dir, out_dir)
+                path = fetch_one_day(driver, target, download_dir, out_dir, used_keys)
                 log(f"保存完了: {path}")
                 succeeded.append(label)
             except Exception as e:

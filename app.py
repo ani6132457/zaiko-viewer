@@ -1685,15 +1685,41 @@ def _fetch_github_cfg():
         return None
 
 
+def _read_fetch_password():
+    """secrets からタブのパスワードを読む。戻り値: (パスワード, 読めなかった理由)。
+    読めなかったときは、原因が分かるよう理由を区別して返す（値そのものは一切含めない）。"""
+    try:
+        section = st.secrets["fetch_tab"]
+    except KeyError:
+        return "", "Secrets は読み込めていますが、[fetch_tab] というセクションが見つかりません（セクション名の綴りを確認してください）。"
+    except FileNotFoundError:
+        return "", "Secrets が読み込めていません（Secrets が1件も設定されていない状態です）。"
+    except Exception as e:
+        return "", (
+            f"Secrets の読み込み中にエラーが発生しました（{type(e).__name__}）。"
+            "TOML の書式（引用符の閉じ忘れ・セクション名の重複など）を確認してください。"
+            "詳しい内容は Manage app の Logs で確認できます。"
+        )
+
+    try:
+        value = section["password"]
+    except KeyError:
+        return "", "[fetch_tab] はありますが、password という項目がありません。"
+    except Exception as e:
+        return "", f"[fetch_tab] の中身を読み込めませんでした（{type(e).__name__}）。password = \"...\" の形式になっているか確認してください。"
+
+    value = str(value)
+    if not value.strip():
+        return "", "[fetch_tab] の password が空になっています。"
+    return value, ""
+
+
 def _fetch_tab_unlocked() -> bool:
     """パスワード認証。secrets にパスワードが無い場合は使用不可（安全側に倒す）。"""
-    try:
-        expected = str(st.secrets["fetch_tab"]["password"])
-    except Exception:
-        expected = ""
+    expected, reason = _read_fetch_password()
     if not expected:
         st.error(
-            "パスワードが設定されていないため、このタブは使用できません。"
+            f"このタブは使用できません。{reason}"
             "Streamlit の Secrets に [fetch_tab] password を設定してください。"
         )
         return False
