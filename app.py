@@ -2223,12 +2223,139 @@ def render_fetch_tab():
         st.rerun()
 
 
+# ==========================
+# 起動時の読み込み画面（ゲームのロード画面風）
+# ==========================
+_BOOT_CAT_SVG = """
+<svg class="zv-cat-svg" viewBox="0 0 130 74" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <ellipse class="zv-cat-shadow" cx="62" cy="70" rx="40" ry="4" fill="#2A2440" opacity="0.18"/>
+  <g class="zv-cat-body" fill="#0b0a12" stroke="#0b0a12">
+    <g transform="translate(30,32)"><path class="zv-tail" d="M0,0 C-14,-4 -22,-16 -14,-27" fill="none" stroke-width="5.5" stroke-linecap="round"/></g>
+    <g transform="translate(84,44)"><line class="zv-leg zv-leg-a" x1="0" y1="0" x2="0" y2="22" stroke-width="6" stroke-linecap="round"/></g>
+    <g transform="translate(38,44)"><line class="zv-leg zv-leg-a" x1="0" y1="0" x2="0" y2="22" stroke-width="6" stroke-linecap="round"/></g>
+    <ellipse cx="60" cy="36" rx="31" ry="13" stroke="none"/>
+    <g transform="translate(74,44)"><line class="zv-leg zv-leg-b" x1="0" y1="0" x2="0" y2="22" stroke-width="6" stroke-linecap="round"/></g>
+    <g transform="translate(48,44)"><line class="zv-leg zv-leg-b" x1="0" y1="0" x2="0" y2="22" stroke-width="6" stroke-linecap="round"/></g>
+    <circle cx="96" cy="27" r="12" stroke="none"/>
+    <polygon points="87,20 89,5 99,15" stroke="none"/>
+    <polygon points="98,15 108,5 108,21" stroke="none"/>
+  </g>
+</svg>
+"""
+
+_BOOT_CSS = """
+<style>
+.zv-boot { position:fixed; inset:0; z-index:100000; display:flex; align-items:center; justify-content:center;
+  background-color:#F6F2FF;
+  background-image: radial-gradient(#DDD4FF 2.2px, transparent 2.7px), linear-gradient(160deg,#F6F2FF 0%,#FFF1EA 100%);
+  background-size: 22px 22px, 100% 100%;
+  font-family:'M PLUS Rounded 1c','Noto Sans JP',sans-serif; color:#2A2440; }
+.zv-boot-inner { width:min(560px, 86vw); text-align:center; position:relative; }
+.zv-logo { font-weight:800; font-size:30px; letter-spacing:.14em; background:linear-gradient(90deg,#7B5FFF,#FF6B4A);
+  -webkit-background-clip:text; background-clip:text; color:transparent; }
+.zv-logo small { display:block; font-size:12px; font-weight:700; letter-spacing:.3em; color:#74708C; -webkit-text-fill-color:#74708C; margin-top:6px; }
+.zv-now { margin-top:46px; font-weight:800; font-size:15px; letter-spacing:.22em; color:#2A2440; }
+.zv-now .zv-dots::after { content:""; animation:zvdots 1.4s steps(4,end) infinite; }
+@keyframes zvdots { 0%{content:""} 25%{content:"."} 50%{content:".."} 75%{content:"..."} }
+.zv-track { position:relative; margin-top:64px; height:22px; }
+.zv-gauge { position:absolute; left:0; right:0; bottom:0; height:22px; border-radius:999px; background:#fff;
+  border:3px solid #7B5FFF; box-shadow:0 6px 18px rgba(123,95,255,.22); overflow:hidden; }
+.zv-gauge i { display:block; height:100%; border-radius:999px;
+  background:repeating-linear-gradient(45deg,#FF9F1C 0 12px,#FF6B4A 12px 24px); background-size:34px 34px;
+  animation: zvfill .8s cubic-bezier(.22,.8,.3,1) forwards, zvflow .9s linear infinite; }
+@keyframes zvflow { from{background-position:0 0} to{background-position:34px 0} }
+.zv-cat { position:absolute; bottom:21px; width:96px; height:56px; margin-left:-60px;
+  animation: zvcat .8s cubic-bezier(.22,.8,.3,1) forwards; }
+.zv-cat-svg { width:100%; height:100%; overflow:visible; animation:zvbob .34s ease-in-out infinite; filter:drop-shadow(0 2px 0 rgba(11,10,18,.15)); }
+@keyframes zvbob { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-3px)} }
+.zv-leg { animation:zvleg .34s ease-in-out infinite; }
+.zv-leg-a { animation-delay:0s; } .zv-leg-b { animation-delay:-.17s; }
+@keyframes zvleg { 0%,100%{transform:rotate(38deg)} 50%{transform:rotate(-38deg)} }
+.zv-tail { animation:zvtail .5s ease-in-out infinite alternate; transform-origin:0 0; }
+@keyframes zvtail { from{transform:rotate(-8deg)} to{transform:rotate(10deg)} }
+.zv-pct { margin-top:12px; text-align:right; font-weight:800; font-size:13px; color:#FF6B4A; }
+.zv-stage { margin-top:6px; font-size:13px; font-weight:700; color:#74708C; text-align:center; }
+.zv-tips { position:relative; height:44px; margin-top:34px; }
+.zv-tip { position:absolute; left:0; right:0; padding:10px 14px; background:rgba(255,255,255,.75); border:2px dashed #CFC3FF;
+  border-radius:14px; font-size:12.5px; opacity:0; animation:zvtip 12s infinite; }
+.zv-tip:nth-child(2){ animation-delay:4s } .zv-tip:nth-child(3){ animation-delay:8s }
+@keyframes zvtip { 0%{opacity:0;transform:translateY(6px)} 4%,30%{opacity:1;transform:none} 34%,100%{opacity:0} }
+</style>
+"""
+
+_BOOT_TIPS = [
+    "💡 TIPS：在庫推移グラフの青いオーラは、その日に在庫CSV取込があった印です",
+    "💡 TIPS：タブは画面の上に固定されているので、どこからでもすぐ切り替えられます",
+    "💡 TIPS：納品推奨数システムは、CSVエクスポート → インポートで入力内容を引き継げます",
+]
+
+_BOOT = {"ph": None, "pct": 0}
+
+
+def _boot_render(pct: int, label: str):
+    """読み込み画面を描画する。ゲージとネコは、前回の位置から今回の位置まで走って移動する。"""
+    ph = _BOOT.get("ph")
+    if ph is None:
+        return
+    prev = _BOOT.get("pct", 0)
+    _BOOT["pct"] = pct
+    anim_css = (
+        "<style>"
+        f"@keyframes zvfill{{from{{width:{prev}%}}to{{width:{pct}%}}}}"
+        f"@keyframes zvcat{{from{{left:{prev}%}}to{{left:{pct}%}}}}"
+        "</style>"
+    )
+    tips = "".join(f'<div class="zv-tip">{t}</div>' for t in _BOOT_TIPS)
+    html_ = (
+        _BOOT_CSS + anim_css +
+        '<div class="zv-boot"><div class="zv-boot-inner">'
+        '<div class="zv-logo">ZAIKO VIEWER<small>在庫ビューアー</small></div>'
+        '<div class="zv-now">NOW LOADING<span class="zv-dots"></span></div>'
+        '<div class="zv-track">'
+        f'<div class="zv-cat">{_BOOT_CAT_SVG}</div>'
+        '<div class="zv-gauge"><i></i></div></div>'
+        f'<div class="zv-pct">{pct}%</div>'
+        f'<div class="zv-stage">{html.escape(label)}</div>'
+        f'<div class="zv-tips">{tips}</div>'
+        '</div></div>'
+    )
+    # 先頭に改行や字下げがあるとMarkdownのコードブロック扱いになるため、行頭の空白を除去する
+    html_ = "\n".join(line.strip() for line in html_.splitlines() if line.strip())
+    ph.markdown(html_, unsafe_allow_html=True)
+
+
+def _boot_step(pct: int, label: str):
+    _boot_render(pct, label)
+
+
+def _boot_clear():
+    ph = _BOOT.get("ph")
+    if ph is not None:
+        ph.empty()
+    _BOOT["ph"] = None
+    _BOOT["pct"] = 0
+
+
 def main():
+    """起動直後（このブラウザセッションで初回）だけ、ゲームのロード画面風の読み込み画面を出す。"""
     st.set_page_config(page_title="Tempostar 売上集計", layout="wide")
+    if not st.session_state.get("_zv_booted"):
+        st.session_state["_zv_booted"] = True
+        _BOOT["ph"] = st.empty()
+        _BOOT["pct"] = 0
+        _boot_render(8, "起動しています…")
+    try:
+        _main_impl()
+    finally:
+        _boot_clear()
+
+
+def _main_impl():
     inject_scroll_preserver()
     st.title("Tempostar 在庫変動データ")
 
     # ---------- CSV 一覧 ----------
+    _boot_step(20, "在庫変動ログのファイルを確認中…")
     raw_paths = sorted(glob.glob("tempostar_stock_*.csv"))
     if not raw_paths:
         st.error("tempostar_stock_*.csv がありません。")
@@ -2255,6 +2382,7 @@ def main():
     trend_start_date = max(min_date, (pd.Timestamp(max_date) - DateOffset(years=1)).date())
     trend_files = [fi for fi in file_infos if trend_start_date <= fi["date"] <= max_date]
     trend_paths = sorted(fi["path"] for fi in trend_files)
+    _boot_step(40, "在庫の推移を読み込み・集計中…")
     df_trend_history = load_tempostar_data(trend_paths) if trend_paths else pd.DataFrame()
     full_trend_map = compute_stock_trend_map(df_trend_history)
     full_event_map = compute_stock_event_map(df_trend_history)
@@ -2264,6 +2392,7 @@ def main():
     # 自動取得は「このブラウザセッションでまだ取得していない時（＝開いた直後やF5直後）」のみ。
     # それ以外は手動更新ボタンを押さない限り、取得済みの値をそのまま使い続ける。
     all_paths_for_rakuten = tuple(sorted(fi["path"] for fi in file_infos))
+    _boot_step(62, "楽天・Amazonの在庫を確認中…")
     manual_refresh = st.session_state.pop("rakuten_force_refresh", False)
     need_session_fetch = not st.session_state.get("rakuten_session_fetched", False)
     st.session_state["rakuten_session_fetched"] = True
@@ -2297,6 +2426,7 @@ def main():
 
 
     # ---------- 売上個数予想用：全期間の日別売上マップ（1回だけ計算） ----------
+    _boot_step(80, "売上データを集計中…")
     all_sales_map = get_tempostar_sales_map(all_paths_for_rakuten)
 
     # ---------- 初期フィルタ（セッション） ----------
@@ -2381,7 +2511,10 @@ def main():
 
 /* ===== ページ全体 ===== */
 [data-testid="stAppViewContainer"] {
-    background: var(--bg);
+    background-color: var(--bg);
+    background-image: radial-gradient(#E3DBFF 2px, transparent 2.5px);
+    background-size: 22px 22px;
+    background-attachment: fixed;
     font-family: 'Noto Sans JP', sans-serif;
     color: var(--ink);
 }
@@ -2521,8 +2654,8 @@ h1, h2, h3, h4,
     height: var(--tabbar-outer-h);
     box-sizing: border-box;
     align-items: center;
-    background: #ffffff;
-    box-shadow: 0 4px 14px rgba(42,36,64,0.10);
+    background: linear-gradient(90deg, #7B5FFF 0%, #B25FD8 45%, #FF6B4A 100%);
+    box-shadow: 0 4px 14px rgba(42,36,64,0.18);
     padding: 0 3rem;
     gap: 6px;
 }
@@ -2532,7 +2665,7 @@ h1, h2, h3, h4,
     top: var(--tabbar-outer-h);
     z-index: 9998;
     height: var(--tabbar-inner-h);
-    background: #faf9ff;
+    background: linear-gradient(90deg, #EDE9FF 0%, #FFE9E0 100%);
     box-shadow: 0 4px 12px rgba(42,36,64,0.08);
     border-top: 1px solid var(--violet-soft);
     border-bottom: 2px solid var(--violet-soft);
@@ -2548,27 +2681,78 @@ h1, h2, h3, h4,
 [data-testid="stTab"] p {
     font-size: 14px !important;
     font-weight: 700 !important;
-    color: var(--ink-soft) !important;
 }
-[data-testid="stTab"]:hover {
-    background: var(--violet-soft) !important;
+/* 外側タブ（グラデーションの上）：白い文字、選択中は白いピル */
+[data-testid="stTabs"] [role="tablist"] [data-testid="stTab"] p { color: rgba(255,255,255,0.88) !important; }
+[data-testid="stTabs"] [role="tablist"] [data-testid="stTab"]:hover { background: rgba(255,255,255,0.20) !important; }
+[data-testid="stTabs"] [role="tablist"] [data-testid="stTab"]:hover p { color: #ffffff !important; }
+[data-testid="stTabs"] [role="tablist"] [data-testid="stTab"][aria-selected="true"] {
+    background: #ffffff !important;
+    box-shadow: 0 3px 10px rgba(42,36,64,0.18);
 }
-[data-testid="stTab"]:hover p {
-    color: var(--violet) !important;
+[data-testid="stTabs"] [role="tablist"] [data-testid="stTab"][aria-selected="true"] p { color: var(--violet) !important; }
+/* 内側タブ（淡い背景の上）：濃い文字、選択中はオレンジのピル */
+[data-testid="stTabs"] [role="tabpanel"] [role="tablist"] [data-testid="stTab"] p,
+[data-testid="stTabs"] [data-testid="stTabPanel"] [role="tablist"] [data-testid="stTab"] p { color: var(--ink-soft) !important; }
+[data-testid="stTabs"] [role="tabpanel"] [role="tablist"] [data-testid="stTab"]:hover,
+[data-testid="stTabs"] [data-testid="stTabPanel"] [role="tablist"] [data-testid="stTab"]:hover { background: rgba(255,255,255,0.7) !important; }
+[data-testid="stTabs"] [role="tabpanel"] [role="tablist"] [data-testid="stTab"]:hover p,
+[data-testid="stTabs"] [data-testid="stTabPanel"] [role="tablist"] [data-testid="stTab"]:hover p { color: var(--violet) !important; }
+[data-testid="stTabs"] [role="tabpanel"] [role="tablist"] [data-testid="stTab"][aria-selected="true"],
+[data-testid="stTabs"] [data-testid="stTabPanel"] [role="tablist"] [data-testid="stTab"][aria-selected="true"] {
+    background: var(--accent) !important;
+    box-shadow: 0 3px 10px rgba(255,107,74,0.30);
 }
-[data-testid="stTab"][aria-selected="true"] {
-    background: var(--accent-soft) !important;
-}
-[data-testid="stTab"][aria-selected="true"] p {
-    color: var(--accent) !important;
-}
-/* Streamlit標準のタブ下線インジケーターもポップな色に */
+[data-testid="stTabs"] [role="tabpanel"] [role="tablist"] [data-testid="stTab"][aria-selected="true"] p,
+[data-testid="stTabs"] [data-testid="stTabPanel"] [role="tablist"] [data-testid="stTab"][aria-selected="true"] p { color: #ffffff !important; }
+/* 選択中を示す下線は、ピルで分かるので非表示にする */
 .react-aria-SelectionIndicator,
 [data-baseweb="tab-highlight"] {
-    background-color: var(--accent) !important;
-    height: 3px !important;
-    border-radius: 3px !important;
+    display: none !important;
 }
+
+/* ===== ボタン操作などの再計算中：画面中央のくるくるゲージ ===== */
+[data-testid="stStatusWidget"] { display: none !important; }
+[data-testid="stElementContainer"]:has(.zv-spinner) { position: absolute; width: 0; height: 0; margin: 0; padding: 0; }
+.zv-spinner {
+    position: fixed; inset: 0; z-index: 99990;
+    display: none; align-items: center; justify-content: center;
+    pointer-events: none;
+    background: rgba(246,242,255,0.38);
+    backdrop-filter: blur(1.5px);
+}
+[data-testid="stApp"][data-test-script-state="running"] .zv-spinner,
+[data-testid="stApp"]:has([data-testid="stStatusWidget"]) .zv-spinner {
+    display: flex;
+    animation: zvspinfade .25s ease .5s both;   /* 一瞬で終わる処理では出さないよう、0.5秒待ってから表示 */
+}
+[data-testid="stApp"]:has(.zv-boot) .zv-spinner { display: none !important; }
+@keyframes zvspinfade { from { opacity: 0; } to { opacity: 1; } }
+.zv-spin-card {
+    position: relative; width: 112px; height: 112px; border-radius: 50%;
+    background: rgba(255,255,255,0.92);
+    box-shadow: 0 10px 34px rgba(123,95,255,0.30), inset 0 0 0 2px #EDE9FF;
+    display: flex; align-items: center; justify-content: center;
+}
+.zv-spin-ring {
+    position: absolute; width: 84px; height: 84px; border-radius: 50%;
+    background: conic-gradient(from 0deg, rgba(123,95,255,0) 0%, #7B5FFF 35%, #FF6B4A 70%, #FF9F1C 100%);
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 9px), #000 calc(100% - 8px));
+            mask: radial-gradient(farthest-side, transparent calc(100% - 9px), #000 calc(100% - 8px));
+    animation: zvspin 0.95s linear infinite;
+}
+.zv-spin-orbit { position: absolute; width: 84px; height: 84px; animation: zvspin 0.95s linear infinite; }
+.zv-spin-orbit::after {
+    content: ""; position: absolute; top: -3px; left: 50%; width: 12px; height: 12px; margin-left: -6px; border-radius: 50%;
+    background: #FF9F1C; box-shadow: 0 0 10px 3px rgba(255,159,28,0.65);
+}
+.zv-spin-core {
+    width: 30px; height: 30px; border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, #fff 0%, #FFB199 35%, #FF6B4A 100%);
+    animation: zvpulse 1.1s ease-in-out infinite;
+}
+@keyframes zvspin { to { transform: rotate(360deg); } }
+@keyframes zvpulse { 0%,100% { transform: scale(0.8); } 50% { transform: scale(1.12); } }
 
 /* ===== メトリクスバー ===== */
 .metric-bar {
@@ -2711,6 +2895,14 @@ h1, h2, h3, h4,
 }
 </style>
 """,
+        unsafe_allow_html=True,
+    )
+
+    # 再計算中に画面中央へ出す「くるくるゲージ」（表示/非表示はCSS側で、スクリプトの実行状態に連動）
+    st.markdown(
+        '<div class="zv-spinner"><div class="zv-spin-card">'
+        '<div class="zv-spin-ring"></div><div class="zv-spin-orbit"></div><div class="zv-spin-core"></div>'
+        '</div></div>',
         unsafe_allow_html=True,
     )
 
@@ -3676,6 +3868,7 @@ h1, h2, h3, h4,
             components.html(html_content, height=2600, scrolling=True)
 
     # ---------- タブ構成：大分類（テンポスター／ZOZO）→ 各機能タブ ----------
+    _boot_step(92, "画面を組み立て中…")
     tab_group_tempostar, tab_group_zozo, tab_group_fetch = st.tabs(
         ["🏬 テンポスター機能", "📦 ZOZO機能", "🌐 各モールCSV自動取得"]
     )
