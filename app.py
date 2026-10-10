@@ -2502,30 +2502,41 @@ h1, h2, h3, h4,
 [data-testid="stHeader"] {
     display: none;
 }
-[data-testid="stAppViewContainer"] > .main {
-    padding-top: 1rem;
-    margin-top: 60px;
+/* 固定する2段のタブ（外側＋内側）の高さぶん、本文を下げる */
+:root {
+    --tabbar-outer-h: 56px;
+    --tabbar-inner-h: 50px;
+}
+[data-testid="stMainBlockContainer"] {
+    padding-top: calc(var(--tabbar-outer-h) + var(--tabbar-inner-h) + 18px) !important;
 }
 
-/* 大分類（外側）タブの見出し部分だけを画面上部に固定表示 */
-[data-testid="stTabs"] > [role="tablist"] {
+/* 大分類（外側）タブ：画面最上部に固定表示 */
+[data-testid="stTabs"] [role="tablist"] {
     position: fixed;
     top: 0;
     left: 0;
     right: 0;
     z-index: 9999;
+    height: var(--tabbar-outer-h);
+    box-sizing: border-box;
+    align-items: center;
     background: #ffffff;
     box-shadow: 0 4px 14px rgba(42,36,64,0.10);
-    padding: 6px 3rem;
+    padding: 0 3rem;
     gap: 6px;
 }
-/* 内側（機能）タブは固定せず、外側タブのすぐ下に通常表示する */
-[data-baseweb="tab-panel"] [data-testid="stTabs"] > [role="tablist"] {
-    position: static;
-    box-shadow: none;
-    padding: 0 0 6px 0;
-    margin-bottom: 12px;
+/* 内側（機能）タブ：外側タブのすぐ下に、同じく固定表示 */
+[data-testid="stTabs"] [role="tabpanel"] [role="tablist"],
+[data-testid="stTabs"] [data-testid="stTabPanel"] [role="tablist"] {
+    top: var(--tabbar-outer-h);
+    z-index: 9998;
+    height: var(--tabbar-inner-h);
+    background: #faf9ff;
+    box-shadow: 0 4px 12px rgba(42,36,64,0.08);
+    border-top: 1px solid var(--violet-soft);
     border-bottom: 2px solid var(--violet-soft);
+    margin: 0;
 }
 
 [data-testid="stTab"] {
@@ -2552,6 +2563,7 @@ h1, h2, h3, h4,
     color: var(--accent) !important;
 }
 /* Streamlit標準のタブ下線インジケーターもポップな色に */
+.react-aria-SelectionIndicator,
 [data-baseweb="tab-highlight"] {
     background-color: var(--accent) !important;
     height: 3px !important;
