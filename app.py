@@ -866,7 +866,7 @@ def make_html_table(df: pd.DataFrame) -> str:
 # ==========================
 
 def compute_stock_trend_map(df_main: pd.DataFrame, sku_col: str = "商品コード") -> dict:
-    """SKUごとの在庫推移（日付・在庫数）をグラフ用に事前集計する。"""
+    """SKUごとの在庫推移（日付・在庫数）をグラフ用に事前集計する。1日1点（その日の最後の変動後）。"""
     if df_main is None or df_main.empty:
         return {}
     if "変動後" not in df_main.columns or "元ファイル" not in df_main.columns:
@@ -874,22 +874,21 @@ def compute_stock_trend_map(df_main: pd.DataFrame, sku_col: str = "商品コー�
 
     has_time = "更新日時" in df_main.columns
     df = df_main[[sku_col, "元ファイル", "変動後"] + (["更新日時"] if has_time else [])].copy()
-    df["日付"] = df["元ファイル"].astype(str).str.extract(r"(\d{8})")
-    df["日付"] = pd.to_datetime(df["日付"], format="%Y%m%d", errors="coerce")
+    df["日付"] = pd.to_datetime(df["元ファイル"].astype(str).str.extract(r"(\d{8})")[0], format="%Y%m%d", errors="coerce")
     df["変動後"] = pd.to_numeric(df["変動後"], errors="coerce")
     df = df.dropna(subset=["日付", "変動後"])
-    # 1日1点：その日の最後の変動後（更新日時が一番新しい行）を採用する
+    df[sku_col] = df[sku_col].astype(str).str.strip()
+    # その日の最後の変動後（更新日時が一番新しい行）を採用する
     df = df.sort_values(["日付", "更新日時"] if has_time else ["日付"], kind="stable")
-    df = df.groupby([sku_col, "日付"], dropna=False, as_index=False).last()
-    df = df.sort_values("日付", kind="stable")
+    df = df.drop_duplicates(subset=[sku_col, "日付"], keep="last")
+    df = df.sort_values([sku_col, "日付"], kind="stable")
 
     trend_map = {}
-    for sku, g in df.groupby(sku_col, dropna=False):
-        key = str(sku).strip()
-        trend_map[key] = [
-            {"date": d.strftime("%Y-%m-%d"), "value": int(v)}
-            for d, v in zip(g["日付"], g["変動後"])
-        ]
+    skus = df[sku_col].tolist()
+    dates = df["日付"].dt.strftime("%Y-%m-%d").tolist()
+    values = df["変動後"].astype(int).tolist()
+    for sku, d, v in zip(skus, dates, values):
+        trend_map.setdefault(sku, []).append({"date": d, "value": v})
     return trend_map
 
 
@@ -917,30 +916,47 @@ def compute_stock_event_map(df_main: pd.DataFrame, sku_col: str = "商品コー�
     df[sku_col] = df[sku_col].astype(str).str.strip()
     df["_d"] = df["日付"].dt.strftime("%Y-%m-%d")
 
+    kind = pd.Series("o", index=df.index)
+    kind[df["更新理由"].str.contains("在庫CSV取込", na=False)] = "c"
+    kind[df["更新理由"].str.contains("受注取込", na=False)] = "s"   # 両方含む場合は受注取込を優先（従来と同じ）
+
     event_map = {}
 
     def _slot(sku, d):
         return event_map.setdefault(sku, {}).setdefault(d, {})
 
-    sales = df[df["更新理由"].str.contains("受注取込", na=False)]
-    for (sku, d), v in sales.groupby([sku_col, "_d"])["増減値"].sum().items():
+    sales = df[kind == "s"].groupby([sku_col, "_d"])["増減値"].sum()
+    for (sku, d), v in sales.items():
         _slot(sku, d)["s"] = int(-v)
 
-    csv_rows = df[df["更新理由"].str.contains("在庫CSV取込", na=False)]
-    for (sku, d, user), g in csv_rows.groupby([sku_col, "_d", "ユーザー"]):
-        _slot(sku, d).setdefault("c", []).append([user, int(len(g)), int(g["増減値"].sum())])
+    csv_g = df[kind == "c"].groupby([sku_col, "_d", "ユーザー"])["増減値"].agg(["size", "sum"])
+    for (sku, d, user), row in zip(csv_g.index, csv_g.itertuples(index=False)):
+        _slot(sku, d).setdefault("c", []).append([user, int(row[0]), int(row[1])])
 
-    others = df[~df["更新理由"].str.contains("受注取込|在庫CSV取込", na=False)]
-    for (sku, d), g in others.groupby([sku_col, "_d"]):
-        pos = int(g.loc[g["増減値"] > 0, "増減値"].sum())
-        neg = int(g.loc[g["増減値"] < 0, "増減値"].sum())
-        slot = _slot(sku, d)
-        if pos:
-            slot["op"] = pos
-        if neg:
-            slot["on"] = neg
+    oth = df[kind == "o"].copy()
+    oth["_pos"] = oth["増減値"].where(oth["増減値"] > 0, 0)
+    oth["_neg"] = oth["増減値"].where(oth["増減値"] < 0, 0)
+    oth_g = oth.groupby([sku_col, "_d"])[["_pos", "_neg"]].sum()
+    for (sku, d), row in zip(oth_g.index, oth_g.itertuples(index=False)):
+        pos, neg = int(row[0]), int(row[1])
+        if pos or neg:
+            slot = _slot(sku, d)
+            if pos:
+                slot["op"] = pos
+            if neg:
+                slot["on"] = neg
 
     return event_map
+
+
+@st.cache_data(show_spinner=False)
+def get_stock_trend_and_event_maps(paths_with_mtime: tuple):
+    """在庫推移マップと内訳マップを計算して返す。CSVが変わらない限り結果を使い回す
+    （検索や日付変更のたびに再計算しないため）。引数にファイルの更新時刻を含めるのは、
+    同じ名前のCSVが取得し直されたときにキャッシュを無効にするため。"""
+    paths = [p for p, _ in paths_with_mtime]
+    df = load_tempostar_data(paths) if paths else pd.DataFrame()
+    return compute_stock_trend_map(df), compute_stock_event_map(df)
 
 
 def filter_trend_map(trend_map: dict, skus) -> dict:
@@ -2383,9 +2399,9 @@ def _main_impl():
     trend_files = [fi for fi in file_infos if trend_start_date <= fi["date"] <= max_date]
     trend_paths = sorted(fi["path"] for fi in trend_files)
     _boot_step(40, "在庫の推移を読み込み・集計中…")
-    df_trend_history = load_tempostar_data(trend_paths) if trend_paths else pd.DataFrame()
-    full_trend_map = compute_stock_trend_map(df_trend_history)
-    full_event_map = compute_stock_event_map(df_trend_history)
+    full_trend_map, full_event_map = get_stock_trend_and_event_maps(
+        tuple((pth, os.path.getmtime(pth)) for pth in trend_paths)
+    )
     trend_file_dates = [fi["date"].strftime("%Y-%m-%d") for fi in trend_files]
 
     # ---------- 楽天在庫（RMS 在庫API 2.0・非ブロッキング背景取得） ----------
@@ -2514,7 +2530,6 @@ def _main_impl():
     background-color: var(--bg);
     background-image: radial-gradient(#E3DBFF 2px, transparent 2.5px);
     background-size: 22px 22px;
-    background-attachment: fixed;
     font-family: 'Noto Sans JP', sans-serif;
     color: var(--ink);
 }
