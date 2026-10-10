@@ -872,11 +872,16 @@ def compute_stock_trend_map(df_main: pd.DataFrame, sku_col: str = "商品コー�
     if "変動後" not in df_main.columns or "元ファイル" not in df_main.columns:
         return {}
 
-    df = df_main[[sku_col, "元ファイル", "変動後"]].copy()
+    has_time = "更新日時" in df_main.columns
+    df = df_main[[sku_col, "元ファイル", "変動後"] + (["更新日時"] if has_time else [])].copy()
     df["日付"] = df["元ファイル"].astype(str).str.extract(r"(\d{8})")
     df["日付"] = pd.to_datetime(df["日付"], format="%Y%m%d", errors="coerce")
     df["変動後"] = pd.to_numeric(df["変動後"], errors="coerce")
-    df = df.dropna(subset=["日付", "変動後"]).sort_values("日付")
+    df = df.dropna(subset=["日付", "変動後"])
+    # 1日1点：その日の最後の変動後（更新日時が一番新しい行）を採用する
+    df = df.sort_values(["日付", "更新日時"] if has_time else ["日付"], kind="stable")
+    df = df.groupby([sku_col, "日付"], dropna=False, as_index=False).last()
+    df = df.sort_values("日付", kind="stable")
 
     trend_map = {}
     for sku, g in df.groupby(sku_col, dropna=False):
@@ -893,7 +898,7 @@ def compute_stock_event_map(df_main: pd.DataFrame, sku_col: str = "商品コー�
     戻り値: {sku: {"YYYY-MM-DD": {"s": 売上数, "c": [[ユーザー名, 回数, 増減合計], ...], "o": その他の増減合計}}}
       s: 受注取込の増減値の合計の符号を反転したもの（＝純粋な売上数）。受注取込が無い日は含めない。
       c: 在庫CSV取込をユーザー名ごとにまとめたもの（回数＝CSV行数）。
-      o: 上記以外（WEB画面など）の増減値の合計。該当が無い日は含めない。"""
+      op / on: 上記以外（WEB画面など）の増減値の「プラス分の合計」「マイナス分の合計」。該当が無ければ含めない。"""
     if df_main is None or df_main.empty:
         return {}
     need = {"更新理由", "増減値", "元ファイル"}
@@ -926,8 +931,14 @@ def compute_stock_event_map(df_main: pd.DataFrame, sku_col: str = "商品コー�
         _slot(sku, d).setdefault("c", []).append([user, int(len(g)), int(g["増減値"].sum())])
 
     others = df[~df["更新理由"].str.contains("受注取込|在庫CSV取込", na=False)]
-    for (sku, d), v in others.groupby([sku_col, "_d"])["増減値"].sum().items():
-        _slot(sku, d)["o"] = int(v)
+    for (sku, d), g in others.groupby([sku_col, "_d"]):
+        pos = int(g.loc[g["増減値"] > 0, "増減値"].sum())
+        neg = int(g.loc[g["増減値"] < 0, "増減値"].sum())
+        slot = _slot(sku, d)
+        if pos:
+            slot["op"] = pos
+        if neg:
+            slot["on"] = neg
 
     return event_map
 
@@ -950,6 +961,7 @@ def render_interactive_sku_table(
     height: int = 900,
     auto_height: bool = False,
     event_map: dict = None,
+    file_dates: list = None,
 ):
     """
     一覧表示＋行クリックでの在庫推移グラフ表示を、HTML/JSで完結させて描画する。
@@ -969,6 +981,7 @@ def render_interactive_sku_table(
 
     trend_json = json.dumps(trend_map, ensure_ascii=False)
     events_json = json.dumps(event_map or {}, ensure_ascii=False)
+    file_dates_json = json.dumps(sorted(file_dates or []), ensure_ascii=False)
     data_json = json.dumps(records, ensure_ascii=False)
     columns_json = json.dumps(columns, ensure_ascii=False)
 
@@ -1060,6 +1073,10 @@ def render_interactive_sku_table(
   .period-apply { border:2px solid var(--accent); background:#fff; color:var(--accent); border-radius:999px;
     padding:4px 14px; font-size:12px; font-weight:600; cursor:pointer; }
   .period-apply:hover { background:var(--accent-soft); }
+  @keyframes aurapulse { 0%,100% { transform:scale(0.85); opacity:0.95; } 50% { transform:scale(1.3); opacity:0.5; } }
+  .chart-aura { transform-box:fill-box; transform-origin:center; animation:aurapulse 2.2s ease-in-out infinite; pointer-events:none; }
+  @media (prefers-reduced-motion: reduce) { .chart-aura { animation:none; } }
+  .chart-legend { font-size:11px; color:var(--ink-soft); margin-top:6px; }
   .period-summary { display:none; flex-wrap:wrap; gap:6px 10px; align-items:center; margin:-4px 0 12px 0; padding:8px 12px;
     background:var(--violet-soft); border-radius:12px; font-size:12px; line-height:1.6; color:var(--ink); }
   .period-summary .ps-title { font-weight:700; color:var(--violet); font-family:'M PLUS Rounded 1c', sans-serif; }
@@ -1111,6 +1128,7 @@ def render_interactive_sku_table(
   const DATA = __DATA_JSON__;
   const TREND = __TREND_JSON__;
   const EVENTS = __EVENTS_JSON__;
+  const FILE_DATES = __FILE_DATES_JSON__;   // CSVを取得済みの日付（変動が無い日を前日の在庫で埋める対象）
   const COLUMNS = __COLUMNS_JSON__;
   const SKU_COL = __SKU_COL_JSON__;
   const PAGE_SIZE = __PAGE_SIZE__;
@@ -1275,25 +1293,34 @@ def render_interactive_sku_table(
     nextBtn.disabled = page >= tp;
   }
 
+  // その他の増減を「+55 / −3」の形にする（0の側は出さない）。どちらも0なら空文字
+  function otherPosNegText(pos, neg) {
+    const parts = [];
+    if (pos) parts.push("+" + fmtNum(pos));
+    if (neg) parts.push("−" + fmtNum(Math.abs(neg)));
+    return parts.join(" / ");
+  }
+
   function signed(n) { return (n > 0 ? "+" : "") + fmtNum(n); }
 
   // 指定期間の内訳を集計する（startStr〜endStr、両端含む）
   function summarizeEvents(sku, startStr, endStr) {
     const days = EVENTS[sku] || {};
-    let sales = 0, hasSales = false, other = 0, hasOther = false;
+    let sales = 0, hasSales = false, otherPos = 0, otherNeg = 0;
     const users = {};
     Object.keys(days).forEach(function(d) {
       if (d < startStr || d > endStr) return;
       const e = days[d];
       if (e.s !== undefined) { sales += e.s; hasSales = true; }
-      if (e.o !== undefined) { other += e.o; hasOther = true; }
+      if (e.op !== undefined) otherPos += e.op;
+      if (e.on !== undefined) otherNeg += e.on;
       (e.c || []).forEach(function(c) {
         if (!users[c[0]]) users[c[0]] = { n: 0, delta: 0 };
         users[c[0]].n += c[1];
         users[c[0]].delta += c[2];
       });
     });
-    return { sales: sales, hasSales: hasSales, other: other, hasOther: hasOther, users: users };
+    return { sales: sales, hasSales: hasSales, otherPos: otherPos, otherNeg: otherNeg, users: users };
   }
 
   function renderPeriodSummary(startStr, endStr) {
@@ -1303,7 +1330,8 @@ def render_interactive_sku_table(
     Object.keys(r.users).forEach(function(u) {
       items.push('<span class="ps-item">📥 在庫CSV取込 ' + escapeHtml(u) + '×' + r.users[u].n + '回（' + signed(r.users[u].delta) + '）</span>');
     });
-    if (r.hasOther) items.push('<span class="ps-item">🔧 その他の増減: <b>' + signed(r.other) + '</b></span>');
+    const otherText = otherPosNegText(r.otherPos, r.otherNeg);
+    if (otherText) items.push('<span class="ps-item">🔧 その他の増減: <b>' + otherText + '</b></span>');
     periodSummary.innerHTML = '<span class="ps-title">📊 期間合計（' + escapeHtml(startStr) + ' 〜 ' + escapeHtml(endStr) + '）</span>' +
       (items.length ? items.join("") : '<span class="ps-empty">この期間の内訳データはありません</span>');
     periodSummary.style.display = "flex";
@@ -1318,7 +1346,8 @@ def render_interactive_sku_table(
     (e.c || []).forEach(function(c) {
       lines.push("📥 在庫CSV取込: " + escapeHtml(c[0]) + (c[1] > 1 ? "×" + c[1] + "回" : "") + "（" + signed(c[2]) + "）");
     });
-    if (e.o !== undefined) lines.push("🔧 その他: " + signed(e.o));
+    const ot = otherPosNegText(e.op || 0, e.on || 0);
+    if (ot) lines.push("🔧 その他: " + ot);
     if (!lines.length) return "";
     return '<div style="margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.3);">' +
       '<span style="opacity:0.7;">この日の内訳</span><br>' + lines.join("<br>") + "</div>";
@@ -1352,6 +1381,8 @@ def render_interactive_sku_table(
 
     let pathD = "";
     let pointsSvg = "";
+    let auraSvg = "";
+    let hasAura = false, hasFilled = false;
     let prevVal = null;
     points.forEach(function(p, i) {
       const x = xAt(i), y = yAt(p.value);
@@ -1364,9 +1395,18 @@ def render_interactive_sku_table(
         diffText = "—";
       }
       prevVal = p.value;
-      pointsSvg += '<circle class="chart-dot" cx="' + x + '" cy="' + y + '" r="4.5" fill="#7B5FFF"></circle>' +
+      const ev = (EVENTS[selectedSku] || {})[p.date];
+      if (ev && ev.c && ev.c.length) {
+        hasAura = true;
+        auraSvg += '<circle class="chart-aura" cx="' + x + '" cy="' + y + '" r="17" fill="url(#aura_' + KEY + ')"></circle>' +
+          '<circle class="chart-aura-ring" cx="' + x + '" cy="' + y + '" r="8.5" fill="none" stroke="#2EC5FF" stroke-width="1.5" opacity="0.9" pointer-events="none"></circle>';
+      }
+      const real = p.real !== false;
+      if (!real) hasFilled = true;
+      const baseR = real ? 4.5 : 3;
+      pointsSvg += '<circle class="chart-dot" cx="' + x + '" cy="' + y + '" r="' + baseR + '" fill="#7B5FFF"' + (real ? "" : ' opacity="0.55"') + ' data-r="' + baseR + '"></circle>' +
         '<circle class="chart-hit" cx="' + x + '" cy="' + y + '" r="12" fill="transparent" style="cursor:pointer" ' +
-        'data-date="' + escapeHtml(p.date) + '" data-value="' + p.value + '" data-diff="' + escapeHtml(diffText) + '"></circle>';
+        'data-date="' + escapeHtml(p.date) + '" data-value="' + p.value + '" data-diff="' + escapeHtml(diffText) + '" data-real="' + (real ? "1" : "0") + '"></circle>';
     });
 
     const labelIdxs = points.length <= 10
@@ -1380,10 +1420,19 @@ def render_interactive_sku_table(
     return '<div class="chart-wrap">' +
       '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto;display:block;">' +
       gridSvg +
+      '<defs><radialGradient id="aura_' + KEY + '">' +
+        '<stop offset="0" stop-color="#2EC5FF" stop-opacity="0.75"></stop>' +
+        '<stop offset="0.55" stop-color="#2EC5FF" stop-opacity="0.28"></stop>' +
+        '<stop offset="1" stop-color="#2EC5FF" stop-opacity="0"></stop></radialGradient></defs>' +
       '<path d="' + pathD + '" fill="none" stroke="#7B5FFF" stroke-width="2"></path>' +
-      pointsSvg + xLabelsSvg +
+      auraSvg + pointsSvg + xLabelsSvg +
       '</svg>' +
       '<div class="chart-tooltip"></div>' +
+      '</div>' +
+      '<div class="chart-legend">' +
+        (hasAura ? '◎ 青いオーラ＝その日に在庫CSV取込があった点' : '') +
+        (hasAura && hasFilled ? '　／　' : '') +
+        (hasFilled ? '薄い小さな点＝在庫の変動がなかった日' : '') +
       '</div>';
   }
 
@@ -1398,6 +1447,7 @@ def render_interactive_sku_table(
         dot.setAttribute("fill", "#FF6B4A");
         if (tooltip && wrap) {
           tooltip.innerHTML = hit.dataset.date + "<br>在庫: " + hit.dataset.value + "（前回比 " + hit.dataset.diff + "）" +
+            (hit.dataset.real === "0" ? '<div style="opacity:0.7;margin-top:2px;">この日は在庫の変動なし</div>' : "") +
             dayEventLines(selectedSku, hit.dataset.date);
           tooltip.style.display = "block";
           const hitRect = hit.getBoundingClientRect();
@@ -1410,11 +1460,34 @@ def render_interactive_sku_table(
         }
       });
       hit.addEventListener("mouseleave", function() {
-        dot.setAttribute("r", "4.5");
+        dot.setAttribute("r", dot.dataset.r || "4.5");
         dot.setAttribute("fill", "#7B5FFF");
         if (tooltip) tooltip.style.display = "none";
       });
     });
+  }
+
+  // 変動があった日の点に、取得済みで変動が無かった日を前日の在庫数で埋めた系列を作る
+  function buildSeries(rawPoints) {
+    if (!rawPoints || rawPoints.length === 0) return [];
+    const byDate = {};
+    rawPoints.forEach(function(p) { byDate[p.date] = p.value; });
+    const first = rawPoints[0].date;
+    const dateSet = {};
+    rawPoints.forEach(function(p) { dateSet[p.date] = true; });
+    FILE_DATES.forEach(function(d) { if (d >= first) dateSet[d] = true; });
+    const dates = Object.keys(dateSet).sort();
+    const out = [];
+    let last = null;
+    dates.forEach(function(d) {
+      if (byDate[d] !== undefined) {
+        last = byDate[d];
+        out.push({ date: d, value: last, real: true });
+      } else if (last !== null) {
+        out.push({ date: d, value: last, real: false });
+      }
+    });
+    return out;
   }
 
   function subtractMonths(dateStr, months) {
@@ -1482,7 +1555,7 @@ def render_interactive_sku_table(
     selectedSku = sku;
     renderBody();
     modalTitle.textContent = "📈 在庫推移（SKU: " + sku + "）";
-    currentPoints = TREND[sku] || [];
+    currentPoints = buildSeries(TREND[sku] || []);
     if (currentPoints.length === 0) {
       periodBar.style.display = "none";
       periodSummary.style.display = "none";
@@ -1538,6 +1611,7 @@ def render_interactive_sku_table(
         .replace("__DATA_JSON__", data_json)
         .replace("__TREND_JSON__", trend_json)
         .replace("__EVENTS_JSON__", events_json)
+        .replace("__FILE_DATES_JSON__", file_dates_json)
         .replace("__COLUMNS_JSON__", columns_json)
         .replace("__SKU_COL_JSON__", json.dumps(sku_col, ensure_ascii=False))
         .replace("__PAGE_SIZE__", str(int(page_size)))
@@ -2181,6 +2255,7 @@ def main():
     df_trend_history = load_tempostar_data(trend_paths) if trend_paths else pd.DataFrame()
     full_trend_map = compute_stock_trend_map(df_trend_history)
     full_event_map = compute_stock_event_map(df_trend_history)
+    trend_file_dates = [fi["date"].strftime("%Y-%m-%d") for fi in trend_files]
 
     # ---------- 楽天在庫（RMS 在庫API 2.0・非ブロッキング背景取得） ----------
     # 自動取得は「このブラウザセッションでまだ取得していない時（＝開いた直後やF5直後）」のみ。
@@ -2885,6 +2960,7 @@ h1, h2, h3, h4,
                                 restock_columns,
                                 key="restock",
                                 event_map=filter_trend_map(full_event_map, df_view_r["商品コード"]),
+                                file_dates=trend_file_dates,
                                 default_sort_key="発注推奨数",
                                 default_sort_dir="desc",
                                 page_size=100,
@@ -3165,6 +3241,7 @@ h1, h2, h3, h4,
                             alert_columns,
                             key="alert",
                             event_map=filter_trend_map(full_event_map, df_view_a["商品コード"]),
+                            file_dates=trend_file_dates,
                             default_sort_key="現在庫",
                             default_sort_dir="asc",
                             page_size=100,
@@ -3451,6 +3528,7 @@ h1, h2, h3, h4,
                     sales_columns,
                     key="sales",
                     event_map=filter_trend_map(full_event_map, df_view["商品コード"]),
+                    file_dates=trend_file_dates,
                     default_sort_key="今年売上",
                     default_sort_dir="desc",
                     page_size=100,
