@@ -965,10 +965,27 @@ function renderStockChart(container, history) {
       diffText = d > 0 ? `+${d}` : (d < 0 ? `${d}` : '±0');
     }
 
-    tooltip.style.left = `${px / scaleX}px`;
-    tooltip.style.top = `${py / scaleY}px`;
     tooltip.textContent = `${fmtDateWithYear(h.d)}：${h.stock}（前回比 ${diffText}）`;
     tooltip.style.display = 'block';
+
+    // ツールチップがグラフ（モーダル）の外に出て見切れないよう、表示領域の内側に収める
+    const wrapW = rect.width;
+    const tipW = tooltip.offsetWidth;
+    const tipH = tooltip.offsetHeight;
+    const pxPx = px / scaleX;
+    const pyPx = py / scaleY;
+    const margin = 4;
+    const half = tipW / 2;
+    // 左右：中心を点の真上に置きつつ、はみ出す場合だけ内側へずらす
+    const left = Math.max(half + margin, Math.min(wrapW - half - margin, pxPx));
+    tooltip.style.left = `${left}px`;
+    tooltip.style.top = `${pyPx}px`;
+    // 上下：上に収まらない（点がグラフ上端付近）場合は点の下側に出す
+    if (pyPx - tipH * 1.25 < 0) {
+      tooltip.style.transform = 'translate(-50%, 25%)';
+    } else {
+      tooltip.style.transform = 'translate(-50%, -125%)';
+    }
   }
 
   svg.addEventListener('mousemove', (e) => updateHover(e.clientX, e.clientY));
