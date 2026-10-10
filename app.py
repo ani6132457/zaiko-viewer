@@ -888,6 +888,50 @@ def compute_stock_trend_map(df_main: pd.DataFrame, sku_col: str = "商品コー�
     return trend_map
 
 
+def compute_stock_event_map(df_main: pd.DataFrame, sku_col: str = "商品コード") -> dict:
+    """SKUごと・日付ごとに、在庫変動の内訳（更新理由別）をグラフ用に事前集計する。
+    戻り値: {sku: {"YYYY-MM-DD": {"s": 売上数, "c": [[ユーザー名, 回数, 増減合計], ...], "o": その他の増減合計}}}
+      s: 受注取込の増減値の合計の符号を反転したもの（＝純粋な売上数）。受注取込が無い日は含めない。
+      c: 在庫CSV取込をユーザー名ごとにまとめたもの（回数＝CSV行数）。
+      o: 上記以外（WEB画面など）の増減値の合計。該当が無い日は含めない。"""
+    if df_main is None or df_main.empty:
+        return {}
+    need = {"更新理由", "増減値", "元ファイル"}
+    if not need.issubset(df_main.columns):
+        return {}
+
+    cols = [sku_col, "元ファイル", "更新理由", "増減値"] + (["ユーザー"] if "ユーザー" in df_main.columns else [])
+    df = df_main[cols].copy()
+    df["日付"] = pd.to_datetime(df["元ファイル"].astype(str).str.extract(r"(\d{8})")[0], format="%Y%m%d", errors="coerce")
+    df["増減値"] = pd.to_numeric(df["増減値"], errors="coerce")
+    df = df.dropna(subset=["日付", "増減値"])
+    df["更新理由"] = df["更新理由"].astype(str).str.strip()
+    if "ユーザー" not in df.columns:
+        df["ユーザー"] = ""
+    df["ユーザー"] = df["ユーザー"].fillna("").astype(str).str.strip().replace("", "不明")
+    df[sku_col] = df[sku_col].astype(str).str.strip()
+    df["_d"] = df["日付"].dt.strftime("%Y-%m-%d")
+
+    event_map = {}
+
+    def _slot(sku, d):
+        return event_map.setdefault(sku, {}).setdefault(d, {})
+
+    sales = df[df["更新理由"].str.contains("受注取込", na=False)]
+    for (sku, d), v in sales.groupby([sku_col, "_d"])["増減値"].sum().items():
+        _slot(sku, d)["s"] = int(-v)
+
+    csv_rows = df[df["更新理由"].str.contains("在庫CSV取込", na=False)]
+    for (sku, d, user), g in csv_rows.groupby([sku_col, "_d", "ユーザー"]):
+        _slot(sku, d).setdefault("c", []).append([user, int(len(g)), int(g["増減値"].sum())])
+
+    others = df[~df["更新理由"].str.contains("受注取込|在庫CSV取込", na=False)]
+    for (sku, d), v in others.groupby([sku_col, "_d"])["増減値"].sum().items():
+        _slot(sku, d)["o"] = int(v)
+
+    return event_map
+
+
 def filter_trend_map(trend_map: dict, skus) -> dict:
     """トレンドマップから、指定SKU群だけを抜き出す（不要なSKUの埋め込みを避けて軽量化）。"""
     sku_set = {str(s).strip() for s in skus if pd.notna(s)}
@@ -905,6 +949,7 @@ def render_interactive_sku_table(
     page_size: int = 100,
     height: int = 900,
     auto_height: bool = False,
+    event_map: dict = None,
 ):
     """
     一覧表示＋行クリックでの在庫推移グラフ表示を、HTML/JSで完結させて描画する。
@@ -923,6 +968,7 @@ def render_interactive_sku_table(
     records = json.loads(df_data.where(pd.notnull(df_data), None).to_json(orient="records", force_ascii=False))
 
     trend_json = json.dumps(trend_map, ensure_ascii=False)
+    events_json = json.dumps(event_map or {}, ensure_ascii=False)
     data_json = json.dumps(records, ensure_ascii=False)
     columns_json = json.dumps(columns, ensure_ascii=False)
 
@@ -1014,6 +1060,11 @@ def render_interactive_sku_table(
   .period-apply { border:2px solid var(--accent); background:#fff; color:var(--accent); border-radius:999px;
     padding:4px 14px; font-size:12px; font-weight:600; cursor:pointer; }
   .period-apply:hover { background:var(--accent-soft); }
+  .period-summary { display:none; flex-wrap:wrap; gap:6px 10px; align-items:center; margin:-4px 0 12px 0; padding:8px 12px;
+    background:var(--violet-soft); border-radius:12px; font-size:12px; line-height:1.6; color:var(--ink); }
+  .period-summary .ps-title { font-weight:700; color:var(--violet); font-family:'M PLUS Rounded 1c', sans-serif; }
+  .period-summary .ps-item { background:#fff; border-radius:999px; padding:2px 10px; white-space:nowrap; }
+  .period-summary .ps-empty { color:var(--ink-soft); }
 </style>
 
 <div class="wrap">
@@ -1049,6 +1100,7 @@ def render_interactive_sku_table(
         <button class="period-apply" id="periodapply___KEY__">適用</button>
       </span>
     </div>
+    <div class="period-summary" id="periodsummary___KEY__"></div>
     <div id="chartarea___KEY__"></div>
   </div>
 </div>
@@ -1058,6 +1110,7 @@ def render_interactive_sku_table(
   const KEY = "__KEY__";
   const DATA = __DATA_JSON__;
   const TREND = __TREND_JSON__;
+  const EVENTS = __EVENTS_JSON__;
   const COLUMNS = __COLUMNS_JSON__;
   const SKU_COL = __SKU_COL_JSON__;
   const PAGE_SIZE = __PAGE_SIZE__;
@@ -1083,6 +1136,7 @@ def render_interactive_sku_table(
   const periodStartInput = document.getElementById("periodstart_" + KEY);
   const periodEndInput = document.getElementById("periodend_" + KEY);
   const periodApplyBtn = document.getElementById("periodapply_" + KEY);
+  const periodSummary = document.getElementById("periodsummary_" + KEY);
 
   let currentPoints = [];
 
@@ -1221,6 +1275,55 @@ def render_interactive_sku_table(
     nextBtn.disabled = page >= tp;
   }
 
+  function signed(n) { return (n > 0 ? "+" : "") + fmtNum(n); }
+
+  // 指定期間の内訳を集計する（startStr〜endStr、両端含む）
+  function summarizeEvents(sku, startStr, endStr) {
+    const days = EVENTS[sku] || {};
+    let sales = 0, hasSales = false, other = 0, hasOther = false;
+    const users = {};
+    Object.keys(days).forEach(function(d) {
+      if (d < startStr || d > endStr) return;
+      const e = days[d];
+      if (e.s !== undefined) { sales += e.s; hasSales = true; }
+      if (e.o !== undefined) { other += e.o; hasOther = true; }
+      (e.c || []).forEach(function(c) {
+        if (!users[c[0]]) users[c[0]] = { n: 0, delta: 0 };
+        users[c[0]].n += c[1];
+        users[c[0]].delta += c[2];
+      });
+    });
+    return { sales: sales, hasSales: hasSales, other: other, hasOther: hasOther, users: users };
+  }
+
+  function renderPeriodSummary(startStr, endStr) {
+    const r = summarizeEvents(selectedSku, startStr, endStr);
+    const items = [];
+    if (r.hasSales) items.push('<span class="ps-item">🛒 売上: <b>' + fmtNum(r.sales) + '個</b></span>');
+    Object.keys(r.users).forEach(function(u) {
+      items.push('<span class="ps-item">📥 在庫CSV取込 ' + escapeHtml(u) + '×' + r.users[u].n + '回（' + signed(r.users[u].delta) + '）</span>');
+    });
+    if (r.hasOther) items.push('<span class="ps-item">🔧 その他の増減: <b>' + signed(r.other) + '</b></span>');
+    periodSummary.innerHTML = '<span class="ps-title">📊 期間合計（' + escapeHtml(startStr) + ' 〜 ' + escapeHtml(endStr) + '）</span>' +
+      (items.length ? items.join("") : '<span class="ps-empty">この期間の内訳データはありません</span>');
+    periodSummary.style.display = "flex";
+  }
+
+  // チップ用：その日の内訳（HTML）
+  function dayEventLines(sku, dateStr) {
+    const e = (EVENTS[sku] || {})[dateStr];
+    if (!e) return "";
+    const lines = [];
+    if (e.s !== undefined) lines.push("🛒 売上: " + fmtNum(e.s) + "個");
+    (e.c || []).forEach(function(c) {
+      lines.push("📥 在庫CSV取込: " + escapeHtml(c[0]) + (c[1] > 1 ? "×" + c[1] + "回" : "") + "（" + signed(c[2]) + "）");
+    });
+    if (e.o !== undefined) lines.push("🔧 その他: " + signed(e.o));
+    if (!lines.length) return "";
+    return '<div style="margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.3);">' +
+      '<span style="opacity:0.7;">この日の内訳</span><br>' + lines.join("<br>") + "</div>";
+  }
+
   function buildChartSvg(points) {
     const W = 860, H = 420, padL = 56, padR = 24, padT = 24, padB = 40;
     const innerW = W - padL - padR, innerH = H - padT - padB;
@@ -1294,7 +1397,8 @@ def render_interactive_sku_table(
         dot.setAttribute("r", "6.5");
         dot.setAttribute("fill", "#FF6B4A");
         if (tooltip && wrap) {
-          tooltip.innerHTML = hit.dataset.date + "<br>在庫: " + hit.dataset.value + "（前回比 " + hit.dataset.diff + "）";
+          tooltip.innerHTML = hit.dataset.date + "<br>在庫: " + hit.dataset.value + "（前回比 " + hit.dataset.diff + "）" +
+            dayEventLines(selectedSku, hit.dataset.date);
           tooltip.style.display = "block";
           const hitRect = hit.getBoundingClientRect();
           const wrapRect = wrap.getBoundingClientRect();
@@ -1321,6 +1425,7 @@ def render_interactive_sku_table(
 
   function drawChartForRange(startStr, endStr) {
     const filtered = currentPoints.filter(function(p) { return p.date >= startStr && p.date <= endStr; });
+    renderPeriodSummary(startStr, endStr);
     if (filtered.length === 0) {
       chartArea.innerHTML = '<div class="no-data">この期間の在庫推移データがありません。</div>';
     } else {
@@ -1380,6 +1485,7 @@ def render_interactive_sku_table(
     currentPoints = TREND[sku] || [];
     if (currentPoints.length === 0) {
       periodBar.style.display = "none";
+      periodSummary.style.display = "none";
       chartArea.innerHTML = '<div class="no-data">選択したSKUの在庫推移データがありません。</div>';
     } else {
       periodBar.style.display = "flex";
@@ -1431,6 +1537,7 @@ def render_interactive_sku_table(
         .replace("__SCROLL_AREA_EXTRA_CLASS__", "auto-h" if auto_height else "")
         .replace("__DATA_JSON__", data_json)
         .replace("__TREND_JSON__", trend_json)
+        .replace("__EVENTS_JSON__", events_json)
         .replace("__COLUMNS_JSON__", columns_json)
         .replace("__SKU_COL_JSON__", json.dumps(sku_col, ensure_ascii=False))
         .replace("__PAGE_SIZE__", str(int(page_size)))
@@ -1714,14 +1821,45 @@ def _read_fetch_password():
     return value, ""
 
 
+def _visible_secret_sections() -> str:
+    """診断用：いま読めている Secrets のセクション名（名前のみ。値は絶対に出さない）。"""
+    try:
+        names = [str(k) for k in st.secrets.keys()]
+    except Exception:
+        return "（取得できませんでした）"
+    return "、".join(names) if names else "（1件も読めていません）"
+
+
+def _read_fetch_password_with_retry(tries: int = 3, wait: float = 1.5):
+    """再デプロイ直後など Secrets の反映が遅れている場合に備え、読めなければ少し待って再試行する。
+    パスワードが読めたときは待たない（通常時の速度は変わらない）。"""
+    value, reason = _read_fetch_password()
+    for _ in range(tries - 1):
+        if value:
+            break
+        time.sleep(wait)
+        value, reason = _read_fetch_password()
+    return value, reason
+
+
 def _fetch_tab_unlocked() -> bool:
     """パスワード認証。secrets にパスワードが無い場合は使用不可（安全側に倒す）。"""
-    expected, reason = _read_fetch_password()
+    expected, reason = _read_fetch_password_with_retry()
     if not expected:
         st.error(
             f"このタブは使用できません。{reason}"
             "Streamlit の Secrets に [fetch_tab] password を設定してください。"
         )
+        st.caption(
+            f"いま読めている Secrets のセクション: {_visible_secret_sections()}"
+            "（名前のみ表示・値は表示しません）"
+        )
+        st.caption(
+            "取得完了後に出る場合は、結果ファイルの保存でアプリが再起動中で、"
+            "Secrets の反映が間に合っていない可能性があります。1分ほど待ってから下のボタンを押してください。"
+        )
+        if st.button("🔄 再読み込み", key="fetch_tab_reload_secrets"):
+            st.rerun()
         return False
 
     if st.session_state.get("fetch_tab_ok"):
@@ -2042,6 +2180,7 @@ def main():
     trend_paths = sorted(fi["path"] for fi in trend_files)
     df_trend_history = load_tempostar_data(trend_paths) if trend_paths else pd.DataFrame()
     full_trend_map = compute_stock_trend_map(df_trend_history)
+    full_event_map = compute_stock_event_map(df_trend_history)
 
     # ---------- 楽天在庫（RMS 在庫API 2.0・非ブロッキング背景取得） ----------
     # 自動取得は「このブラウザセッションでまだ取得していない時（＝開いた直後やF5直後）」のみ。
@@ -2745,6 +2884,7 @@ h1, h2, h3, h4,
                                 trend_map_r,
                                 restock_columns,
                                 key="restock",
+                                event_map=filter_trend_map(full_event_map, df_view_r["商品コード"]),
                                 default_sort_key="発注推奨数",
                                 default_sort_dir="desc",
                                 page_size=100,
@@ -3024,6 +3164,7 @@ h1, h2, h3, h4,
                             trend_map_a,
                             alert_columns,
                             key="alert",
+                            event_map=filter_trend_map(full_event_map, df_view_a["商品コード"]),
                             default_sort_key="現在庫",
                             default_sort_dir="asc",
                             page_size=100,
@@ -3309,6 +3450,7 @@ h1, h2, h3, h4,
                     trend_map_s,
                     sales_columns,
                     key="sales",
+                    event_map=filter_trend_map(full_event_map, df_view["商品コード"]),
                     default_sort_key="今年売上",
                     default_sort_dir="desc",
                     page_size=100,
