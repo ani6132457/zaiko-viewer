@@ -1380,7 +1380,8 @@ def render_interactive_sku_table(
     }
 
     let pathD = "";
-    let pointsSvg = "";
+    let pointsSvg = "";        // 変動があった点（手前に描く・反応エリア大）
+    let filledSvg = "";        // 変動が無かった日の点（奥に描く・反応エリア小）
     let auraSvg = "";
     let hasAura = false, hasFilled = false;
     let prevVal = null;
@@ -1404,9 +1405,11 @@ def render_interactive_sku_table(
       const real = p.real !== false;
       if (!real) hasFilled = true;
       const baseR = real ? 4.5 : 3;
-      pointsSvg += '<circle class="chart-dot" cx="' + x + '" cy="' + y + '" r="' + baseR + '" fill="#7B5FFF"' + (real ? "" : ' opacity="0.55"') + ' data-r="' + baseR + '"></circle>' +
-        '<circle class="chart-hit" cx="' + x + '" cy="' + y + '" r="12" fill="transparent" style="cursor:pointer" ' +
+      const hitR = real ? 12 : 4;   // 変動の無い日の点は反応エリアを小さくして、変動のある点にカーソルが合いやすくする
+      const pointSvg = '<circle class="chart-dot" cx="' + x + '" cy="' + y + '" r="' + baseR + '" fill="#7B5FFF"' + (real ? "" : ' opacity="0.55"') + ' data-r="' + baseR + '"></circle>' +
+        '<circle class="chart-hit" cx="' + x + '" cy="' + y + '" r="' + hitR + '" fill="transparent" style="cursor:pointer" ' +
         'data-date="' + escapeHtml(p.date) + '" data-value="' + p.value + '" data-diff="' + escapeHtml(diffText) + '" data-real="' + (real ? "1" : "0") + '"></circle>';
+      if (real) pointsSvg += pointSvg; else filledSvg += pointSvg;
     });
 
     const labelIdxs = points.length <= 10
@@ -1425,7 +1428,7 @@ def render_interactive_sku_table(
         '<stop offset="0.55" stop-color="#2EC5FF" stop-opacity="0.28"></stop>' +
         '<stop offset="1" stop-color="#2EC5FF" stop-opacity="0"></stop></radialGradient></defs>' +
       '<path d="' + pathD + '" fill="none" stroke="#7B5FFF" stroke-width="2"></path>' +
-      auraSvg + pointsSvg + xLabelsSvg +
+      auraSvg + filledSvg + pointsSvg + xLabelsSvg +
       '</svg>' +
       '<div class="chart-tooltip"></div>' +
       '</div>' +
