@@ -229,20 +229,18 @@ def get_tempostar_sales_map(file_paths):
     df_sales["売上個数"] = -df_sales["増減値"]
     df_sales = df_sales[df_sales["売上個数"] > 0]
 
+    df_sales = df_sales.dropna(subset=["_日付"])
     grouped = (
-        df_sales.groupby(["商品コード", "_日付"], dropna=False)["売上個数"]
+        df_sales.groupby(["商品コード", "_日付"])["売上個数"]
         .sum()
         .reset_index()
+        .sort_values(["商品コード", "_日付"], kind="stable")
     )
 
+    # 1行ずつ DataFrame を回すと遅いため、列をリストにしてまとめて組み立てる
     sales_map = {}
-    for sku, sub in grouped.groupby("商品コード"):
-        sub = sub.sort_values("_日付")
-        sales_map[sku] = [
-            {"d": row["_日付"], "q": int(row["売上個数"])}
-            for _, row in sub.iterrows()
-            if pd.notna(row["_日付"])
-        ]
+    for sku, d, q in zip(grouped["商品コード"].tolist(), grouped["_日付"].tolist(), grouped["売上個数"].astype(int).tolist()):
+        sales_map.setdefault(sku, []).append({"d": d, "q": q})
     return sales_map
 
 
@@ -268,20 +266,17 @@ def get_tempostar_stock_history_map(file_paths):
     df_all["_日付"] = df_all["元ファイル"].astype(str).str.extract(r"(\d{8})")
     df_all = df_all.dropna(subset=["_日付", "変動後"])
 
+    # その日の最後の変動後を採用（同じ日の中はファイル内の並び順のまま）
     grouped = (
-        df_all.sort_values("_日付")
-        .groupby(["商品コード", "_日付"], dropna=False)["変動後"]
-        .last()
-        .reset_index()
+        df_all.sort_values("_日付", kind="stable")
+        .drop_duplicates(subset=["商品コード", "_日付"], keep="last")
+        .sort_values(["商品コード", "_日付"], kind="stable")
     )
 
+    # 1行ずつ DataFrame を回すと遅いため、列をリストにしてまとめて組み立てる
     history_map = {}
-    for sku, sub in grouped.groupby("商品コード"):
-        sub = sub.sort_values("_日付")
-        history_map[sku] = [
-            {"d": row["_日付"], "stock": int(row["変動後"])}
-            for _, row in sub.iterrows()
-        ]
+    for sku, d, v in zip(grouped["商品コード"].tolist(), grouped["_日付"].tolist(), grouped["変動後"].astype(int).tolist()):
+        history_map.setdefault(sku, []).append({"d": d, "stock": v})
     return history_map
 
 
@@ -950,12 +945,18 @@ def compute_stock_event_map(df_main: pd.DataFrame, sku_col: str = "商品コー�
 
 
 @st.cache_data(show_spinner=False)
-def get_stock_trend_and_event_maps(paths_with_mtime: tuple):
+def get_stock_trend_and_event_maps(all_paths_with_mtime: tuple, start_yyyymmdd: str):
     """在庫推移マップと内訳マップを計算して返す。CSVが変わらない限り結果を使い回す
     （検索や日付変更のたびに再計算しないため）。引数にファイルの更新時刻を含めるのは、
-    同じ名前のCSVが取得し直されたときにキャッシュを無効にするため。"""
-    paths = [p for p, _ in paths_with_mtime]
-    df = load_tempostar_data(paths) if paths else pd.DataFrame()
+    同じ名前のCSVが取得し直されたときにキャッシュを無効にするため。
+    CSVは、売上マップ・在庫履歴マップと同じ「全ファイル」の読み込み結果を共有して、
+    start_yyyymmdd 以降の日付だけ使う（同じCSVを何度も読み直さない）。"""
+    paths = tuple(sorted(p for p, _ in all_paths_with_mtime))
+    if not paths:
+        return {}, {}
+    df = load_tempostar_data(paths)
+    ymd = df["元ファイル"].astype(str).str.extract(r"(\d{8})")[0]
+    df = df[ymd >= start_yyyymmdd]
     return compute_stock_trend_map(df), compute_stock_event_map(df)
 
 
@@ -2400,7 +2401,8 @@ def _main_impl():
     trend_paths = sorted(fi["path"] for fi in trend_files)
     _boot_step(40, "在庫の推移を読み込み・集計中…")
     full_trend_map, full_event_map = get_stock_trend_and_event_maps(
-        tuple((pth, os.path.getmtime(pth)) for pth in trend_paths)
+        tuple((fi["path"], os.path.getmtime(fi["path"])) for fi in file_infos),
+        trend_start_date.strftime("%Y%m%d"),
     )
     trend_file_dates = [fi["date"].strftime("%Y-%m-%d") for fi in trend_files]
 
