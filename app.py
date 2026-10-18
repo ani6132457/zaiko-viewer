@@ -1152,6 +1152,20 @@ def render_interactive_sku_table(
 
   let sortKey = __DEFAULT_SORT_KEY_JSON__;
   let sortDir = __DEFAULT_SORT_DIR_JSON__;
+
+  // 検索などで表が作り直されても、並び替え（列・昇順/降順）を維持するため、ブラウザ（タブを閉じるまで）に保存する
+  const SORT_STORAGE_KEY = "zv_sort_" + KEY;
+  try {
+    const saved = JSON.parse(window.sessionStorage.getItem(SORT_STORAGE_KEY) || "null");
+    if (saved && (saved.dir === "asc" || saved.dir === "desc") &&
+        COLUMNS.some(function(c) { return c.key === saved.key; })) {
+      sortKey = saved.key;
+      sortDir = saved.dir;
+    }
+  } catch (e) { /* 保存領域が使えない環境では、毎回デフォルトの並び順に戻るだけ */ }
+  function saveSort() {
+    try { window.sessionStorage.setItem(SORT_STORAGE_KEY, JSON.stringify({ key: sortKey, dir: sortDir })); } catch (e) {}
+  }
   let page = 1;
   let selectedSku = null;
   let sortedData = DATA.slice();
@@ -1243,6 +1257,7 @@ def render_interactive_sku_table(
           sortKey = col.key;
           sortDir = (col.type === "number" || col.type === "order") ? "desc" : "asc";
         }
+        saveSort();
         page = 1;
         applySort();
         renderHead();
@@ -2150,7 +2165,8 @@ def render_fetch_tab():
     st.markdown("### 🏬 Tempostar 在庫変動ログ")
     st.caption(
         "GitHub Actions 上でテンポスターにログインし、指定した日の在庫変動ログ（CSV）を取得して保存します。"
-        "取得が終わるとアプリが自動で更新され、データに反映されます。当日分は取得できません（前日まで）。"
+        "取得が終わるとアプリが自動で更新され、データに反映されます（更新に1〜2分かかります）。"
+        "更新中も、開いていたタブと検索条件は引き継がれます。当日分は取得できません（前日まで）。"
     )
 
     # ---------- 取得状況 ----------
@@ -2238,6 +2254,145 @@ def render_fetch_tab():
     if st.button("🔒 ロックする", key="fetch_lock"):
         st.session_state["fetch_tab_ok"] = False
         st.rerun()
+
+
+# ==========================
+# 再起動（再デプロイ・再接続）されても、操作中の状態を引き継ぐ
+# ==========================
+# 取得したCSVの自動保存などでアプリが再起動されると、新しいセッションになり、
+# 検索条件やタブが初期化されてしまう。そこで、画面のURL（クエリパラメータ）に
+# 検索条件を、ブラウザ（sessionStorage）に開いていたタブを記録しておき、再起動後に復元する。
+# ※ パスワード認証の状態（fetch_tab_ok 等）は、安全のため記録しない。
+_PERSIST_STATE_KEYS = [
+    "sku_applied", "restock_applied", "alert_applied",
+    "sku_keyword", "sku_start_date", "sku_end_date", "sku_min_sales", "sku_forecast_start", "sku_forecast_end",
+    "rs_keyword", "rs_min_sales", "rs_months", "rs_target_days", "rs_max_stock", "rs_forecast_start", "rs_forecast_end",
+    "alert_keyword", "alert_months", "alert_days",
+    "order_history_search",
+]
+_PERSIST_QP = "zv"
+
+
+def _encode_ui_state() -> str:
+    """検索条件などを、URLに載せられる短い文字列にする。"""
+    data = {}
+    for k in _PERSIST_STATE_KEYS:
+        if k not in st.session_state:
+            continue
+        v = st.session_state[k]
+        if isinstance(v, datetime):
+            v = {"__d": v.date().isoformat()}
+        elif hasattr(v, "isoformat") and not isinstance(v, str):      # date
+            v = {"__d": v.isoformat()}
+        elif isinstance(v, (bool, int, float, str)) or v is None:
+            pass
+        else:
+            continue
+        data[k] = v
+    raw = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii")
+
+
+def _decode_ui_state(text: str) -> dict:
+    try:
+        raw = base64.urlsafe_b64decode(text.encode("ascii"))
+        data = json.loads(raw.decode("utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def restore_ui_state_from_url(min_date=None, max_date=None):
+    """新しいセッションの最初の1回だけ、URLに記録された検索条件を session_state に戻す。
+    ウィジェットが作られる前（デフォルト値の設定より前）に呼ぶこと。"""
+    if st.session_state.get("_zv_restored"):
+        return
+    st.session_state["_zv_restored"] = True
+    try:
+        text = st.query_params.get(_PERSIST_QP, "")
+    except Exception:
+        return
+    if not text:
+        return
+    for k, v in _decode_ui_state(text).items():
+        if k not in _PERSIST_STATE_KEYS or k in st.session_state:
+            continue
+        if isinstance(v, dict) and "__d" in v:
+            try:
+                v = datetime.strptime(v["__d"], "%Y-%m-%d").date()
+            except Exception:
+                continue
+            # 日付入力の範囲外だとエラーになるため、データの範囲内に収める
+            if k in ("sku_start_date", "sku_end_date") and min_date and max_date:
+                v = min(max(v, min_date), max_date)
+        st.session_state[k] = v
+
+
+def save_ui_state_to_url():
+    """現在の検索条件をURLに記録する（変化があったときだけ。画面の再実行は起きない）。"""
+    try:
+        enc = _encode_ui_state()
+        if st.query_params.get(_PERSIST_QP, "") != enc:
+            st.query_params[_PERSIST_QP] = enc
+    except Exception:
+        pass
+
+
+def inject_tab_restorer():
+    """開いているタブ（外側・内側とも）をブラウザに記録し、再起動後に同じタブを開き直す。"""
+    js = """
+    <script>
+    (function() {
+      try {
+        var win = window.parent, doc = win.document;
+        if (win.__zvTabRestorer) return;
+        win.__zvTabRestorer = true;
+        var KEY = "zv_tabs";
+        function load() { try { return JSON.parse(win.sessionStorage.getItem(KEY) || "{}"); } catch (e) { return {}; } }
+        function save(m) { try { win.sessionStorage.setItem(KEY, JSON.stringify(m)); } catch (e) {} }
+        function label(t) { return (t.textContent || "").trim(); }
+        function sig(list) { return Array.prototype.map.call(list.querySelectorAll('[role="tab"]'), label).join("|"); }
+
+        // --- 記録：タブがクリックされたら、全タブ列の「選択中のタブ」を保存 ---
+        function snapshot() {
+          var m = load();
+          doc.querySelectorAll('[role="tablist"]').forEach(function(list) {
+            var sel = list.querySelector('[role="tab"][aria-selected="true"]');
+            if (sel) m[sig(list)] = label(sel);
+          });
+          save(m);
+        }
+        doc.addEventListener("click", function(e) {
+          if (e.target && e.target.closest && e.target.closest('[role="tab"]')) {
+            userActed = true;
+            setTimeout(snapshot, 60);
+          }
+        }, true);
+
+        // --- 復元：タブ列が現れたら、保存済みのタブを開く（約8秒間、ユーザーが触るまで） ---
+        var userActed = false, start = Date.now();
+        function restore() {
+          if (userActed || Date.now() - start > 8000) return false;
+          var m = load();
+          doc.querySelectorAll('[role="tablist"]').forEach(function(list) {
+            var want = m[sig(list)];
+            if (!want) return;
+            var tabs = list.querySelectorAll('[role="tab"]');
+            for (var i = 0; i < tabs.length; i++) {
+              if (label(tabs[i]) === want) {
+                if (tabs[i].getAttribute("aria-selected") !== "true") tabs[i].click();
+                break;
+              }
+            }
+          });
+          return true;
+        }
+        var timer = setInterval(function() { if (!restore()) clearInterval(timer); }, 300);
+      } catch (e) { /* 失敗してもアプリ本体には影響させない */ }
+    })();
+    </script>
+    """
+    components.html(js, height=0)
 
 
 # ==========================
@@ -2358,17 +2513,26 @@ def main():
     st.set_page_config(page_title="Tempostar 売上集計", layout="wide")
     if not st.session_state.get("_zv_booted"):
         st.session_state["_zv_booted"] = True
-        _BOOT["ph"] = st.empty()
-        _BOOT["pct"] = 0
-        _boot_render(8, "起動しています…")
+        # URLに検索条件が記録されている＝操作中に再起動（再接続）された場合は、猫の画面を出さずに静かに復元する
+        restoring = False
+        try:
+            restoring = bool(st.query_params.get(_PERSIST_QP, ""))
+        except Exception:
+            pass
+        if not restoring:
+            _BOOT["ph"] = st.empty()
+            _BOOT["pct"] = 0
+            _boot_render(8, "起動しています…")
     try:
         _main_impl()
     finally:
         _boot_clear()
+        save_ui_state_to_url()
 
 
 def _main_impl():
     inject_scroll_preserver()
+    inject_tab_restorer()
     st.title("Tempostar 在庫変動データ")
 
     # ---------- CSV 一覧 ----------
@@ -2446,6 +2610,9 @@ def _main_impl():
     # ---------- 売上個数予想用：全期間の日別売上マップ（1回だけ計算） ----------
     _boot_step(80, "売上データを集計中…")
     all_sales_map = get_tempostar_sales_map(all_paths_for_rakuten)
+
+    # ---------- 再起動前の検索条件を復元（ウィジェット作成・デフォルト設定より前に行う） ----------
+    restore_ui_state_from_url(min_date, max_date)
 
     # ---------- 初期フィルタ（セッション） ----------
     default_forecast_start, default_forecast_end = default_forecast_range()
