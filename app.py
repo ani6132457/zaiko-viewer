@@ -818,8 +818,9 @@ def render_amazon_refresh_control(fetched_at, fetching, errors, key):
 # ==========================
 # Amazon機能（FBA業務支援／テンポスター×FBA在庫比較）
 # ==========================
-# sku_master.xlsx（列: AmazonSKU, テンポスターSKU, …）をリポジトリ内で探す場所。見つからなければタブ内でアップロードする。
-FBA_SKU_MASTER_CANDIDATES = ["data/sku_master.xlsx", "sku_master.xlsx"]
+# sku_master.xlsx（列: AmazonSKU, テンポスターSKU, …）を置くフォルダ。見つからなければタブ内でアップロードする。
+FBA_SKU_MASTER_FOLDER = "amazon用SKUマスター"
+FBA_SKU_MASTER_FILE = "sku_master.xlsx"
 FBA_COMPARE_HTML = "FBA在庫比較.html"
 FBA_TREND_DAYS = 400  # 在庫比較の推移グラフに渡す日数（1年＋余裕）
 
@@ -834,11 +835,18 @@ def _read_fba_sku_master(raw: bytes) -> pd.DataFrame:
 
 
 def load_fba_sku_master():
-    """(DataFrame or None, 読み込み元の説明) を返す。リポジトリ内のファイル → タブでアップロードしたファイルの順に探す。"""
-    for path in FBA_SKU_MASTER_CANDIDATES:
-        if os.path.exists(path):
-            with open(path, "rb") as f:
-                return _read_fba_sku_master(f.read()), path
+    """(DataFrame or None, 読み込み元の説明) を返す。
+    「amazon用SKUマスター」フォルダの sku_master.xlsx → 同フォルダ内の他の .xlsx → タブでアップロードしたファイル の順に探す。"""
+    path = os.path.join(FBA_SKU_MASTER_FOLDER, FBA_SKU_MASTER_FILE)
+    if not os.path.exists(path):
+        others = sorted(
+            p for p in glob.glob(os.path.join(FBA_SKU_MASTER_FOLDER, "*.xlsx"))
+            if not os.path.basename(p).startswith("~$")  # Excelで開いている時の一時ファイルは除く
+        )
+        path = others[-1] if others else None
+    if path:
+        with open(path, "rb") as f:
+            return _read_fba_sku_master(f.read()), path
     raw = st.session_state.get("fba_sku_master_upload")
     if raw:
         return _read_fba_sku_master(raw), "アップロードしたファイル"
@@ -1041,6 +1049,7 @@ def render_amazon_tab(file_infos):
     if df_master is not None:
         st.caption(f"sku_master：{len(df_master):,}件（{master_src}）")
     else:
+        st.warning(f"『{FBA_SKU_MASTER_FOLDER}』フォルダに sku_master.xlsx が見つかりません。下で一時的にアップロードすることもできます。")
         up = st.file_uploader(
             "sku_master.xlsx をアップロード（列：AmazonSKU, テンポスターSKU …）", type=["xlsx"], key="fba_sku_master_uploader"
         )
