@@ -11,6 +11,8 @@ import hmac
 import threading
 import time
 import random
+import uuid
+import numpy as np
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import streamlit.components.v1 as components
 from datetime import datetime, timedelta, timezone
@@ -813,6 +815,247 @@ def render_amazon_refresh_control(fetched_at, fetching, errors, key):
 # ==========================
 # HTML テーブル生成（商品コードクリック対応）
 # ==========================
+# ==========================
+# Amazon機能（FBA業務支援／テンポスター×FBA在庫比較）
+# ==========================
+# sku_master.xlsx（列: AmazonSKU, テンポスターSKU, …）をリポジトリ内で探す場所。見つからなければタブ内でアップロードする。
+FBA_SKU_MASTER_CANDIDATES = ["data/sku_master.xlsx", "sku_master.xlsx"]
+FBA_COMPARE_HTML = "FBA在庫比較.html"
+FBA_TREND_DAYS = 400  # 在庫比較の推移グラフに渡す日数（1年＋余裕）
+
+
+@st.cache_data(show_spinner=False)
+def _read_fba_sku_master(raw: bytes) -> pd.DataFrame:
+    df = pd.read_excel(io.BytesIO(raw), dtype=str)
+    for c in ("AmazonSKU", "テンポスターSKU"):
+        if c in df.columns:
+            df[c] = df[c].str.strip()
+    return df
+
+
+def load_fba_sku_master():
+    """(DataFrame or None, 読み込み元の説明) を返す。リポジトリ内のファイル → タブでアップロードしたファイルの順に探す。"""
+    for path in FBA_SKU_MASTER_CANDIDATES:
+        if os.path.exists(path):
+            with open(path, "rb") as f:
+                return _read_fba_sku_master(f.read()), path
+    raw = st.session_state.get("fba_sku_master_upload")
+    if raw:
+        return _read_fba_sku_master(raw), "アップロードしたファイル"
+    return None, ""
+
+
+def fba_amazon_to_tempostar(df_master) -> dict:
+    if df_master is None or not {"AmazonSKU", "テンポスターSKU"}.issubset(df_master.columns):
+        return {}
+    m = df_master.dropna(subset=["AmazonSKU", "テンポスターSKU"])
+    m = m[(m["AmazonSKU"] != "") & (m["テンポスターSKU"] != "")]
+    m = m.drop_duplicates(subset=["AmazonSKU"], keep="first")
+    return dict(zip(m["AmazonSKU"], m["テンポスターSKU"]))
+
+
+@st.cache_data(show_spinner=False)
+def build_fba_compare_payload(all_paths: tuple, latest_ymd: str, master_items: tuple) -> str:
+    """FBA在庫比較HTMLに注入するデータ（JSON文字列）。他タブと同じキャッシュ済み集計を流用する。"""
+    paths = list(all_paths)  # 他タブと同じ引数の形（list）で呼んでキャッシュを共有する
+    stock_map = get_tempostar_stock_map(paths)
+    snap = get_all_sku_snapshot(paths)
+    history_map = get_tempostar_stock_history_map(paths)
+    sales_map = get_tempostar_sales_map(paths)
+
+    def _s(v):
+        return "" if v is None or (isinstance(v, float) and math.isnan(v)) else str(v).strip()
+
+    # ts: {商品コード: [現在庫, 商品基本コード, 属性1名, 属性2名]}／names: {商品基本コード: 商品名}
+    ts, names = {}, {}
+    if not snap.empty:
+        cols = [c if c in snap.columns else None for c in ("商品コード", "商品基本コード", "商品名", "属性1名", "属性2名")]
+        recs = snap[[c for c in cols if c]].to_dict("records")
+        for r in recs:
+            code = _s(r.get("商品コード"))
+            if not code:
+                continue
+            base = _s(r.get("商品基本コード"))
+            ts[code] = [int(stock_map.get(code, 0)), base, _s(r.get("属性1名")), _s(r.get("属性2名"))]
+            if base and base not in names:
+                names[base] = _s(r.get("商品名"))
+    for code, v in stock_map.items():
+        if code and code not in ts:
+            ts[code] = [int(v), "", "", ""]
+
+    img_master = load_image_master()
+    base_url = "https://image.rakuten.co.jp/hype/cabinet"
+    img = {b: base_url + img_master[b] for b in names if img_master.get(b)}
+
+    # 推移グラフ用（直近 FBA_TREND_DAYS 日分。日付は YYYYMMDD の数値にして軽くする）
+    start = (datetime.strptime(latest_ymd, "%Y%m%d") - timedelta(days=FBA_TREND_DAYS)).strftime("%Y%m%d")
+    # 開始日より前の最後の在庫も1点だけ残す（グラフの左端を正しい在庫から始めるため）
+    hist = {}
+    for code, pts in history_map.items():
+        before = [p for p in pts if p["d"] < start]
+        keep = ([before[-1]] if before else []) + [p for p in pts if p["d"] >= start]
+        if keep:
+            hist[code] = [[int(p["d"]), int(p["stock"])] for p in keep]
+    sales = {}
+    for code, pts in sales_map.items():
+        keep = [[int(p["d"]), int(p["q"])] for p in pts if p["d"] >= start]
+        if keep:
+            sales[code] = keep
+
+    payload = {
+        "ts": ts, "names": names, "img": img, "hist": hist, "sales": sales,
+        "master": dict(master_items),
+        "meta": {"latest": f"{latest_ymd[:4]}-{latest_ymd[4:6]}-{latest_ymd[6:]}"},
+    }
+    # 商品名などに "</script>" が含まれても壊れないようにする
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
+
+
+def _fba_generate_auto_print_html(df):
+    """ピッキングリスト（旧FBA業務支援アプリと同じ内容。表示と同時に印刷ダイアログを開く）"""
+    df = df[df["SKU"].notna() & df["商品名_x"].notna()]
+    df = df.sort_values("SKU")
+    out = """
+    <html><head><meta charset='utf-8'>
+    <script>window.onload = function() { window.print(); }</script>
+    <style>
+    body { font-family: 'Yu Gothic', sans-serif; font-size: 10pt; }
+    table { width: 100%; border-collapse: collapse; page-break-after: always; }
+    th, td { border: 1px solid #333; padding: 4px; }
+    th { background-color: #f0f0f0; }
+    td.wrap { word-wrap: break-word; white-space: normal; }
+    td.nowrap { white-space: nowrap; }
+    </style></head><body>
+    <h3>ピッキングリスト</h3>
+    <table>
+    <tr>
+        <th style='width:15%'>SKU</th>
+        <th style='width:30%'>商品名</th>
+        <th style='width:10%'>ASIN</th>
+        <th style='width:10%'>FNSKU</th>
+        <th style='width:10%'>数量</th>
+        <th style='width:10%'>タイプ1</th>
+        <th style='width:15%'>タイプ2</th>
+    </tr>
+    """
+    for _, row in df.iterrows():
+        t1 = row["タイプ1"] if pd.notna(row.get("タイプ1")) else ""
+        t2 = row["タイプ2"] if pd.notna(row.get("タイプ2")) else ""
+        asin = row["ASIN"] if pd.notna(row.get("ASIN")) else ""
+        fnsku = row["FNSKU"] if pd.notna(row.get("FNSKU")) else ""
+        out += (
+            f"<tr><td>{row['SKU']}</td><td class='wrap'>{row['商品名_x']}</td><td>{asin}</td><td>{fnsku}</td>"
+            f"<td>{row['数量']}</td><td class='nowrap'>{t1}</td><td class='nowrap'>{t2}</td></tr>"
+        )
+    out += f"</table><!-- {uuid.uuid4()} --></body></html>"
+    return out
+
+
+def _fba_safe_negate(value):
+    try:
+        return -int(value)
+    except Exception:
+        return ""
+
+
+def render_fba_support_tab(df_master):
+    """FBA業務支援アプリ（CSV出力＋印刷表示）を移植したもの。処理内容は旧アプリと同じ。"""
+    if df_master is None:
+        st.info("sku_master.xlsx を読み込むと使えます（このタブの上で読み込めます）。")
+        return
+
+    uploaded_file = st.file_uploader("CSVファイルをアップロードしてください", type="csv", key="fba_support_csv")
+    if not uploaded_file:
+        return
+
+    # アップロードCSV読み込み（6行目がヘッダー）。UTF-8で読めなければShift-JISで読む
+    raw = uploaded_file.getvalue()
+    df_csv = None
+    for enc in ("utf-8-sig", "cp932"):
+        try:
+            df_csv = pd.read_csv(io.BytesIO(raw), skiprows=5, encoding=enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    if df_csv is None or "SKU" not in df_csv.columns:
+        st.error("CSVを読み込めませんでした。6行目に「SKU」「数量」などの見出しがあるCSVか確認してください。")
+        return
+    df_csv["SKU"] = df_csv["SKU"].astype(str).str.strip()
+
+    merged_df = df_csv.merge(df_master, left_on="SKU", right_on="AmazonSKU", how="left")
+    # 旧アプリは商品名がCSV・マスタの両方にある前提（→「商品名_x」）。片方にしか無い場合も動くようにする
+    if "商品名_x" not in merged_df.columns and "商品名" in merged_df.columns:
+        merged_df["商品名_x"] = merged_df["商品名"]
+
+    # Excelの IF＋XLOOKUP と同じロジック
+    merged_df["商品コード"] = merged_df.apply(
+        lambda row: "" if row["SKU"] == "" else (row["テンポスターSKU"] if pd.notna(row["テンポスターSKU"]) else row["SKU"]),
+        axis=1,
+    )
+
+    stock_df = merged_df[["商品コード", "数量"]].copy()
+    stock_df["数量"] = stock_df["数量"].apply(_fba_safe_negate)
+    stock_df = stock_df.replace(["nan", "NaN", np.nan], "").astype(str)
+    stock_df = stock_df[~((stock_df["商品コード"] == "") & (stock_df["数量"] == ""))]
+    stock_df = stock_df.rename(columns={"数量": "想定在庫数"})
+
+    csv_bytes = stock_df.to_csv(index=False).encode("cp932")
+    now = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d_%H-%M")
+    st.download_button(
+        "📥 在庫アップロードCSVダウンロード", csv_bytes,
+        file_name=f"在庫アップロードデータ_{now}.csv", mime="text/csv", key="fba_support_dl",
+    )
+
+    st.subheader("🖨 ワンクリック印刷：ピッキングリスト")
+    if st.button("📄 ピッキングリストを印刷", key="fba_support_print"):
+        components.html(_fba_generate_auto_print_html(merged_df), height=1500, scrolling=True)
+
+
+def render_fba_compare_tab(file_infos, df_master):
+    """テンポスター × FBA 在庫比較（HTML/JSツール埋め込み。FBAのCSVはHTML内で読み込む）"""
+    if not os.path.exists(FBA_COMPARE_HTML):
+        st.error(f"『{FBA_COMPARE_HTML}』が見つかりません。app.py と同じフォルダに配置してください。")
+        return
+
+    all_paths = tuple(fi["path"] for fi in file_infos)
+    latest_ymd = max(fi["date"] for fi in file_infos).strftime("%Y%m%d")
+    master_items = tuple(sorted(fba_amazon_to_tempostar(df_master).items()))
+    if df_master is None:
+        st.caption("ℹ️ sku_master.xlsx が未読み込みのため、Amazon SKUをそのまま商品コードとして照合します。")
+
+    payload = build_fba_compare_payload(all_paths, latest_ymd, master_items)
+
+    with open(FBA_COMPARE_HTML, "r", encoding="utf-8") as f:
+        html_content = f.read()
+    # 本体スクリプトが動く前に注入データを読み込ませるため、<head>の直後に挿入
+    html_content = html_content.replace("<head>", f"<head><script>window.__FBA_DATA__ = {payload};</script>", 1)
+
+    if hasattr(st, "iframe"):
+        st.iframe(html_content, height="content", width="stretch")
+    else:
+        components.html(html_content, height=2600, scrolling=True)
+
+
+def render_amazon_tab(file_infos):
+    df_master, master_src = load_fba_sku_master()
+    if df_master is not None:
+        st.caption(f"sku_master：{len(df_master):,}件（{master_src}）")
+    else:
+        up = st.file_uploader(
+            "sku_master.xlsx をアップロード（列：AmazonSKU, テンポスターSKU …）", type=["xlsx"], key="fba_sku_master_uploader"
+        )
+        if up is not None:
+            st.session_state["fba_sku_master_upload"] = up.getvalue()
+            df_master, master_src = load_fba_sku_master()
+            st.caption(f"sku_master：{len(df_master):,}件（{master_src}）")
+
+    tab_support, tab_compare = st.tabs(["📤 FBA業務支援アプリ（CSV出力＋印刷表示）", "📦 テンポスター×FBA在庫比較"])
+    with tab_support:
+        render_fba_support_tab(df_master)
+    with tab_compare:
+        render_fba_compare_tab(file_infos, df_master)
+
+
 def make_html_table(df: pd.DataFrame) -> str:
     thead = "<thead><tr>" + "".join(
         f"<th>{html.escape(str(c))}</th>" for c in df.columns
@@ -4053,8 +4296,8 @@ h1, h2, h3, h4,
 
     # ---------- タブ構成：大分類（テンポスター／ZOZO）→ 各機能タブ ----------
     _boot_step(92, "画面を組み立て中…")
-    tab_group_tempostar, tab_group_zozo, tab_group_fetch = st.tabs(
-        ["🏬 テンポスター機能", "📦 ZOZO機能", "🌐 各モールCSV自動取得"]
+    tab_group_tempostar, tab_group_zozo, tab_group_amazon, tab_group_fetch = st.tabs(
+        ["🏬 テンポスター機能", "📦 ZOZO機能", "🛒 Amazon機能", "🌐 各モールCSV自動取得"]
     )
 
     with tab_group_tempostar:
@@ -4084,6 +4327,9 @@ h1, h2, h3, h4,
 
         with tab_stockcheck:
             render_stock_check_tab()
+
+    with tab_group_amazon:
+        render_amazon_tab(file_infos)
 
     with tab_group_fetch:
         render_fetch_tab()
