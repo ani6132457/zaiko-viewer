@@ -10,12 +10,13 @@
     --ink: #2A2440; --ink-soft: #74708C; --line: #ECE9F7;
     --accent: #FF6B4A; --accent-soft: #FFE7DE;
     --violet: #7B5FFF; --violet-soft: #EDE9FF;
-    --coral: #FF4D6D; --sun: #FF9F1C; --mint: #12B886; --mint-soft: #E3F8F0;
-    --bg: #F7F6FC;
+    --coral: #FF4D6D; --mint: #12B886;
+    /* グラフ（納品推奨数システムv5と同じ配色） */
+    --g-accent: #1a56db; --g-border: rgba(0,0,0,0.1); --g-border-md: rgba(0,0,0,0.18); --g-muted: #6b6b67;
   }
   * { box-sizing: border-box; }
   body { margin: 0; padding: 4px 2px 24px; font-family: 'Noto Sans JP', -apple-system, "Segoe UI", Meiryo, sans-serif;
-         color: var(--ink); background: transparent; font-size: 13px; }
+         color: var(--ink); background: transparent; font-size: 13px; position: relative; }
   h2 { font-family: 'M PLUS Rounded 1c', sans-serif; font-size: 18px; margin: 0 0 4px; }
   .muted { color: var(--ink-soft); font-size: 12px; }
   .card { background: #fff; border-radius: 18px; box-shadow: 0 4px 16px rgba(42,36,64,0.08); padding: 16px 18px; margin-bottom: 14px; }
@@ -27,10 +28,9 @@
   .drop b { color: var(--violet); }
   .drop .file { margin-top: 6px; font-weight: 700; }
   .err { color: var(--coral); font-weight: 700; margin-top: 8px; }
-  .info-row { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 10px; }
 
   /* サマリー */
-  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
   .stat { background: #fff; border-radius: 16px; padding: 12px 14px; box-shadow: 0 4px 16px rgba(42,36,64,0.08); }
   .stat .lbl { font-size: 11px; color: var(--ink-soft); font-weight: 700; }
   .stat .val { font-family: 'M PLUS Rounded 1c', sans-serif; font-size: 24px; font-weight: 800; font-variant-numeric: tabular-nums; }
@@ -50,31 +50,42 @@
   .btn { border: 2px solid var(--violet-soft); background: #fff; color: var(--violet); border-radius: 999px; padding: 6px 14px;
          font-weight: 700; cursor: pointer; font-family: inherit; font-size: 12.5px; }
   .btn:hover { background: var(--violet-soft); }
+  .btn.warn { border-color: #FFD6CC; color: var(--accent); }
+  .btn.warn:hover { background: var(--accent-soft); }
   .cols { display: none; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
   .cols.open { display: flex; }
   .chip { border: 2px solid var(--violet-soft); border-radius: 999px; padding: 4px 11px; font-size: 12px; cursor: pointer; user-select: none;
           color: var(--ink-soft); background: #fff; }
   .chip.on { background: var(--violet); border-color: var(--violet); color: #fff; }
   .hint { font-size: 12px; color: var(--ink-soft); }
+  .active-filters { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .active-filters:empty { display: none; }
+  .af { background: var(--accent-soft); color: var(--accent); border-radius: 999px; padding: 3px 4px 3px 11px; font-size: 12px; font-weight: 700; }
+  .af button { border: 0; background: transparent; color: var(--accent); cursor: pointer; font-weight: 800; padding: 0 6px; }
 
   /* テーブル */
   .wrap { background: #fff; border-radius: 18px; box-shadow: 0 4px 16px rgba(42,36,64,0.10); overflow: hidden; }
   .scroll { overflow-x: auto; }
   table { border-collapse: collapse; width: 100%; font-size: 13px; }
   th { background: var(--violet-soft); color: var(--violet); font-size: 12px; font-weight: 700; font-family: 'M PLUS Rounded 1c', sans-serif;
-       padding: 11px 10px; white-space: nowrap; cursor: pointer; user-select: none; text-align: left; }
+       padding: 0; white-space: nowrap; text-align: left; }
+  th .th-in { display: flex; align-items: center; gap: 2px; padding: 9px 6px 9px 10px; }
+  th.num .th-in { justify-content: flex-end; }
+  th .lab { cursor: pointer; user-select: none; }
   th .ar { margin-left: 3px; opacity: .45; font-size: 10px; }
   th.sorted .ar { opacity: 1; color: var(--accent); }
+  th .fbtn { border: 1px solid transparent; background: transparent; color: var(--violet); border-radius: 6px; cursor: pointer; font-size: 10px;
+             padding: 2px 5px; line-height: 1.2; opacity: .55; }
+  th .fbtn:hover { opacity: 1; background: #fff; border-color: #D9D1FF; }
+  th .fbtn.on { opacity: 1; background: var(--accent); color: #fff; }
   td { padding: 8px 10px; border-bottom: 1px solid #F1EEFC; vertical-align: middle; }
   th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   td.mono { font-family: Consolas, Menlo, monospace; font-size: 12px; white-space: nowrap; }
   tbody tr.r { cursor: pointer; }
   tbody tr.r:hover { background: var(--accent-soft); }
-  tbody tr.r.sel { background: var(--violet-soft); }
   td img { max-height: 52px; width: auto; display: block; margin: auto; border-radius: 8px; }
-  .name { max-width: 300px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.35em; }
+  .name { max-width: 300px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.35em; cursor: text; }
   .zero { color: #C9C5D8; }
-  .total { font-weight: 800; color: var(--violet); }
   .tag { display: inline-block; font-size: 11px; font-weight: 700; border-radius: 999px; padding: 2px 9px; white-space: nowrap; }
   .tag.out { background: #FFE3E8; color: var(--coral); }
   .tag.low { background: #FFF1DC; color: #D9780A; }
@@ -83,28 +94,52 @@
   .pager button:disabled { opacity: .4; cursor: default; }
   .empty { padding: 40px; text-align: center; color: var(--ink-soft); }
 
-  /* 在庫推移（行の下に展開） */
-  tr.detail td { background: #FBFAFF; padding: 14px 0 18px; cursor: default; }
-  .dinner { position: sticky; left: 0; width: var(--vw, 100%); padding: 0 18px; }
-  .dhead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; margin-bottom: 8px; }
-  .dhead .t { font-weight: 700; font-size: 14px; }
-  .dhead a { color: var(--violet); }
-  .periods { margin-left: auto; display: inline-flex; gap: 4px; }
-  .periods button { border: 2px solid var(--violet-soft); background: #fff; color: var(--violet); border-radius: 999px; padding: 3px 11px;
-                    font-size: 12px; font-weight: 700; cursor: pointer; font-family: inherit; }
-  .periods button.on { background: var(--violet); border-color: var(--violet); color: #fff; }
-  .chart { position: relative; }
-  .chart svg { width: 100%; height: 260px; display: block; overflow: visible; }
-  .tip { position: absolute; pointer-events: none; background: var(--ink); color: #fff; font-size: 12px; border-radius: 10px; padding: 7px 10px;
-         white-space: nowrap; display: none; line-height: 1.5; }
-  .legend { display: flex; gap: 14px; font-size: 12px; color: var(--ink-soft); margin-top: 4px; }
-  .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 5px; vertical-align: -2px; }
-  .fbabox { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-  .fbabox span { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 4px 10px; font-size: 12px; }
-  .fbabox b { font-variant-numeric: tabular-nums; }
+  /* Excel風フィルター */
+  .fmenu { position: absolute; z-index: 9000; width: 280px; background: #fff; border: 1px solid #DDD7F5; border-radius: 12px;
+           box-shadow: 0 12px 32px rgba(42,36,64,0.22); padding: 10px; font-size: 12.5px; display: none; }
+  .fmenu .sorts { display: flex; flex-direction: column; gap: 2px; padding-bottom: 8px; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+  .fmenu .sorts button { text-align: left; border: 0; background: transparent; padding: 5px 8px; border-radius: 6px; cursor: pointer; font-family: inherit; font-size: 12.5px; color: var(--ink); }
+  .fmenu .sorts button:hover { background: var(--violet-soft); }
+  .fmenu .range { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; }
+  .fmenu .range input { width: 100%; border: 1px solid #DDD7F5; border-radius: 6px; padding: 5px 7px; font-family: inherit; font-size: 12px; }
+  .fmenu .fsearch { width: 100%; border: 1px solid #DDD7F5; border-radius: 6px; padding: 6px 8px; font-family: inherit; font-size: 12px; margin-bottom: 6px; }
+  .fmenu .vals { max-height: 240px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; padding: 4px 0; }
+  .fmenu .vals label { display: flex; align-items: center; gap: 6px; padding: 3px 8px; cursor: pointer; white-space: nowrap; }
+  .fmenu .vals label:hover { background: #F7F5FF; }
+  .fmenu .vals .cnt { margin-left: auto; color: var(--ink-soft); font-size: 11px; padding-left: 8px; }
+  .fmenu .vals .all { font-weight: 700; border-bottom: 1px solid var(--line); margin-bottom: 2px; }
+  .fmenu .vals .more { color: var(--ink-soft); padding: 4px 8px; font-size: 11px; }
+  .fmenu .fbtns { display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; }
+  .fmenu .fbtns .clear { margin-right: auto; }
+  .fmenu .ok { background: var(--violet); border-color: var(--violet); color: #fff; }
+  .fmenu .ok:hover { background: #6A4EF0; }
+
+  /* 在庫推移グラフ モーダル（納品推奨数システムv5と同じ作り） */
+  .stock-modal-backdrop { position: absolute; left: 0; width: 100%; background: rgba(0,0,0,0.42); z-index: 10000;
+                          display: flex; align-items: center; justify-content: center; }
+  .stock-modal { background: #fff; border-radius: 12px; padding: 18px 20px 20px; width: 700px; max-width: 92vw; max-height: 86vh;
+                 overflow: auto; box-shadow: 0 12px 36px rgba(0,0,0,0.25); font-family: 'Hiragino Sans', 'Yu Gothic UI', 'Meiryo UI', sans-serif; }
+  .stock-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
+  .stock-modal-title { font-weight: 700; font-size: 15px; }
+  .close-btn { border: 1px solid var(--g-border-md); background: #fff; border-radius: 8px; padding: 5px 12px; cursor: pointer; font-size: 13px; font-family: inherit; }
+  .close-btn:hover { background: #f0efe9; }
 </style>
 </head>
 <body>
+
+<!-- 在庫推移グラフ モーダル -->
+<div id="stock-modal-backdrop" class="stock-modal-backdrop" style="display:none;">
+  <div class="stock-modal" id="stock-modal">
+    <div class="stock-modal-head">
+      <span id="stock-modal-title" class="stock-modal-title">📈 在庫推移</span>
+      <button class="close-btn" id="stock-modal-close">✕ 閉じる</button>
+    </div>
+    <div id="stock-modal-body"></div>
+  </div>
+</div>
+
+<!-- Excel風フィルター -->
+<div class="fmenu" id="fmenu"></div>
 
 <div class="card">
   <h2>📦 テンポスター × FBA 在庫比較</h2>
@@ -122,19 +157,21 @@
   <div class="stats" id="stats"></div>
   <div class="note">
     FBA在庫合計＝レポートの「販売可能な商品の合計」（在庫あり＋FC処理中＋出荷待ち＋FC移管中＋入荷待ち。販売不可は含まない）。
-    合計＝FBA在庫合計＋テンポスター現在庫。複数のAmazon SKUが同じ商品コードに紐づく場合は1行に合算しています。
-    行をクリックすると在庫推移グラフが開きます。
+    複数のAmazon SKUが同じ商品コードに紐づく場合は1行に合算しています。
+    各列見出しの ▼ で、Excelのように値を選んで絞り込めます。行をクリックすると在庫推移グラフが開きます。
   </div>
 
   <div class="card">
     <div class="controls">
       <div class="seg" id="seg"></div>
       <input type="search" id="kw" placeholder="🔍 商品コード・Amazon SKU・商品名・ASIN・FNSKU">
-      <label class="chk"><input type="checkbox" id="hideZero"><span id="hideZeroLbl"></span></label>
+      <label class="chk"><input type="checkbox" id="hideZero">FBA在庫合計0の商品を除く</label>
       <button class="btn" id="colBtn">表示する列 ▾</button>
+      <button class="btn warn" id="clearFilters" style="display:none">フィルターをすべて解除</button>
       <span class="hint" id="viewHint"></span>
     </div>
     <div class="cols" id="cols"></div>
+    <div class="active-filters" id="activeFilters"></div>
   </div>
 
   <div class="wrap">
@@ -146,52 +183,55 @@
 <script>
 (function () {
   "use strict";
-  const D = window.__FBA_DATA__ || { ts: {}, names: {}, img: {}, hist: {}, sales: {}, master: {}, meta: {} };
+  const D = window.__FBA_DATA__ || { ts: {}, names: {}, img: {}, hist: {}, master: {}, meta: {} };
   const PAGE = 100;
+  const LIST_LIMIT = 1000;   // フィルターの値リストに一度に出す最大件数（検索で絞り込める）
 
   const COLS = [
-    { k: "img",    l: "画像",            t: "img" },
-    { k: "code",   l: "商品コード",      t: "mono", fixed: true },
-    { k: "asku",   l: "Amazon SKU",      t: "mono" },
-    { k: "name",   l: "商品名",          t: "name" },
-    { k: "a1",     l: "属性1名",         t: "text" },
-    { k: "a2",     l: "属性2名",         t: "text" },
-    { k: "asin",   l: "ASIN",            t: "mono" },
-    { k: "fnsku",  l: "FNSKU",           t: "mono" },
-    { k: "fTotal", l: "FBA在庫合計",     t: "num", fba: true },
-    { k: "fAvail", l: "在庫あり",        t: "num", fba: true },
-    { k: "fProc",  l: "FC処理中",        t: "num", fba: true },
-    { k: "fShip",  l: "出荷待ち",        t: "num", fba: true },
-    { k: "fTrans", l: "FC移管中",        t: "num", fba: true },
-    { k: "fIn",    l: "入荷待ち",        t: "num", fba: true },
-    { k: "fUns",   l: "販売不可",        t: "num", fba: true },
-    { k: "f30",    l: "過去30日販売数",  t: "num", fba: true },
-    { k: "fRec",   l: "Amazon推奨補充数", t: "num", fba: true },
-    { k: "alert",  l: "注意",            t: "alert", fba: true },
-    { k: "tStock", l: "テンポスター現在庫", t: "num" },
-    { k: "sum",    l: "合計（FBA＋テンポスター）", t: "num", total: true },
+    { k: "img",    l: "画像",             t: "img",  def: true },
+    { k: "code",   l: "商品コード",       t: "mono", def: true, fixed: true },
+    { k: "asku",   l: "Amazon SKU",       t: "mono", def: true },
+    { k: "name",   l: "商品名",           t: "name", def: true },
+    { k: "a1",     l: "属性1名",          t: "text", def: true },
+    { k: "a2",     l: "属性2名",          t: "text", def: true },
+    { k: "asin",   l: "ASIN",             t: "mono", def: true },
+    { k: "fnsku",  l: "FNSKU",            t: "mono" },
+    { k: "fTotal", l: "FBA在庫合計",      t: "num",  def: true },
+    { k: "fAvail", l: "在庫あり",         t: "num" },
+    { k: "fProc",  l: "FC処理中",         t: "num" },
+    { k: "fShip",  l: "出荷待ち",         t: "num" },
+    { k: "fTrans", l: "FC移管中",         t: "num" },
+    { k: "fIn",    l: "入荷待ち",         t: "num" },
+    { k: "fUns",   l: "販売不可",         t: "num" },
+    { k: "f30",    l: "過去30日販売数",   t: "num",  def: true },
+    { k: "fRec",   l: "Amazon推奨補充数", t: "num",  def: true },
+    { k: "alert",  l: "注意",             t: "alert" },
+    { k: "tStock", l: "テンポスター現在庫", t: "num", def: true },
   ];
+  const COL = Object.fromEntries(COLS.map(c => [c.k, c]));
   const NUM_SRC = {
     fTotal: "販売可能な商品の合計", fAvail: "在庫あり", fProc: "入出荷作業中 - FC処理中", fShip: "入出荷作業中 - 出荷待ち",
     fTrans: "FC移管中", fIn: "入荷待ち", fUns: "販売不可", f30: "過去30日間に販売されたユニット数", fRec: "推奨される在庫補充数量",
   };
   const ALERT = { out_of_stock: ["在庫切れ", "out"], low_stock: ["在庫少", "low"] };
   const VIEWS = [
-    { k: "matched", l: "照合済み", sort: "fTotal", zero: "FBA在庫合計0の商品を除く", zeroKey: "fTotal",
-      hint: "" },
-    { k: "fbaOnly", l: "FBAのみ", sort: "fTotal", zero: "FBA在庫合計0の商品を除く", zeroKey: "fTotal",
-      hint: "テンポスターの在庫データに無い商品コードです。sku_master の登録漏れを確認してください。" },
-    { k: "tempoOnly", l: "テンポスターのみ", sort: "tStock", zero: "テンポスター在庫0の商品を除く", zeroKey: "tStock",
-      hint: "FBAのレポートに無い商品コードです。" },
+    { k: "matched", l: "照合済み", hint: "" },
+    { k: "fbaOnly", l: "FBAのみ", hint: "テンポスターの在庫データに無い商品コードです。sku_master の登録漏れを確認してください。" },
   ];
 
+  // shown: 表示する列（初期値は def:true の列）。filters: {列キー: {vals:Set(表示する値), min, max}}
   const S = { data: null, view: "matched", kw: "", hideZero: false, sortKey: "fTotal", sortDir: "desc", page: 0,
-              hidden: new Set(), openCode: null, period: 365 };
-  try { (JSON.parse(localStorage.getItem("fbaCmpHidden") || "[]")).forEach(k => S.hidden.add(k)); } catch (e) {}
+              shown: new Set(COLS.filter(c => c.def).map(c => c.k)), filters: {} };
+  try {
+    const saved = JSON.parse(localStorage.getItem("fbaCmpShown_v2") || "null");
+    if (Array.isArray(saved)) S.shown = new Set(saved.filter(k => COL[k]));
+  } catch (e) {}
+  S.shown.add("code");
 
   const $ = id => document.getElementById(id);
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const fmt = n => (n == null || n === "" || isNaN(n)) ? "" : Number(n).toLocaleString("ja-JP");
+  const BLANK = "(空白)";
 
   // ---------- 上部の情報 ----------
   const nTs = Object.keys(D.ts).length, nMaster = Object.keys(D.master).length;
@@ -254,37 +294,26 @@
       }
     }
 
-    const tsRow = code => D.ts[code];        // [現在庫, 商品基本コード, 属性1名, 属性2名]
-    const imgOf = base => (base && D.img[base]) || "";
     const matched = [], fbaOnly = [];
     let fbaSum = 0, tsSumMatched = 0;
     byCode.forEach(o => {
-      const t = tsRow(o.code);
-      const rec = {
-        code: o.code, asku: o.asku.join(" / "), asin: o.asin.join(" / "), fnsku: o.fnsku.join(" / "),
-        alert: o.alert[0] || "", fRec: o.fRec,
-      };
+      const t = D.ts[o.code];   // [現在庫, 商品基本コード, 属性1名, 属性2名]
+      const rec = { code: o.code, asku: o.asku.join(" / "), asin: o.asin.join(" / "), fnsku: o.fnsku.join(" / "),
+                    alert: o.alert[0] || "", fRec: o.fRec };
       for (const k in NUM_SRC) if (k !== "fRec") rec[k] = o[k];
       fbaSum += rec.fTotal;
       if (t) {
         rec.tStock = t[0]; rec.base = t[1]; rec.a1 = t[2]; rec.a2 = t[3];
         rec.name = D.names[t[1]] || o.aname[0] || "";
-        rec.img = imgOf(t[1]);
+        rec.img = (t[1] && D.img[t[1]]) || "";
         tsSumMatched += t[0];
         matched.push(rec);
       } else {
         rec.tStock = null; rec.name = o.aname[0] || ""; rec.img = ""; rec.a1 = ""; rec.a2 = "";
         fbaOnly.push(rec);
       }
-      rec.sum = rec.fTotal + (rec.tStock || 0);
     });
-    const tempoOnly = [];
-    for (const code in D.ts) {
-      if (byCode.has(code)) continue;
-      const t = D.ts[code];
-      tempoOnly.push({ code, tStock: t[0], base: t[1], a1: t[2], a2: t[3], name: D.names[t[1]] || "", img: imgOf(t[1]), sum: t[0] });
-    }
-    return { matched, fbaOnly, tempoOnly, nRows, nConv, fbaSum, tsSumMatched };
+    return { matched, fbaOnly, nRows, nConv, fbaSum, tsSumMatched };
   }
 
   function loadFile(file) {
@@ -296,7 +325,7 @@
         const rows = parseCSV(decode(fr.result));
         if (rows.length < 2) throw new Error("CSVにデータ行がありません。");
         S.data = buildData(rows);
-        S.page = 0; S.openCode = null;
+        S.page = 0; S.filters = {};
         $("main").style.display = "";
         renderStats(); renderControls(); renderTable();
       } catch (e) {
@@ -320,7 +349,6 @@
       ["FBA 商品数（CSV行）", d.nRows, "", `うち sku_master で変換 ${fmt(d.nConv)} 件`],
       ["照合済み", d.matched.length, "v"],
       ["FBAのみ", d.fbaOnly.length, "a"],
-      ["テンポスターのみ", d.tempoOnly.length, ""],
       ["FBA在庫合計", d.fbaSum, "v"],
       ["テンポスター在庫（照合済み分）", d.tsSumMatched, "m"],
     ];
@@ -333,16 +361,26 @@
   function renderControls() {
     $("seg").innerHTML = VIEWS.map(v =>
       `<button data-v="${v.k}" class="${v.k === S.view ? "on" : ""}">${esc(v.l)}（${fmt(S.data[v.k].length)}）</button>`).join("");
-    $("hideZeroLbl").textContent = curView().zero;
     $("hideZero").checked = S.hideZero;
     $("viewHint").textContent = curView().hint;
-    const avail = visibleCandidates();
-    $("cols").innerHTML = avail.filter(c => !c.fixed).map(c =>
-      `<span class="chip ${S.hidden.has(c.k) ? "" : "on"}" data-k="${c.k}">${esc(c.l)}</span>`).join("");
+    $("cols").innerHTML = COLS.filter(c => !c.fixed).map(c =>
+      `<span class="chip ${S.shown.has(c.k) ? "on" : ""}" data-k="${c.k}">${esc(c.l)}</span>`).join("");
+    renderActiveFilters();
+  }
+  function renderActiveFilters() {
+    const keys = Object.keys(S.filters);
+    $("clearFilters").style.display = keys.length ? "" : "none";
+    $("activeFilters").innerHTML = keys.map(k => {
+      const f = S.filters[k], parts = [];
+      if (f.vals) parts.push(`${fmt(f.vals.size)}件の値`);
+      if (f.min != null) parts.push(`${fmt(f.min)}以上`);
+      if (f.max != null) parts.push(`${fmt(f.max)}以下`);
+      return `<span class="af">${esc(COL[k].l)}：${parts.join("・")}<button data-k="${k}" title="解除">×</button></span>`;
+    }).join("");
   }
   $("seg").addEventListener("click", e => {
     const b = e.target.closest("button"); if (!b) return;
-    S.view = b.dataset.v; S.sortKey = curView().sort; S.sortDir = "desc"; S.page = 0; S.openCode = null; S.hideZero = false;
+    S.view = b.dataset.v; S.page = 0;
     renderControls(); renderTable();
   });
   $("kw").addEventListener("input", e => { S.kw = e.target.value.trim().toLowerCase(); S.page = 0; renderTable(); });
@@ -351,27 +389,49 @@
   $("cols").addEventListener("click", e => {
     const c = e.target.closest(".chip"); if (!c) return;
     const k = c.dataset.k;
-    S.hidden.has(k) ? S.hidden.delete(k) : S.hidden.add(k);
-    try { localStorage.setItem("fbaCmpHidden", JSON.stringify([...S.hidden])); } catch (err) {}
+    S.shown.has(k) ? S.shown.delete(k) : S.shown.add(k);
+    try { localStorage.setItem("fbaCmpShown_v2", JSON.stringify([...S.shown])); } catch (err) {}
     renderControls(); renderTable();
   });
+  $("clearFilters").addEventListener("click", () => { S.filters = {}; S.page = 0; renderControls(); renderTable(); });
+  $("activeFilters").addEventListener("click", e => {
+    const b = e.target.closest("button[data-k]"); if (!b) return;
+    delete S.filters[b.dataset.k]; S.page = 0; renderControls(); renderTable();
+  });
 
-  // テンポスターのみの一覧ではFBA列を出さない
-  const visibleCandidates = () => COLS.filter(c => !(S.view === "tempoOnly" && (c.fba || ["asku", "asin", "fnsku"].includes(c.k))));
-  const shownCols = () => visibleCandidates().filter(c => c.fixed || !S.hidden.has(c.k));
+  const shownCols = () => COLS.filter(c => S.shown.has(c.k));
 
-  // ---------- 一覧 ----------
-  function filtered() {
+  // ---------- 絞り込み・並び替え ----------
+  const cellKey = (r, k) => {          // フィルターで使う「値」（空欄は (空白)）
+    const v = r[k];
+    if (v == null || v === "") return BLANK;
+    if (k === "alert") return ALERT[v] ? ALERT[v][0] : String(v);
+    return String(v);
+  };
+  function passFilter(r, k, f) {
+    if (f.vals && !f.vals.has(cellKey(r, k))) return false;
+    if (f.min != null || f.max != null) {
+      const v = r[k];
+      if (v == null || v === "") return false;
+      if (f.min != null && v < f.min) return false;
+      if (f.max != null && v > f.max) return false;
+    }
+    return true;
+  }
+  // exceptKey を指定すると、その列のフィルターだけ無視した結果を返す（Excelと同じく、値リストは他の列の絞り込みを反映）
+  function baseRows(exceptKey) {
     let rows = S.data[S.view];
-    const v = curView();
-    if (S.hideZero) rows = rows.filter(r => (r[v.zeroKey] || 0) > 0);
+    if (S.hideZero) rows = rows.filter(r => (r.fTotal || 0) > 0);
     if (S.kw) {
       const kw = S.kw;
       rows = rows.filter(r => ["code", "asku", "name", "asin", "fnsku", "base"].some(k => r[k] && String(r[k]).toLowerCase().includes(kw)));
     }
+    for (const k in S.filters) if (k !== exceptKey) rows = rows.filter(r => passFilter(r, k, S.filters[k]));
+    return rows;
+  }
+  function sortRows(rows) {
     const k = S.sortKey, dir = S.sortDir === "asc" ? 1 : -1;
-    const col = COLS.find(c => c.k === k);
-    const isNum = col && col.t === "num";
+    const isNum = COL[k] && COL[k].t === "num";
     return rows.slice().sort((a, b) => {
       const x = a[k], y = b[k];
       const xn = x == null || x === "", yn = y == null || y === "";
@@ -381,42 +441,40 @@
     });
   }
 
+  // ---------- 一覧 ----------
   function cell(c, r) {
     const v = r[c.k];
     switch (c.t) {
       case "img": return `<td>${v ? `<img src="${esc(v)}" loading="lazy" alt="">` : ""}</td>`;
       case "num":
         if (v == null || v === "") return `<td class="num"></td>`;
-        return `<td class="num ${c.total ? "total" : ""} ${v === 0 && !c.total ? "zero" : ""}">${fmt(v)}</td>`;
+        return `<td class="num ${v === 0 ? "zero" : ""}">${fmt(v)}</td>`;
       case "mono": return `<td class="mono">${esc(v)}</td>`;
-      case "name": return `<td><div class="name" title="${esc(v)}">${esc(v)}</div></td>`;
+      case "name": return `<td><div class="name cell-text" title="${esc(v)}">${esc(v)}</div></td>`;
       case "alert": { const a = ALERT[v]; return `<td>${a ? `<span class="tag ${a[1]}">${a[0]}</span>` : esc(v)}</td>`; }
       default: return `<td>${esc(v)}</td>`;
     }
   }
 
+  let pageRows = [];
   function renderTable() {
     const cols = shownCols();
-    $("thead").innerHTML = "<tr>" + cols.map(c =>
-      `<th data-k="${c.k}" class="${c.t === "num" ? "num" : ""} ${S.sortKey === c.k ? "sorted" : ""}">${esc(c.l)}<span class="ar">${S.sortKey === c.k ? (S.sortDir === "asc" ? "▲" : "▼") : "▾"}</span></th>`
-    ).join("") + "</tr>";
+    $("thead").innerHTML = "<tr>" + cols.map(c => {
+      const sorted = S.sortKey === c.k;
+      const filt = c.t !== "img"
+        ? `<button class="fbtn ${S.filters[c.k] ? "on" : ""}" data-f="${c.k}" title="絞り込み">${S.filters[c.k] ? "▼●" : "▼"}</button>` : "";
+      return `<th class="${c.t === "num" ? "num" : ""} ${sorted ? "sorted" : ""}"><div class="th-in">` +
+        `<span class="lab" data-k="${c.k}">${esc(c.l)}<span class="ar">${sorted ? (S.sortDir === "asc" ? "▲" : "▼") : ""}</span></span>${filt}</div></th>`;
+    }).join("") + "</tr>";
 
-    const rows = filtered();
+    const rows = sortRows(baseRows());
     const pages = Math.max(1, Math.ceil(rows.length / PAGE));
     if (S.page >= pages) S.page = pages - 1;
-    const slice = rows.slice(S.page * PAGE, (S.page + 1) * PAGE);
+    pageRows = rows.slice(S.page * PAGE, (S.page + 1) * PAGE);
 
-    if (!slice.length) {
-      $("tbody").innerHTML = `<tr><td colspan="${cols.length}" class="empty">該当する商品がありません</td></tr>`;
-    } else {
-      $("tbody").innerHTML = slice.map(r => {
-        const open = r.code === S.openCode;
-        let h = `<tr class="r ${open ? "sel" : ""}" data-code="${esc(r.code)}">` + cols.map(c => cell(c, r)).join("") + "</tr>";
-        if (open) h += `<tr class="detail"><td colspan="${cols.length}"><div class="dinner">${detailHTML(r)}</div></td></tr>`;
-        return h;
-      }).join("");
-      if (S.openCode) { syncWidth(); drawChart(); }
-    }
+    $("tbody").innerHTML = pageRows.length
+      ? pageRows.map((r, i) => `<tr class="r" data-i="${i}">` + cols.map(c => cell(c, r)).join("") + "</tr>").join("")
+      : `<tr><td colspan="${cols.length}" class="empty">該当する商品がありません</td></tr>`;
 
     const from = rows.length ? S.page * PAGE + 1 : 0, to = Math.min(rows.length, (S.page + 1) * PAGE);
     $("pager").innerHTML =
@@ -427,117 +485,258 @@
   }
 
   $("thead").addEventListener("click", e => {
-    const th = e.target.closest("th"); if (!th) return;
-    const k = th.dataset.k;
+    const fb = e.target.closest(".fbtn");
+    if (fb) { e.stopPropagation(); openFilter(fb.dataset.f, fb); return; }
+    const lab = e.target.closest(".lab"); if (!lab) return;
+    const k = lab.dataset.k;
     if (S.sortKey === k) S.sortDir = S.sortDir === "asc" ? "desc" : "asc";
-    else { S.sortKey = k; const c = COLS.find(x => x.k === k); S.sortDir = c && c.t === "num" ? "desc" : "asc"; }
+    else { S.sortKey = k; S.sortDir = COL[k].t === "num" ? "desc" : "asc"; }
     renderTable();
   });
   $("pager").addEventListener("click", e => {
     const b = e.target.closest("button[data-p]"); if (!b || b.disabled) return;
-    S.page += Number(b.dataset.p); S.openCode = null; renderTable();
+    S.page += Number(b.dataset.p); renderTable();
     $("thead").scrollIntoView({ block: "start" });
   });
   $("tbody").addEventListener("click", e => {
-    const pb = e.target.closest(".periods button");
-    if (pb) { S.period = Number(pb.dataset.d); renderTable(); return; }
-    if (e.target.closest("tr.detail")) return;
+    // 商品名などの文字を選択したいときはグラフを開かない
+    if (e.target.closest(".cell-text")) return;
+    const sel = window.getSelection ? window.getSelection() : null;
+    if (sel && sel.toString().length > 0) return;
     const tr = e.target.closest("tr.r"); if (!tr) return;
-    S.openCode = S.openCode === tr.dataset.code ? null : tr.dataset.code;
-    renderTable();
+    const r = pageRows[Number(tr.dataset.i)]; if (!r) return;
+    openStockModal(r.code, r.name ? `${r.code}／${r.name}` : r.code);
   });
 
-  // ---------- 在庫推移グラフ ----------
-  const PERIODS = [[90, "3ヶ月"], [180, "6ヶ月"], [365, "1年"]];
-  // 横スクロールする表の中でも、グラフは画面の幅に収めて左端に固定する
-  function syncWidth() { const sc = document.querySelector(".scroll"); if (sc) sc.style.setProperty("--vw", sc.clientWidth + "px"); }
-  let rT; window.addEventListener("resize", () => { clearTimeout(rT); rT = setTimeout(() => { if (S.openCode) { syncWidth(); drawChart(); } }, 150); });
-  function detailHTML(r) {
-    const asinLinks = (r.asin || "").split(" / ").filter(Boolean)
-      .map(a => `<a href="https://www.amazon.co.jp/dp/${encodeURIComponent(a)}" target="_blank" rel="noopener">${esc(a)}</a>`).join(" / ");
-    const fba = S.view === "tempoOnly" ? "" :
-      `<div class="fbabox">` +
-      [["FBA在庫合計", r.fTotal], ["在庫あり", r.fAvail], ["FC処理中", r.fProc], ["出荷待ち", r.fShip], ["FC移管中", r.fTrans],
-       ["入荷待ち", r.fIn], ["販売不可", r.fUns], ["過去30日販売", r.f30], ["推奨補充", r.fRec]]
-        .map(([l, v]) => `<span>${l} <b>${v == null ? "-" : fmt(v)}</b></span>`).join("") + `</div>`;
-    return `<div class="dhead"><span class="t">${esc(r.code)}</span><span class="muted">${esc(r.name)}</span>` +
-      (asinLinks ? `<span class="muted">ASIN：${asinLinks}</span>` : "") +
-      `<span class="periods">${PERIODS.map(([d, l]) => `<button data-d="${d}" class="${S.period === d ? "on" : ""}">${l}</button>`).join("")}</span></div>` +
-      `<div class="chart" id="chart"></div>` +
-      `<div class="legend"><span><i style="background:var(--violet)"></i>テンポスター在庫（その日の最後の在庫）</span><span><i style="background:#FFB4A2"></i>売上個数（受注取込）</span></div>` +
-      fba;
+  // ---------- Excel風フィルター ----------
+  const fmenu = $("fmenu");
+  let fState = null;   // 開いているフィルターの編集中の状態
+
+  function openFilter(k, anchor) {
+    const col = COL[k];
+    const isNum = col.t === "num";
+    // 他の列の絞り込みを反映した行から、この列の値の一覧を作る
+    const counts = new Map();
+    baseRows(k).forEach(r => { const v = cellKey(r, k); counts.set(v, (counts.get(v) || 0) + 1); });
+    let values = [...counts.keys()];
+    values.sort((a, b) => {
+      if (a === BLANK) return 1; if (b === BLANK) return -1;
+      return isNum ? Number(a) - Number(b) : a.localeCompare(b, "ja");
+    });
+    const cur = S.filters[k] || {};
+    fState = { k, values, counts, checked: new Set(cur.vals ? values.filter(v => cur.vals.has(v)) : values), search: "" };
+
+    fmenu.innerHTML =
+      `<div class="sorts">` +
+        `<button data-s="asc">${isNum ? "↑ 小さい順に並べ替え" : "↑ 昇順で並べ替え"}</button>` +
+        `<button data-s="desc">${isNum ? "↓ 大きい順に並べ替え" : "↓ 降順で並べ替え"}</button>` +
+      `</div>` +
+      (isNum ? `<div class="range"><input type="number" id="fmin" placeholder="以上" value="${cur.min ?? ""}">〜<input type="number" id="fmax" placeholder="以下" value="${cur.max ?? ""}"></div>` : "") +
+      `<input class="fsearch" id="fsearch" type="search" placeholder="値を検索">` +
+      `<div class="vals" id="fvals"></div>` +
+      `<div class="fbtns"><button class="btn clear" id="fclear">クリア</button><button class="btn" id="fcancel">キャンセル</button><button class="btn ok" id="fok">OK</button></div>`;
+    renderFilterValues();
+
+    // 位置：押したボタンの下（画面右端からはみ出さないように）
+    fmenu.style.display = "block";
+    const rc = anchor.getBoundingClientRect();
+    const left = Math.min(window.scrollX + rc.left, window.scrollX + document.documentElement.clientWidth - fmenu.offsetWidth - 8);
+    fmenu.style.left = Math.max(8, left) + "px";
+    fmenu.style.top = (window.scrollY + rc.bottom + 4) + "px";
+    $("fsearch").focus();
+
+    $("fsearch").addEventListener("input", ev => { fState.search = ev.target.value.trim().toLowerCase(); renderFilterValues(); });
+    fmenu.querySelectorAll(".sorts button").forEach(b => b.addEventListener("click", () => {
+      S.sortKey = k; S.sortDir = b.dataset.s; closeFilter(); renderTable();
+    }));
+    $("fcancel").addEventListener("click", closeFilter);
+    $("fclear").addEventListener("click", () => { delete S.filters[k]; closeFilter(); S.page = 0; renderControls(); renderTable(); });
+    $("fok").addEventListener("click", applyFilter);
+    fmenu.addEventListener("keydown", ev => { if (ev.key === "Enter") applyFilter(); if (ev.key === "Escape") closeFilter(); });
   }
 
-  const ymd = d => d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
-  const parseYmd = n => new Date(Math.floor(n / 10000), Math.floor(n / 100) % 100 - 1, n % 100);
-  const label = d => `${d.getMonth() + 1}/${d.getDate()}`;
-
-  function drawChart() {
-    const box = $("chart"); if (!box) return;
-    const code = S.openCode;
-    const hist = D.hist[code] || [], sales = D.sales[code] || [];
-    const end = D.meta.latest ? new Date(D.meta.latest + "T00:00:00") : new Date();
-    const start = new Date(end); start.setDate(start.getDate() - S.period + 1);
-    if (!hist.length && !sales.length) {
-      box.innerHTML = `<div class="empty">この期間の在庫変動データがありません</div>`; return;
-    }
-    // 日ごとの在庫（変動が無い日は前日の在庫を引き継ぐ）と売上
-    const days = [];
-    let hi = 0, last = null;
-    while (hi < hist.length && hist[hi][0] < ymd(start)) { last = hist[hi][1]; hi++; }
-    const salesMap = new Map(sales.map(s => [s[0], s[1]]));
-    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-      const k = ymd(d);
-      while (hi < hist.length && hist[hi][0] <= k) { last = hist[hi][1]; hi++; }
-      days.push({ d: new Date(d), stock: last, sales: salesMap.get(k) || 0 });
-    }
-    const W = Math.max(320, Math.round(box.clientWidth)), H = 260, L = 44, R = 40, T = 14, B = 28;
-    const iw = W - L - R, ih = H - T - B, n = days.length;
-    const maxS = Math.max(1, ...days.map(x => x.stock || 0));
-    const maxQ = Math.max(1, ...days.map(x => x.sales));
-    const niceMax = m => { const p = Math.pow(10, Math.floor(Math.log10(m))); return Math.ceil(m / p) * p; };
-    const yS = Math.max(4, niceMax(maxS)), yQ = Math.max(4, niceMax(maxQ));  // 目盛りが整数になるよう最低4
-    const x = i => L + (n === 1 ? iw / 2 : (i / (n - 1)) * iw);
-    const ys = v => T + ih - (v / yS) * ih;
-    const yq = v => T + ih - (v / yQ) * ih;
-    const bw = Math.max(1, iw / n * 0.7);
-
-    let g = "";
-    for (let i = 0; i <= 4; i++) {
-      const v = yS * i / 4, y = ys(v);
-      g += `<line x1="${L}" x2="${W - R}" y1="${y}" y2="${y}" stroke="#EEEBF8"/>` +
-           `<text x="${L - 6}" y="${y + 4}" text-anchor="end" font-size="11" fill="#7B5FFF">${fmt(Math.round(v))}</text>` +
-           `<text x="${W - R + 6}" y="${y + 4}" font-size="11" fill="#E8826A">${fmt(Math.round(yQ * i / 4))}</text>`;
-    }
-    const step = Math.max(1, Math.ceil(n / 8));
-    for (let i = 0; i < n; i += step) g += `<text x="${x(i)}" y="${H - 8}" text-anchor="middle" font-size="11" fill="#74708C">${label(days[i].d)}</text>`;
-    days.forEach((p, i) => { if (p.sales) g += `<rect x="${x(i) - bw / 2}" y="${yq(p.sales)}" width="${bw}" height="${T + ih - yq(p.sales)}" fill="#FFB4A2" rx="1"/>`; });
-    let path = "", pen = false;
-    days.forEach((p, i) => {
-      if (p.stock == null) { pen = false; return; }
-      if (!pen) { path += `M${x(i)},${ys(p.stock)}`; pen = true; }
-      else path += `H${x(i)}V${ys(p.stock)}`;     // 階段状（その日の最後の在庫）
-    });
-    g += `<path d="${path}" fill="none" stroke="#7B5FFF" stroke-width="2.2" stroke-linejoin="round"/>`;
-    g += `<line id="cur" x1="0" x2="0" y1="${T}" y2="${T + ih}" stroke="#2A2440" stroke-dasharray="3 3" visibility="hidden"/>`;
-    g += `<rect id="hit" x="${L}" y="${T}" width="${iw}" height="${ih}" fill="transparent"/>`;
-    box.innerHTML = `<svg viewBox="0 0 ${W} ${H}">${g}</svg><div class="tip" id="tip"></div>`;
-
-    const svg = box.querySelector("svg"), tip = $("tip"), cur = svg.querySelector("#cur");
-    svg.addEventListener("mousemove", e => {
-      const rc = svg.getBoundingClientRect();
-      const vx = (e.clientX - rc.left) / rc.width * W;
-      const i = Math.max(0, Math.min(n - 1, Math.round((vx - L) / (iw || 1) * (n - 1))));
-      const p = days[i];
-      cur.setAttribute("x1", x(i)); cur.setAttribute("x2", x(i)); cur.setAttribute("visibility", "visible");
-      tip.innerHTML = `${p.d.getFullYear()}/${label(p.d)}<br>在庫 <b>${p.stock == null ? "-" : fmt(p.stock)}</b> ／ 売上 <b>${fmt(p.sales)}</b>`;
-      tip.style.display = "block";
-      const px = x(i) / W * rc.width;
-      tip.style.left = Math.min(rc.width - tip.offsetWidth - 4, Math.max(4, px + 12)) + "px";
-      tip.style.top = "8px";
-    });
-    svg.addEventListener("mouseleave", () => { tip.style.display = "none"; cur.setAttribute("visibility", "hidden"); });
+  function visibleValues() {
+    const q = fState.search;
+    return q ? fState.values.filter(v => v.toLowerCase().includes(q)) : fState.values;
   }
+  function renderFilterValues() {
+    const vis = visibleValues();
+    const allOn = vis.length > 0 && vis.every(v => fState.checked.has(v));
+    const shown = vis.slice(0, LIST_LIMIT);
+    const isNum = COL[fState.k].t === "num";
+    $("fvals").innerHTML =
+      `<label class="all"><input type="checkbox" data-all="1" ${allOn ? "checked" : ""}>（${fState.search ? "検索結果を" : ""}すべて選択）</label>` +
+      shown.map((v, i) =>
+        `<label><input type="checkbox" data-i="${i}" ${fState.checked.has(v) ? "checked" : ""}>${esc(isNum && v !== BLANK ? fmt(v) : v)}<span class="cnt">${fmt(fState.counts.get(v))}</span></label>`
+      ).join("") +
+      (vis.length > LIST_LIMIT ? `<div class="more">ほか ${fmt(vis.length - LIST_LIMIT)} 件（検索で絞り込んでください）</div>` : "");
+    $("fvals").onchange = ev => {
+      const cb = ev.target;
+      if (cb.dataset.all) { visibleValues().forEach(v => cb.checked ? fState.checked.add(v) : fState.checked.delete(v)); }
+      else { const v = shown[Number(cb.dataset.i)]; cb.checked ? fState.checked.add(v) : fState.checked.delete(v); }
+      renderFilterValues();
+    };
+  }
+  function applyFilter() {
+    const k = fState.k;
+    const f = {};
+    // 検索中にOKした場合は、Excelと同じく「検索に当てはまって、チェックされている値」だけ表示する
+    const pool = fState.search ? visibleValues() : fState.values;
+    const keep = pool.filter(v => fState.checked.has(v));
+    if (keep.length !== fState.values.length) f.vals = new Set(keep);
+    const mn = $("fmin"), mx = $("fmax");
+    if (mn && mn.value !== "") f.min = Number(mn.value);
+    if (mx && mx.value !== "") f.max = Number(mx.value);
+    if (Object.keys(f).length) S.filters[k] = f; else delete S.filters[k];
+    closeFilter(); S.page = 0; renderControls(); renderTable();
+  }
+  function closeFilter() { fmenu.style.display = "none"; fmenu.innerHTML = ""; fState = null; }
+  document.addEventListener("mousedown", e => {
+    if (fState && !fmenu.contains(e.target) && !e.target.closest(".fbtn")) closeFilter();
+  });
+
+  // ---------- 在庫推移グラフ（納品推奨数システムv5と同じ作り：行クリックでモーダル表示） ----------
+  function renderStockChart(container, history) {
+    if (!history || history.length === 0) {
+      container.innerHTML = `<p style="color:var(--g-muted);font-size:13px;">在庫推移データがありません。</p>`;
+      return;
+    }
+    const width = 640, height = 260;
+    const padding = { top: 20, right: 20, bottom: 34, left: 46 };
+    const values = history.map(h => h.stock);
+    let maxV = Math.max(...values, 0);
+    let minV = Math.min(...values, 0);
+    if (maxV === minV) { maxV += 1; minV -= 1; }
+    const n = history.length;
+    const innerW = width - padding.left - padding.right;
+    const innerH = height - padding.top - padding.bottom;
+    const xStep = n > 1 ? innerW / (n - 1) : 0;
+    const yScale = v => padding.top + innerH - ((v - minV) / (maxV - minV)) * innerH;
+    const xOf = i => padding.left + i * xStep;
+
+    const points = history.map((h, i) => `${xOf(i)},${yScale(h.stock)}`).join(" ");
+    const fmtDate = d => (d && d.length === 8) ? `${d.slice(4, 6)}/${d.slice(6, 8)}` : d;
+    const fmtDateWithYear = d => (d && d.length === 8) ? `${d.slice(0, 4)}/${d.slice(4, 6)}/${d.slice(6, 8)}` : d;
+    const labelIdxs = n <= 6 ? history.map((_, i) => i) : [0, Math.floor((n - 1) / 2), n - 1];
+    const xLabels = labelIdxs.map(i =>
+      `<text x="${xOf(i)}" y="${height - padding.bottom + 18}" font-size="10" fill="var(--g-muted)" text-anchor="middle">${esc(fmtDate(history[i].d))}</text>`
+    ).join("");
+    const dots = history.map((h, i) => `<circle cx="${xOf(i)}" cy="${yScale(h.stock)}" r="2.5" fill="var(--g-accent)" />`).join("");
+
+    // 横線メモリ（値の範囲に応じて10単位 or 100単位で引く）
+    const gridStep = (maxV - minV) <= 200 ? 10 : 100;
+    let gridLines = "";
+    for (let v = Math.ceil(minV / gridStep) * gridStep; v <= maxV; v += gridStep) {
+      const gy = yScale(v);
+      gridLines += `<line x1="${padding.left}" y1="${gy}" x2="${width - padding.right}" y2="${gy}" stroke="var(--g-border)" stroke-dasharray="2,2" />`;
+      gridLines += `<text x="${padding.left - 6}" y="${gy + 3}" font-size="9" fill="var(--g-muted)" text-anchor="end">${v}</text>`;
+    }
+
+    container.innerHTML = `
+      <div style="position:relative;">
+        <svg id="stock-chart-svg" viewBox="0 0 ${width} ${height}" style="width:100%;height:auto;display:block;cursor:crosshair;">
+          ${gridLines}
+          <line x1="${padding.left}" y1="${padding.top}" x2="${padding.left}" y2="${height - padding.bottom}" stroke="var(--g-border-md)" />
+          <line x1="${padding.left}" y1="${height - padding.bottom}" x2="${width - padding.right}" y2="${height - padding.bottom}" stroke="var(--g-border-md)" />
+          <polyline points="${points}" fill="none" stroke="var(--g-accent)" stroke-width="2" />
+          ${dots}
+          ${xLabels}
+          <line id="stock-chart-hoverline" x1="0" y1="${padding.top}" x2="0" y2="${height - padding.bottom}" stroke="var(--g-muted)" stroke-dasharray="3,3" style="display:none;" />
+          <circle id="stock-chart-hoverdot" r="4.5" fill="var(--g-accent)" stroke="#fff" stroke-width="1.5" style="display:none;" />
+        </svg>
+        <div id="stock-chart-tooltip" style="position:absolute;display:none;pointer-events:none;background:rgba(30,30,30,0.92);color:#fff;padding:5px 9px;border-radius:6px;font-size:12px;white-space:nowrap;transform:translate(-50%,-125%);z-index:10;"></div>
+      </div>`;
+
+    const svg = container.querySelector("#stock-chart-svg");
+    const tooltip = container.querySelector("#stock-chart-tooltip");
+    const hoverLine = container.querySelector("#stock-chart-hoverline");
+    const hoverDot = container.querySelector("#stock-chart-hoverdot");
+
+    function updateHover(clientX) {
+      const rect = svg.getBoundingClientRect();
+      const scaleX = width / rect.width, scaleY = height / rect.height;
+      const mouseX = (clientX - rect.left) * scaleX;
+      let idx = Math.round((mouseX - padding.left) / (xStep || 1));
+      idx = Math.max(0, Math.min(n - 1, idx));
+      const h = history[idx];
+      const px = xOf(idx), py = yScale(h.stock);
+      hoverLine.setAttribute("x1", px); hoverLine.setAttribute("x2", px); hoverLine.style.display = "block";
+      hoverDot.setAttribute("cx", px); hoverDot.setAttribute("cy", py); hoverDot.style.display = "block";
+
+      let diffText = "—";
+      if (idx > 0) {
+        const d = h.stock - history[idx - 1].stock;
+        diffText = d > 0 ? `+${d}` : (d < 0 ? `${d}` : "±0");
+      }
+      tooltip.textContent = `${fmtDateWithYear(h.d)}：${h.stock}（前回比 ${diffText}）`;
+      tooltip.style.display = "block";
+
+      // ツールチップがモーダルの外に出て見切れないよう、表示領域の内側に収める
+      const wrapW = rect.width, tipW = tooltip.offsetWidth, tipH = tooltip.offsetHeight;
+      const pxPx = px / scaleX, pyPx = py / scaleY, margin = 4, half = tipW / 2;
+      tooltip.style.left = `${Math.max(half + margin, Math.min(wrapW - half - margin, pxPx))}px`;
+      tooltip.style.top = `${pyPx}px`;
+      tooltip.style.transform = (pyPx - tipH * 1.25 < 0) ? "translate(-50%, 25%)" : "translate(-50%, -125%)";
+    }
+    svg.addEventListener("mousemove", e => updateHover(e.clientX));
+    svg.addEventListener("mouseleave", () => {
+      hoverLine.style.display = "none"; hoverDot.style.display = "none"; tooltip.style.display = "none";
+    });
+    svg.addEventListener("touchmove", e => {
+      if (e.touches && e.touches[0]) { updateHover(e.touches[0].clientX); e.preventDefault(); }
+    }, { passive: false });
+  }
+
+  // モーダルを「親ページ（Streamlit本体）から見て今画面に映っている範囲」に合わせて配置する（v5と同じ）
+  function findSelfIframeInParent() {
+    try {
+      const frames = window.parent.document.querySelectorAll("iframe");
+      for (let i = 0; i < frames.length; i++) if (frames[i].contentWindow === window) return frames[i];
+    } catch (e) {}
+    return null;
+  }
+  function positionModalToParentViewport(backdropEl) {
+    let viewportH = window.innerHeight, visibleTop = window.scrollY || 0;
+    try {
+      const el = findSelfIframeInParent();
+      if (el) {
+        const rect = el.getBoundingClientRect();
+        viewportH = window.parent.innerHeight;
+        visibleTop = Math.max(0, -rect.top);
+        visibleTop = Math.min(visibleTop, Math.max(0, rect.height - viewportH));
+      }
+    } catch (e) {}
+    backdropEl.style.top = visibleTop + "px";
+    backdropEl.style.height = viewportH + "px";
+  }
+  let modalRepositionHandler = null;
+  function openStockModal(code, label) {
+    const backdrop = $("stock-modal-backdrop");
+    $("stock-modal-title").textContent = `📈 在庫推移（${label || code}）`;
+    const hist = (D.hist[code] || []).map(p => ({ d: String(p[0]), stock: p[1] }));
+    renderStockChart($("stock-modal-body"), hist);
+    backdrop.style.display = "flex";
+    positionModalToParentViewport(backdrop);
+    modalRepositionHandler = () => positionModalToParentViewport(backdrop);
+    try {
+      window.parent.addEventListener("scroll", modalRepositionHandler, true);
+      window.parent.addEventListener("resize", modalRepositionHandler);
+    } catch (e) {}
+  }
+  function closeStockModal() {
+    $("stock-modal-backdrop").style.display = "none";
+    if (modalRepositionHandler) {
+      try {
+        window.parent.removeEventListener("scroll", modalRepositionHandler, true);
+        window.parent.removeEventListener("resize", modalRepositionHandler);
+      } catch (e) {}
+      modalRepositionHandler = null;
+    }
+  }
+  $("stock-modal-backdrop").addEventListener("click", closeStockModal);
+  $("stock-modal").addEventListener("click", e => e.stopPropagation());
+  $("stock-modal-close").addEventListener("click", closeStockModal);
+  document.addEventListener("keydown", e => { if (e.key === "Escape") closeStockModal(); });
 })();
 </script>
 </body>

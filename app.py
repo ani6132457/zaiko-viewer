@@ -822,7 +822,6 @@ def render_amazon_refresh_control(fetched_at, fetching, errors, key):
 FBA_SKU_MASTER_FOLDER = "amazon用SKUマスター"
 FBA_SKU_MASTER_FILE = "sku_master.xlsx"
 FBA_COMPARE_HTML = "FBA在庫比較.html"
-FBA_TREND_DAYS = 400  # 在庫比較の推移グラフに渡す日数（1年＋余裕）
 
 
 @st.cache_data(show_spinner=False)
@@ -869,7 +868,6 @@ def build_fba_compare_payload(all_paths: tuple, latest_ymd: str, master_items: t
     stock_map = get_tempostar_stock_map(paths)
     snap = get_all_sku_snapshot(paths)
     history_map = get_tempostar_stock_history_map(paths)
-    sales_map = get_tempostar_sales_map(paths)
 
     def _s(v):
         return "" if v is None or (isinstance(v, float) and math.isnan(v)) else str(v).strip()
@@ -895,23 +893,11 @@ def build_fba_compare_payload(all_paths: tuple, latest_ymd: str, master_items: t
     base_url = "https://image.rakuten.co.jp/hype/cabinet"
     img = {b: base_url + img_master[b] for b in names if img_master.get(b)}
 
-    # 推移グラフ用（直近 FBA_TREND_DAYS 日分。日付は YYYYMMDD の数値にして軽くする）
-    start = (datetime.strptime(latest_ymd, "%Y%m%d") - timedelta(days=FBA_TREND_DAYS)).strftime("%Y%m%d")
-    # 開始日より前の最後の在庫も1点だけ残す（グラフの左端を正しい在庫から始めるため）
-    hist = {}
-    for code, pts in history_map.items():
-        before = [p for p in pts if p["d"] < start]
-        keep = ([before[-1]] if before else []) + [p for p in pts if p["d"] >= start]
-        if keep:
-            hist[code] = [[int(p["d"]), int(p["stock"])] for p in keep]
-    sales = {}
-    for code, pts in sales_map.items():
-        keep = [[int(p["d"]), int(p["q"])] for p in pts if p["d"] >= start]
-        if keep:
-            sales[code] = keep
+    # 在庫推移グラフ用（納品推奨数システムv5と同じく全期間の日別在庫。日付は YYYYMMDD の数値にして軽くする）
+    hist = {code: [[int(p["d"]), int(p["stock"])] for p in pts] for code, pts in history_map.items() if pts}
 
     payload = {
-        "ts": ts, "names": names, "img": img, "hist": hist, "sales": sales,
+        "ts": ts, "names": names, "img": img, "hist": hist,
         "master": dict(master_items),
         "meta": {"latest": f"{latest_ymd[:4]}-{latest_ymd[4:6]}-{latest_ymd[6:]}"},
     }
