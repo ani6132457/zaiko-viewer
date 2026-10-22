@@ -862,12 +862,15 @@ def fba_amazon_to_tempostar(df_master) -> dict:
 
 
 @st.cache_data(show_spinner=False)
-def build_fba_compare_payload(all_paths: tuple, latest_ymd: str, master_items: tuple) -> str:
-    """FBA在庫比較HTMLに注入するデータ（JSON文字列）。他タブと同じキャッシュ済み集計を流用する。"""
-    paths = list(all_paths)  # 他タブと同じ引数の形（list）で呼んでキャッシュを共有する
+def build_fba_compare_payload(paths_with_mtime: tuple, latest_ymd: str, trend_start_ymd: str,
+                              trend_file_dates: tuple, master_items: tuple) -> str:
+    """FBA在庫比較HTMLに注入するデータ（JSON文字列）。他タブと同じキャッシュ済み集計を流用する。
+    引数にファイルの更新時刻を含めるのは、同じ名前のCSVが取得し直されたときに作り直すため。"""
+    paths = [p for p, _ in paths_with_mtime]  # 他タブと同じ引数の形（list）で呼んでキャッシュを共有する
     stock_map = get_tempostar_stock_map(paths)
     snap = get_all_sku_snapshot(paths)
-    history_map = get_tempostar_stock_history_map(paths)
+    # 在庫推移グラフ用：テンポスター機能のグラフと同じ「直近1年の推移」と「日ごとの内訳」
+    trend_map, event_map = get_stock_trend_and_event_maps(paths_with_mtime, trend_start_ymd)
 
     def _s(v):
         return "" if v is None or (isinstance(v, float) and math.isnan(v)) else str(v).strip()
@@ -893,11 +896,12 @@ def build_fba_compare_payload(all_paths: tuple, latest_ymd: str, master_items: t
     base_url = "https://image.rakuten.co.jp/hype/cabinet"
     img = {b: base_url + img_master[b] for b in names if img_master.get(b)}
 
-    # 在庫推移グラフ用（納品推奨数システムv5と同じく全期間の日別在庫。日付は YYYYMMDD の数値にして軽くする）
-    hist = {code: [[int(p["d"]), int(p["stock"])] for p in pts] for code, pts in history_map.items() if pts}
+    # 推移は [日付, 在庫] の配列にして軽くする
+    trend = {code: [[p["date"], p["value"]] for p in pts] for code, pts in trend_map.items() if pts}
 
     payload = {
-        "ts": ts, "names": names, "img": img, "hist": hist,
+        "ts": ts, "names": names, "img": img,
+        "trend": trend, "events": event_map, "fileDates": list(trend_file_dates),
         "master": dict(master_items),
         "meta": {"latest": f"{latest_ymd[:4]}-{latest_ymd[4:6]}-{latest_ymd[6:]}"},
     }
@@ -1011,13 +1015,20 @@ def render_fba_compare_tab(file_infos, df_master):
         st.error(f"『{FBA_COMPARE_HTML}』が見つかりません。app.py と同じフォルダに配置してください。")
         return
 
-    all_paths = tuple(fi["path"] for fi in file_infos)
-    latest_ymd = max(fi["date"] for fi in file_infos).strftime("%Y%m%d")
+    # テンポスター機能のグラフと同じ範囲（直近1年）・同じ引数で集計して、キャッシュを共有する
+    paths_with_mtime = tuple((fi["path"], os.path.getmtime(fi["path"])) for fi in file_infos)
+    min_date = min(fi["date"] for fi in file_infos)
+    max_date = max(fi["date"] for fi in file_infos)
+    latest_ymd = max_date.strftime("%Y%m%d")
+    trend_start_date = max(min_date, (pd.Timestamp(max_date) - DateOffset(years=1)).date())
+    trend_file_dates = tuple(fi["date"].strftime("%Y-%m-%d") for fi in file_infos if trend_start_date <= fi["date"] <= max_date)
     master_items = tuple(sorted(fba_amazon_to_tempostar(df_master).items()))
     if df_master is None:
         st.caption("ℹ️ sku_master.xlsx が未読み込みのため、Amazon SKUをそのまま商品コードとして照合します。")
 
-    payload = build_fba_compare_payload(all_paths, latest_ymd, master_items)
+    payload = build_fba_compare_payload(
+        paths_with_mtime, latest_ymd, trend_start_date.strftime("%Y%m%d"), trend_file_dates, master_items
+    )
 
     with open(FBA_COMPARE_HTML, "r", encoding="utf-8") as f:
         html_content = f.read()

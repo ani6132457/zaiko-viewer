@@ -65,28 +65,44 @@
 
   /* テーブル */
   .wrap { background: #fff; border-radius: 18px; box-shadow: 0 4px 16px rgba(42,36,64,0.10); overflow: hidden; }
-  .scroll { overflow-x: auto; }
-  table { border-collapse: collapse; width: 100%; font-size: 13px; }
-  th { background: var(--violet-soft); color: var(--violet); font-size: 12px; font-weight: 700; font-family: 'M PLUS Rounded 1c', sans-serif;
-       padding: 0; white-space: nowrap; text-align: left; }
+  /* 横スクロールを出さない：列幅は画面に収まるように自動調整し、長い文字は折り返す */
+  .scroll { overflow-x: visible; }
+  table { border-collapse: collapse; width: 100%; font-size: 12.5px; table-layout: auto; }
+  th { background: var(--violet-soft); color: var(--violet); font-size: 11.5px; font-weight: 700; font-family: 'M PLUS Rounded 1c', sans-serif;
+       padding: 0; white-space: normal; text-align: left; line-height: 1.3; vertical-align: middle; }
   thead th { position: relative; z-index: 3; will-change: transform; }
   thead.stuck th { box-shadow: 0 3px 6px -2px rgba(42,36,64,0.18); }
-  th .th-in { display: flex; align-items: center; gap: 2px; padding: 9px 6px 9px 10px; }
+  th .th-in { display: flex; align-items: center; flex-wrap: wrap; gap: 1px; padding: 8px 3px 8px 7px; }
+  th.num .th-in { justify-content: flex-end; text-align: right; }
   th.num .th-in { justify-content: flex-end; }
-  th .lab { cursor: pointer; user-select: none; }
+  th .lab { cursor: pointer; user-select: none; min-width: 0; overflow-wrap: anywhere; }
   th .ar { margin-left: 3px; opacity: .45; font-size: 10px; }
   th.sorted .ar { opacity: 1; color: var(--accent); }
   th .fbtn { border: 1px solid transparent; background: transparent; color: var(--violet); border-radius: 6px; cursor: pointer; font-size: 10px;
              padding: 2px 5px; line-height: 1.2; opacity: .55; }
   th .fbtn:hover { opacity: 1; background: #fff; border-color: #D9D1FF; }
   th .fbtn.on { opacity: 1; background: var(--accent); color: #fff; }
-  td { padding: 8px 10px; border-bottom: 1px solid #F1EEFC; vertical-align: middle; }
-  th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-  td.mono { font-family: Consolas, Menlo, monospace; font-size: 12px; white-space: nowrap; }
+  td { padding: 7px 7px; border-bottom: 1px solid #F1EEFC; vertical-align: middle; }
+  th.num { text-align: right; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.mono { font-family: Consolas, Menlo, monospace; font-size: 11.5px; white-space: nowrap; }
+  /* 商品コード・Amazon SKU は長い場合だけ「-」「_」などで折り返す */
+  td.wrapcode { white-space: normal; overflow-wrap: anywhere; min-width: 92px; }
+  th[data-col="code"], th[data-col="asku"] { min-width: 92px; }
+  th[data-col="name"] { min-width: 120px; }
+  /* 列が多いときは文字と余白を詰めて、画面幅に収める */
+  table.dense { font-size: 11.5px; }
+  table.dense th { font-size: 10.5px; }
+  table.dense th .th-in { padding: 6px 2px 6px 5px; }
+  table.dense td { padding: 6px 5px; }
+  table.dense td.mono { font-size: 10.5px; }
+  table.dense td img { max-height: 38px; }
+  table.dense .name { min-width: 100px; }
+  td.cell-text { cursor: text; }
   tbody tr.r { cursor: pointer; }
   tbody tr.r:hover { background: var(--accent-soft); }
-  td img { max-height: 52px; width: auto; display: block; margin: auto; border-radius: 8px; }
-  .name { max-width: 300px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.35em; cursor: text; }
+  td img { max-height: 46px; width: auto; display: block; margin: auto; border-radius: 8px; }
+  .name { min-width: 120px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.35em; cursor: text; }
   .zero { color: #C9C5D8; }
   .tag { display: inline-block; font-size: 11px; font-weight: 700; border-radius: 999px; padding: 2px 9px; white-space: nowrap; }
   .tag.out { background: #FFE3E8; color: var(--coral); }
@@ -116,25 +132,48 @@
   .fmenu .ok { background: var(--violet); border-color: var(--violet); color: #fff; }
   .fmenu .ok:hover { background: #6A4EF0; }
 
-  /* 在庫推移グラフ モーダル（納品推奨数システムv5と同じ作り） */
-  .stock-modal-backdrop { position: absolute; left: 0; width: 100%; background: rgba(0,0,0,0.42); z-index: 10000;
+  /* 在庫推移グラフ モーダル（テンポスター機能のグラフと同じ見た目・内容） */
+  .stock-modal-backdrop { position: absolute; left: 0; width: 100%; background: rgba(42,36,64,0.55); z-index: 10000;
                           display: flex; align-items: center; justify-content: center; }
-  .stock-modal { background: #fff; border-radius: 12px; padding: 18px 20px 20px; width: 700px; max-width: 92vw; max-height: 86vh;
-                 overflow: auto; box-shadow: 0 12px 36px rgba(0,0,0,0.25); font-family: 'Hiragino Sans', 'Yu Gothic UI', 'Meiryo UI', sans-serif; }
-  .stock-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
-  .stock-modal-title { font-weight: 700; font-size: 15px; }
-  .close-btn { border: 1px solid var(--g-border-md); background: #fff; border-radius: 8px; padding: 5px 12px; cursor: pointer; font-size: 13px; font-family: inherit; }
-  .close-btn:hover { background: #f0efe9; }
-  .modal-tools { display: flex; align-items: center; gap: 8px; }
-  .periods { display: inline-flex; gap: 4px; }
-  .periods button { border: 1px solid var(--g-border-md); background: #fff; color: var(--g-muted); border-radius: 999px; padding: 3px 11px;
-                    font-size: 12px; font-weight: 700; cursor: pointer; font-family: inherit; }
-  .periods button.on { background: var(--g-accent); border-color: var(--g-accent); color: #fff; }
-  .breakdown { margin-top: 14px; border-top: 1px solid var(--g-border); padding-top: 12px; }
-  .breakdown .bt { font-size: 12px; font-weight: 700; color: var(--g-muted); margin-bottom: 6px; }
+  .stock-modal { background: #fff; border-radius: 20px; width: min(940px, 95vw); max-height: 92%; overflow-y: auto;
+                 padding: 18px 20px 20px; box-shadow: 0 16px 44px rgba(42,36,64,0.28); }
+  .stock-modal h4 { margin: 0 0 10px 0; font-size: 15px; font-family: 'M PLUS Rounded 1c', sans-serif; color: var(--ink); }
+  .modal-close { float: right; border: none; background: var(--violet-soft); color: var(--violet); border-radius: 999px; padding: 5px 14px;
+                 cursor: pointer; font-weight: 600; font-size: 13px; font-family: inherit; }
+  .no-data { color: var(--ink-soft); font-size: 13px; padding: 20px 0; }
+  .axis-label { font-size: 10px; fill: var(--ink-soft); }
+  .grid-line { stroke: #f1eefc; stroke-width: 1; }
+  .chart-dot { transition: r 0.12s ease, fill 0.12s ease; }
+  .chart-wrap { position: relative; }
+  .chart-tooltip { position: absolute; display: none; background: var(--ink); color: #fff; font-size: 12px; padding: 6px 10px; border-radius: 8px;
+                   pointer-events: none; white-space: nowrap; transform: translate(-50%, -100%); margin-top: -10px; z-index: 10; line-height: 1.5; }
+  .chart-tooltip:after { content: ""; position: absolute; top: 100%; left: 50%; transform: translateX(-50%); border: 5px solid transparent; border-top-color: var(--ink); }
+  .period-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .period-btn { border: 2px solid var(--violet-soft); background: #fff; color: var(--violet); border-radius: 999px;
+                padding: 5px 16px; font-size: 12px; font-weight: 600; cursor: pointer; font-family: inherit; }
+  .period-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; }
+  .period-sep { color: #ccc; margin: 0 2px; }
+  .period-custom { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-soft); }
+  .period-custom input[type="date"] { border: 2px solid var(--violet-soft); border-radius: 8px; padding: 4px 6px; font-size: 12px; font-family: inherit; }
+  .period-apply { border: 2px solid var(--accent); background: #fff; color: var(--accent); border-radius: 999px;
+                  padding: 4px 14px; font-size: 12px; font-weight: 600; cursor: pointer; font-family: inherit; }
+  .period-apply:hover { background: var(--accent-soft); }
+  @keyframes aurapulse { 0%,100% { transform: scale(0.85); opacity: 0.95; } 50% { transform: scale(1.3); opacity: 0.5; } }
+  .chart-aura { transform-box: fill-box; transform-origin: center; animation: aurapulse 2.2s ease-in-out infinite; pointer-events: none; }
+  @media (prefers-reduced-motion: reduce) { .chart-aura { animation: none; } }
+  .chart-legend { font-size: 11px; color: var(--ink-soft); margin-top: 6px; }
+  .period-summary { display: none; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin: -4px 0 12px 0; padding: 8px 12px;
+                    background: var(--violet-soft); border-radius: 12px; font-size: 12px; line-height: 1.6; color: var(--ink); }
+  .period-summary .ps-title { font-weight: 700; color: var(--violet); font-family: 'M PLUS Rounded 1c', sans-serif; }
+  .period-summary .ps-item { background: #fff; border-radius: 999px; padding: 2px 10px; white-space: nowrap; }
+  .period-summary .ps-empty { color: var(--ink-soft); }
+  /* FBAの在庫内訳（グラフの下） */
+  .breakdown { margin-top: 14px; padding: 10px 12px; background: #FAFAFF; border: 1px solid var(--line); border-radius: 12px; font-size: 12px; }
+  .breakdown .bt { font-weight: 700; color: var(--violet); font-family: 'M PLUS Rounded 1c', sans-serif; margin-bottom: 6px; }
   .breakdown .chips { display: flex; flex-wrap: wrap; gap: 6px; }
-  .breakdown .chips span { background: #f7f6f3; border: 1px solid var(--g-border); border-radius: 8px; padding: 4px 10px; font-size: 12px; }
-  .breakdown .chips span.main { background: #eff4ff; border-color: #c7d7fb; }
+  .breakdown .chips + .chips { margin-top: 6px; }
+  .breakdown .chips span { background: #fff; border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; white-space: nowrap; }
+  .breakdown .chips span.main { border-color: #D9D1FF; background: var(--violet-soft); }
   .breakdown b { font-variant-numeric: tabular-nums; }
 </style>
 </head>
@@ -143,11 +182,24 @@
 <!-- 在庫推移グラフ モーダル -->
 <div id="stock-modal-backdrop" class="stock-modal-backdrop" style="display:none;">
   <div class="stock-modal" id="stock-modal">
-    <div class="stock-modal-head">
-      <span id="stock-modal-title" class="stock-modal-title">📈 在庫推移</span>
-      <span class="modal-tools"><span class="periods" id="stock-periods"></span><button class="close-btn" id="stock-modal-close">✕ 閉じる</button></span>
+    <button class="modal-close" id="stock-modal-close">✕ 閉じる</button>
+    <h4 id="modaltitle"></h4>
+    <div class="period-bar" id="periodbar">
+      <button class="period-btn" data-preset="1">1ヶ月</button>
+      <button class="period-btn" data-preset="3">3ヶ月</button>
+      <button class="period-btn" data-preset="6">6ヶ月</button>
+      <button class="period-btn" data-preset="12">1年</button>
+      <span class="period-sep">|</span>
+      <span class="period-custom">
+        <input type="date" id="periodstart">
+        <span>〜</span>
+        <input type="date" id="periodend">
+        <button class="period-apply" id="periodapply">適用</button>
+      </span>
     </div>
-    <div id="stock-modal-body"></div>
+    <div class="period-summary" id="periodsummary"></div>
+    <div id="chartarea"></div>
+    <div id="fbabreakdown"></div>
   </div>
 </div>
 
@@ -171,7 +223,8 @@
   <div class="note">
     FBA在庫合計＝レポートの「販売可能な商品の合計」（在庫あり＋FC処理中＋出荷待ち＋FC移管中＋入荷待ち。販売不可は含まない）。
     複数のAmazon SKUが同じ商品コードに紐づく場合は1行に合算しています。
-    各列見出しの ▼ で、Excelのように値を選んで絞り込めます。行をクリックすると在庫推移グラフが開きます。
+    各列見出しの ▼ で、Excelのように値を選んで絞り込めます。
+    画像や数値の欄をクリックすると在庫推移グラフが開きます（商品コード〜FNSKUの欄はコピー用のため、クリックしても開きません）。
   </div>
 
   <div class="card">
@@ -196,7 +249,7 @@
 <script>
 (function () {
   "use strict";
-  const D = window.__FBA_DATA__ || { ts: {}, names: {}, img: {}, hist: {}, master: {}, meta: {} };
+  const D = window.__FBA_DATA__ || { ts: {}, names: {}, img: {}, trend: {}, events: {}, fileDates: [], master: {}, meta: {} };
   const PAGE = 100;
   const LIST_LIMIT = 1000;   // フィルターの値リストに一度に出す最大件数（検索で絞り込める）
 
@@ -422,6 +475,8 @@
   });
 
   const isNumCol = c => c.t === "num" || c.t === "days";
+  // ダブルクリックでコピーすることがある列（クリックしてもグラフを開かない）
+  const COPY_COLS = new Set(["code", "asku", "name", "a1", "a2", "asin", "fnsku"]);
   const shownCols = () => COLS.filter(c => S.shown.has(c.k));
 
   // ---------- 絞り込み・並び替え ----------
@@ -475,21 +530,22 @@
       case "days":
         if (v == null || v === "") return `<td class="num"></td>`;
         return `<td class="num ${v === 0 ? "zero" : ""}">${fmtDays(v)}</td>`;
-      case "mono": return `<td class="mono">${esc(v)}</td>`;
-      case "name": return `<td><div class="name cell-text" title="${esc(v)}">${esc(v)}</div></td>`;
+      case "mono": return `<td class="mono cell-text ${c.k === "code" || c.k === "asku" ? "wrapcode" : ""}">${esc(v)}</td>`;
+      case "name": return `<td class="cell-text"><div class="name" title="${esc(v)}">${esc(v)}</div></td>`;
       case "alert": { const a = ALERT[v]; return `<td>${a ? `<span class="tag ${a[1]}">${a[0]}</span>` : esc(v)}</td>`; }
-      default: return `<td>${esc(v)}</td>`;
+      default: return `<td class="${COPY_COLS.has(c.k) ? "cell-text" : ""}">${esc(v)}</td>`;
     }
   }
 
   let pageRows = [];
   function renderTable() {
     const cols = shownCols();
+    $("thead").closest("table").classList.toggle("dense", cols.length > 13);
     $("thead").innerHTML = "<tr>" + cols.map(c => {
       const sorted = S.sortKey === c.k;
       const filt = c.t !== "img"
         ? `<button class="fbtn ${S.filters[c.k] ? "on" : ""}" data-f="${c.k}" title="絞り込み">${S.filters[c.k] ? "▼●" : "▼"}</button>` : "";
-      return `<th class="${isNumCol(c) ? "num" : ""} ${sorted ? "sorted" : ""}"><div class="th-in">` +
+      return `<th data-col="${c.k}" class="${isNumCol(c) ? "num" : ""} ${sorted ? "sorted" : ""}"><div class="th-in">` +
         `<span class="lab" data-k="${c.k}">${esc(c.l)}<span class="ar">${sorted ? (S.sortDir === "asc" ? "▲" : "▼") : ""}</span></span>${filt}</div></th>`;
     }).join("") + "</tr>";
 
@@ -575,7 +631,7 @@
     $("thead").scrollIntoView({ block: "start" });
   });
   $("tbody").addEventListener("click", e => {
-    // 商品名などの文字を選択したいときはグラフを開かない
+    // 商品コード〜FNSKUの欄（コピー用）や、文字を選択した直後はグラフを開かない
     if (e.target.closest(".cell-text")) return;
     const sel = window.getSelection ? window.getSelection() : null;
     if (sel && sel.toString().length > 0) return;
@@ -672,96 +728,249 @@
     if (fState && !fmenu.contains(e.target) && !e.target.closest(".fbtn")) closeFilter();
   });
 
-  // ---------- 在庫推移グラフ（納品推奨数システムv5と同じ作り：行クリックでモーダル表示） ----------
-  function renderStockChart(container, history) {
-    if (!history || history.length === 0) {
-      container.innerHTML = `<p style="color:var(--g-muted);font-size:13px;">在庫推移データがありません。</p>`;
-      return;
-    }
-    const width = 640, height = 260;
-    const padding = { top: 20, right: 20, bottom: 34, left: 46 };
-    const values = history.map(h => h.stock);
-    let maxV = Math.max(...values, 0);
-    let minV = Math.min(...values, 0);
-    if (maxV === minV) { maxV += 1; minV -= 1; }
-    const n = history.length;
-    const innerW = width - padding.left - padding.right;
-    const innerH = height - padding.top - padding.bottom;
-    const xStep = n > 1 ? innerW / (n - 1) : 0;
-    const yScale = v => padding.top + innerH - ((v - minV) / (maxV - minV)) * innerH;
-    const xOf = i => padding.left + i * xStep;
+  // ---------- 在庫推移グラフ（テンポスター機能のグラフと同じ内容：期間ボタン・期間合計・在庫CSV取込のオーラ・日ごとの内訳） ----------
+  const KEY = "fba";
+  const EVENTS = D.events || {};
+  const FILE_DATES = D.fileDates || [];
+  const fmtNum = v => (v == null || v === "") ? "" : Number(v).toLocaleString("ja-JP");
+  const escapeHtml = esc;
+  let selectedSku = null, currentPoints = [];
+  const chartArea = $("chartarea"), periodBar = $("periodbar"), periodSummary = $("periodsummary");
+  const periodStartInput = $("periodstart"), periodEndInput = $("periodend");
 
-    const points = history.map((h, i) => `${xOf(i)},${yScale(h.stock)}`).join(" ");
-    const fmtDate = d => (d && d.length === 8) ? `${d.slice(4, 6)}/${d.slice(6, 8)}` : d;
-    const fmtDateWithYear = d => (d && d.length === 8) ? `${d.slice(0, 4)}/${d.slice(4, 6)}/${d.slice(6, 8)}` : d;
-    const labelIdxs = n <= 6 ? history.map((_, i) => i) : [0, Math.floor((n - 1) / 2), n - 1];
-    const xLabels = labelIdxs.map(i =>
-      `<text x="${xOf(i)}" y="${height - padding.bottom + 18}" font-size="10" fill="var(--g-muted)" text-anchor="middle">${esc(fmtDate(history[i].d))}</text>`
-    ).join("");
-    const dots = history.map((h, i) => `<circle cx="${xOf(i)}" cy="${yScale(h.stock)}" r="2.5" fill="var(--g-accent)" />`).join("");
+  // その他の増減を「+55 / −3」の形にする（0の側は出さない）。どちらも0なら空文字
+  function otherPosNegText(pos, neg) {
+    const parts = [];
+    if (pos) parts.push("+" + fmtNum(pos));
+    if (neg) parts.push("−" + fmtNum(Math.abs(neg)));
+    return parts.join(" / ");
+  }
+  function signed(n) { return (n > 0 ? "+" : "") + fmtNum(n); }
 
-    // 横線メモリ（値の範囲に応じて10単位 or 100単位で引く）
-    const gridStep = (maxV - minV) <= 200 ? 10 : 100;
-    let gridLines = "";
-    for (let v = Math.ceil(minV / gridStep) * gridStep; v <= maxV; v += gridStep) {
-      const gy = yScale(v);
-      gridLines += `<line x1="${padding.left}" y1="${gy}" x2="${width - padding.right}" y2="${gy}" stroke="var(--g-border)" stroke-dasharray="2,2" />`;
-      gridLines += `<text x="${padding.left - 6}" y="${gy + 3}" font-size="9" fill="var(--g-muted)" text-anchor="end">${v}</text>`;
-    }
-
-    container.innerHTML = `
-      <div style="position:relative;">
-        <svg id="stock-chart-svg" viewBox="0 0 ${width} ${height}" style="width:100%;height:auto;display:block;cursor:crosshair;">
-          ${gridLines}
-          <line x1="${padding.left}" y1="${padding.top}" x2="${padding.left}" y2="${height - padding.bottom}" stroke="var(--g-border-md)" />
-          <line x1="${padding.left}" y1="${height - padding.bottom}" x2="${width - padding.right}" y2="${height - padding.bottom}" stroke="var(--g-border-md)" />
-          <polyline points="${points}" fill="none" stroke="var(--g-accent)" stroke-width="2" />
-          ${dots}
-          ${xLabels}
-          <line id="stock-chart-hoverline" x1="0" y1="${padding.top}" x2="0" y2="${height - padding.bottom}" stroke="var(--g-muted)" stroke-dasharray="3,3" style="display:none;" />
-          <circle id="stock-chart-hoverdot" r="4.5" fill="var(--g-accent)" stroke="#fff" stroke-width="1.5" style="display:none;" />
-        </svg>
-        <div id="stock-chart-tooltip" style="position:absolute;display:none;pointer-events:none;background:rgba(30,30,30,0.92);color:#fff;padding:5px 9px;border-radius:6px;font-size:12px;white-space:nowrap;transform:translate(-50%,-125%);z-index:10;"></div>
-      </div>`;
-
-    const svg = container.querySelector("#stock-chart-svg");
-    const tooltip = container.querySelector("#stock-chart-tooltip");
-    const hoverLine = container.querySelector("#stock-chart-hoverline");
-    const hoverDot = container.querySelector("#stock-chart-hoverdot");
-
-    function updateHover(clientX) {
-      const rect = svg.getBoundingClientRect();
-      const scaleX = width / rect.width, scaleY = height / rect.height;
-      const mouseX = (clientX - rect.left) * scaleX;
-      let idx = Math.round((mouseX - padding.left) / (xStep || 1));
-      idx = Math.max(0, Math.min(n - 1, idx));
-      const h = history[idx];
-      const px = xOf(idx), py = yScale(h.stock);
-      hoverLine.setAttribute("x1", px); hoverLine.setAttribute("x2", px); hoverLine.style.display = "block";
-      hoverDot.setAttribute("cx", px); hoverDot.setAttribute("cy", py); hoverDot.style.display = "block";
-
-      let diffText = "—";
-      if (idx > 0) {
-        const d = h.stock - history[idx - 1].stock;
-        diffText = d > 0 ? `+${d}` : (d < 0 ? `${d}` : "±0");
-      }
-      tooltip.textContent = `${fmtDateWithYear(h.d)}：${h.stock}（前回比 ${diffText}）`;
-      tooltip.style.display = "block";
-
-      // ツールチップがモーダルの外に出て見切れないよう、表示領域の内側に収める
-      const wrapW = rect.width, tipW = tooltip.offsetWidth, tipH = tooltip.offsetHeight;
-      const pxPx = px / scaleX, pyPx = py / scaleY, margin = 4, half = tipW / 2;
-      tooltip.style.left = `${Math.max(half + margin, Math.min(wrapW - half - margin, pxPx))}px`;
-      tooltip.style.top = `${pyPx}px`;
-      tooltip.style.transform = (pyPx - tipH * 1.25 < 0) ? "translate(-50%, 25%)" : "translate(-50%, -125%)";
-    }
-    svg.addEventListener("mousemove", e => updateHover(e.clientX));
-    svg.addEventListener("mouseleave", () => {
-      hoverLine.style.display = "none"; hoverDot.style.display = "none"; tooltip.style.display = "none";
+  // 指定期間の内訳を集計する（startStr〜endStr、両端含む）
+  function summarizeEvents(sku, startStr, endStr) {
+    const days = EVENTS[sku] || {};
+    let sales = 0, hasSales = false, otherPos = 0, otherNeg = 0;
+    const users = {};
+    Object.keys(days).forEach(function (d) {
+      if (d < startStr || d > endStr) return;
+      const e = days[d];
+      if (e.s !== undefined) { sales += e.s; hasSales = true; }
+      if (e.op !== undefined) otherPos += e.op;
+      if (e.on !== undefined) otherNeg += e.on;
+      (e.c || []).forEach(function (c) {
+        if (!users[c[0]]) users[c[0]] = { n: 0, delta: 0 };
+        users[c[0]].n += c[1];
+        users[c[0]].delta += c[2];
+      });
     });
-    svg.addEventListener("touchmove", e => {
-      if (e.touches && e.touches[0]) { updateHover(e.touches[0].clientX); e.preventDefault(); }
-    }, { passive: false });
+    return { sales, hasSales, otherPos, otherNeg, users };
+  }
+
+  function renderPeriodSummary(startStr, endStr) {
+    const r = summarizeEvents(selectedSku, startStr, endStr);
+    const items = [];
+    if (r.hasSales) items.push('<span class="ps-item">🛒 売上: <b>' + fmtNum(r.sales) + '個</b></span>');
+    Object.keys(r.users).forEach(function (u) {
+      items.push('<span class="ps-item">📥 在庫CSV取込 ' + escapeHtml(u) + '×' + r.users[u].n + '回（' + signed(r.users[u].delta) + '）</span>');
+    });
+    const otherText = otherPosNegText(r.otherPos, r.otherNeg);
+    if (otherText) items.push('<span class="ps-item">🔧 その他の増減: <b>' + otherText + '</b></span>');
+    periodSummary.innerHTML = '<span class="ps-title">📊 期間合計（' + escapeHtml(startStr) + ' 〜 ' + escapeHtml(endStr) + '）</span>' +
+      (items.length ? items.join("") : '<span class="ps-empty">この期間の内訳データはありません</span>');
+    periodSummary.style.display = "flex";
+  }
+
+  // ツールチップ用：その日の内訳（HTML）
+  function dayEventLines(sku, dateStr) {
+    const e = (EVENTS[sku] || {})[dateStr];
+    if (!e) return "";
+    const lines = [];
+    if (e.s !== undefined) lines.push("🛒 売上: " + fmtNum(e.s) + "個");
+    (e.c || []).forEach(function (c) {
+      lines.push("📥 在庫CSV取込: " + escapeHtml(c[0]) + (c[1] > 1 ? "×" + c[1] + "回" : "") + "（" + signed(c[2]) + "）");
+    });
+    const ot = otherPosNegText(e.op || 0, e.on || 0);
+    if (ot) lines.push("🔧 その他: " + ot);
+    if (!lines.length) return "";
+    return '<div style="margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.3);">' +
+      '<span style="opacity:0.7;">この日の内訳</span><br>' + lines.join("<br>") + "</div>";
+  }
+
+  function buildChartSvg(points) {
+    const W = 860, H = 420, padL = 56, padR = 24, padT = 24, padB = 40;
+    const innerW = W - padL - padR, innerH = H - padT - padB;
+    const values = points.map(p => p.value);
+    let vMin = Math.min.apply(null, values), vMax = Math.max.apply(null, values);
+    if (vMin === vMax) { vMin -= 1; vMax += 1; }
+    const pad = (vMax - vMin) * 0.1;
+    vMin -= pad; vMax += pad;
+    const xAt = i => points.length <= 1 ? padL + innerW / 2 : padL + (innerW * i) / (points.length - 1);
+    const yAt = v => padT + innerH - ((v - vMin) / (vMax - vMin)) * innerH;
+
+    let gridSvg = "";
+    const gridN = 4;
+    for (let g = 0; g <= gridN; g++) {
+      const yy = padT + (innerH * g) / gridN;
+      const val = vMax - ((vMax - vMin) * g) / gridN;
+      gridSvg += '<line class="grid-line" x1="' + padL + '" y1="' + yy + '" x2="' + (W - padR) + '" y2="' + yy + '"></line>';
+      gridSvg += '<text class="axis-label" x="' + (padL - 8) + '" y="' + (yy + 4) + '" text-anchor="end">' + Math.round(val) + '</text>';
+    }
+
+    let pathD = "", pointsSvg = "", filledSvg = "", auraSvg = "";
+    let hasAura = false, hasFilled = false, prevVal = null;
+    points.forEach(function (p, i) {
+      const x = xAt(i), y = yAt(p.value);
+      pathD += (i === 0 ? "M" : "L") + x + "," + y + " ";
+      let diffText;
+      if (prevVal !== null) { const d = p.value - prevVal; diffText = d > 0 ? ("+" + d) : String(d); }
+      else diffText = "—";
+      prevVal = p.value;
+      const ev = (EVENTS[selectedSku] || {})[p.date];
+      if (ev && ev.c && ev.c.length) {
+        hasAura = true;
+        auraSvg += '<circle class="chart-aura" cx="' + x + '" cy="' + y + '" r="17" fill="url(#aura_' + KEY + ')"></circle>' +
+          '<circle class="chart-aura-ring" cx="' + x + '" cy="' + y + '" r="8.5" fill="none" stroke="#2EC5FF" stroke-width="1.5" opacity="0.9" pointer-events="none"></circle>';
+      }
+      const real = p.real !== false;
+      if (!real) hasFilled = true;
+      const baseR = real ? 4.5 : 3;
+      const hitR = real ? 12 : 4;   // 変動の無い日の点は反応エリアを小さくして、変動のある点にカーソルが合いやすくする
+      const pointSvg = '<circle class="chart-dot" cx="' + x + '" cy="' + y + '" r="' + baseR + '" fill="#7B5FFF"' + (real ? "" : ' opacity="0.55"') + ' data-r="' + baseR + '"></circle>' +
+        '<circle class="chart-hit" cx="' + x + '" cy="' + y + '" r="' + hitR + '" fill="transparent" style="cursor:pointer" ' +
+        'data-date="' + escapeHtml(p.date) + '" data-value="' + p.value + '" data-diff="' + escapeHtml(diffText) + '" data-real="' + (real ? "1" : "0") + '"></circle>';
+      if (real) pointsSvg += pointSvg; else filledSvg += pointSvg;
+    });
+
+    const labelIdxs = points.length <= 10 ? points.map((_, i) => i) : [0, Math.floor((points.length - 1) / 2), points.length - 1];
+    let xLabelsSvg = "";
+    labelIdxs.forEach(function (i) {
+      xLabelsSvg += '<text class="axis-label" x="' + xAt(i) + '" y="' + (H - padB + 20) + '" text-anchor="middle">' + points[i].date + '</text>';
+    });
+
+    return '<div class="chart-wrap">' +
+      '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto;display:block;">' +
+      gridSvg +
+      '<defs><radialGradient id="aura_' + KEY + '">' +
+        '<stop offset="0" stop-color="#2EC5FF" stop-opacity="0.75"></stop>' +
+        '<stop offset="0.55" stop-color="#2EC5FF" stop-opacity="0.28"></stop>' +
+        '<stop offset="1" stop-color="#2EC5FF" stop-opacity="0"></stop></radialGradient></defs>' +
+      '<path d="' + pathD + '" fill="none" stroke="#7B5FFF" stroke-width="2"></path>' +
+      auraSvg + filledSvg + pointsSvg + xLabelsSvg +
+      '</svg>' +
+      '<div class="chart-tooltip"></div>' +
+      '</div>' +
+      '<div class="chart-legend">' +
+        (hasAura ? '◎ 青いオーラ＝その日に在庫CSV取込があった点' : '') +
+        (hasAura && hasFilled ? '　／　' : '') +
+        (hasFilled ? '薄い小さな点＝在庫の変動がなかった日' : '') +
+      '</div>';
+  }
+
+  function wireChartHover() {
+    const hits = chartArea.querySelectorAll(".chart-hit");
+    const wrap = chartArea.querySelector(".chart-wrap");
+    const tooltip = chartArea.querySelector(".chart-tooltip");
+    hits.forEach(function (hit) {
+      const dot = hit.previousElementSibling;
+      hit.addEventListener("mouseenter", function () {
+        dot.setAttribute("r", "6.5");
+        dot.setAttribute("fill", "#FF6B4A");
+        if (tooltip && wrap) {
+          tooltip.innerHTML = hit.dataset.date + "<br>在庫: " + hit.dataset.value + "（前回比 " + hit.dataset.diff + "）" +
+            (hit.dataset.real === "0" ? '<div style="opacity:0.7;margin-top:2px;">この日は在庫の変動なし</div>' : "") +
+            dayEventLines(selectedSku, hit.dataset.date);
+          tooltip.style.display = "block";
+          const hitRect = hit.getBoundingClientRect();
+          const wrapRect = wrap.getBoundingClientRect();
+          const half = tooltip.offsetWidth / 2;
+          let left = hitRect.left - wrapRect.left + hitRect.width / 2;
+          left = Math.max(half + 4, Math.min(wrapRect.width - half - 4, left));
+          tooltip.style.left = left + "px";
+          tooltip.style.top = (hitRect.top - wrapRect.top) + "px";
+        }
+      });
+      hit.addEventListener("mouseleave", function () {
+        dot.setAttribute("r", dot.dataset.r || "4.5");
+        dot.setAttribute("fill", "#7B5FFF");
+        if (tooltip) tooltip.style.display = "none";
+      });
+    });
+  }
+
+  // 変動があった日の点に、取得済みで変動が無かった日を前日の在庫数で埋めた系列を作る
+  function buildSeries(rawPoints) {
+    if (!rawPoints || rawPoints.length === 0) return [];
+    const byDate = {};
+    rawPoints.forEach(p => { byDate[p.date] = p.value; });
+    const first = rawPoints[0].date;
+    const dateSet = {};
+    rawPoints.forEach(p => { dateSet[p.date] = true; });
+    FILE_DATES.forEach(d => { if (d >= first) dateSet[d] = true; });
+    const out = [];
+    let last = null;
+    Object.keys(dateSet).sort().forEach(function (d) {
+      if (byDate[d] !== undefined) { last = byDate[d]; out.push({ date: d, value: last, real: true }); }
+      else if (last !== null) out.push({ date: d, value: last, real: false });
+    });
+    return out;
+  }
+
+  function subtractMonths(dateStr, months) {
+    const d = new Date(dateStr + "T00:00:00");
+    d.setMonth(d.getMonth() - months);
+    return d.toISOString().slice(0, 10);
+  }
+
+  function drawChartForRange(startStr, endStr) {
+    const filtered = currentPoints.filter(p => p.date >= startStr && p.date <= endStr);
+    renderPeriodSummary(startStr, endStr);
+    if (filtered.length === 0) {
+      chartArea.innerHTML = '<div class="no-data">この期間の在庫推移データがありません。</div>';
+    } else {
+      chartArea.innerHTML = buildChartSvg(filtered);
+      wireChartHover();
+    }
+  }
+
+  function setActivePresetButton(months) {
+    periodBar.querySelectorAll(".period-btn").forEach(function (b) {
+      b.classList.toggle("active", months !== null && String(months) === b.dataset.preset);
+    });
+  }
+
+  function applyPreset(months) {
+    if (currentPoints.length === 0) return;
+    const maxDateStr = currentPoints[currentPoints.length - 1].date;
+    const minDateStr = currentPoints[0].date;
+    let startStr = subtractMonths(maxDateStr, months);
+    if (startStr < minDateStr) startStr = minDateStr;
+    periodStartInput.value = startStr;
+    periodEndInput.value = maxDateStr;
+    setActivePresetButton(months);
+    drawChartForRange(startStr, maxDateStr);
+  }
+
+  periodBar.querySelectorAll(".period-btn").forEach(function (btn) {
+    btn.addEventListener("click", function () { applyPreset(Number(btn.dataset.preset)); });
+  });
+  $("periodapply").addEventListener("click", function () {
+    const s = periodStartInput.value, e = periodEndInput.value;
+    if (!s || !e || s > e) return;
+    setActivePresetButton(null);
+    drawChartForRange(s, e);
+  });
+
+  // グラフの下に出すFBAの在庫内訳
+  function breakdownHTML(r) {
+    const chips = items => '<div class="chips">' + items.map(([l, v, main]) => `<span class="${main ? "main" : ""}">${l} <b>${v}</b></span>`).join("") + "</div>";
+    const n = v => v == null ? "-" : fmt(v);
+    return '<div class="breakdown"><div class="bt">📦 FBA在庫の内訳（在庫補充レポート）</div>' +
+      chips([["テンポスター現在庫", r.tStock == null ? "（データなし）" : fmt(r.tStock), true], ["FBA在庫合計", n(r.fTotal), true],
+             ["過去30日販売数", n(r.f30)], ["在庫日数（受領中含む）", r.fDays == null ? "-" : fmtDays(r.fDays)], ["Amazon推奨補充数", n(r.fRec)]]) +
+      chips([["在庫あり", n(r.fAvail)], ["FC処理中", n(r.fProc)], ["出荷待ち", n(r.fShip)], ["FC移管中", n(r.fTrans)],
+             ["入荷待ち", n(r.fIn)], ["販売不可", n(r.fUns)]]) +
+      "</div>";
   }
 
   // モーダルを「親ページ（Streamlit本体）から見て今画面に映っている範囲」に合わせて配置する（v5と同じ）
@@ -787,52 +996,23 @@
     backdropEl.style.height = viewportH + "px";
   }
   let modalRepositionHandler = null;
-  const PERIODS = [[90, "3ヶ月"], [180, "6ヶ月"], [365, "1年"], [0, "全期間"]];
-  let modalRow = null, period = 365;
-
-  function breakdownHTML(r) {
-    const chips = (items) => items.map(([l, v, main]) => `<span class="${main ? "main" : ""}">${l} <b>${v}</b></span>`).join("");
-    const n = v => v == null ? "-" : fmt(v);
-    let h = `<div class="breakdown"><div class="bt">在庫の内訳</div><div class="chips">` +
-      chips([["テンポスター現在庫", r.tStock == null ? "（データなし）" : fmt(r.tStock), true], ["FBA在庫合計", n(r.fTotal), true]]) + `</div>`;
-    h += `<div class="chips" style="margin-top:6px">` + chips([
-      ["在庫あり", n(r.fAvail)], ["FC処理中", n(r.fProc)], ["出荷待ち", n(r.fShip)], ["FC移管中", n(r.fTrans)],
-      ["入荷待ち", n(r.fIn)], ["販売不可", n(r.fUns)],
-    ]) + `</div><div class="chips" style="margin-top:6px">` + chips([
-      ["過去30日販売数", n(r.f30)], ["在庫日数（受領中含む）", r.fDays == null ? "-" : fmtDays(r.fDays)], ["Amazon推奨補充数", n(r.fRec)],
-    ]) + `</div>`;
-    if (r.asku) h += `<div class="muted" style="margin-top:8px">Amazon SKU：${esc(r.asku)}${r.asin ? `　ASIN：${esc(r.asin)}` : ""}</div>`;
-    return h + `</div>`;
-  }
-
-  function renderModalBody() {
-    const r = modalRow;
-    $("stock-periods").innerHTML = PERIODS.map(([d, l]) => `<button data-d="${d}" class="${period === d ? "on" : ""}">${l}</button>`).join("");
-    let hist = (D.hist[r.code] || []).map(p => ({ d: String(p[0]), stock: p[1] }));
-    let note = "";
-    if (period && hist.length) {
-      const end = D.meta.latest ? new Date(D.meta.latest + "T00:00:00") : new Date();
-      const st = new Date(end); st.setDate(st.getDate() - period + 1);
-      const stYmd = `${st.getFullYear()}${String(st.getMonth() + 1).padStart(2, "0")}${String(st.getDate()).padStart(2, "0")}`;
-      const inRange = hist.filter(h => h.d >= stYmd);
-      if (!inRange.length) note = `<p style="color:var(--g-muted);font-size:13px;">この期間に在庫の変動はありません（最後の変動：${hist[hist.length - 1].d.replace(/(\d{4})(\d{2})(\d{2})/, "$1/$2/$3")}、在庫 ${fmt(hist[hist.length - 1].stock)}）。</p>`;
-      hist = inRange;
-    }
-    const body = $("stock-modal-body");
-    if (note) body.innerHTML = note; else renderStockChart(body, hist);
-    body.insertAdjacentHTML("beforeend", breakdownHTML(r));
-  }
-
-  $("stock-periods").addEventListener("click", e => {
-    const b = e.target.closest("button[data-d]"); if (!b) return;
-    period = Number(b.dataset.d); renderModalBody();
-  });
-
   function openStockModal(r) {
     const backdrop = $("stock-modal-backdrop");
-    modalRow = r;
-    $("stock-modal-title").textContent = `📈 在庫推移（${r.name ? `${r.code}／${r.name}` : r.code}）`;
-    renderModalBody();
+    selectedSku = r.code;
+    $("modaltitle").textContent = "📈 在庫推移（SKU: " + r.code + "）";
+    currentPoints = buildSeries((D.trend[r.code] || []).map(p => ({ date: p[0], value: p[1] })));
+    if (currentPoints.length === 0) {
+      periodBar.style.display = "none";
+      periodSummary.style.display = "none";
+      chartArea.innerHTML = '<div class="no-data">選択したSKUの在庫推移データがありません。</div>';
+    } else {
+      periodBar.style.display = "flex";
+      const minDateStr = currentPoints[0].date, maxDateStr = currentPoints[currentPoints.length - 1].date;
+      periodStartInput.min = minDateStr; periodStartInput.max = maxDateStr;
+      periodEndInput.min = minDateStr; periodEndInput.max = maxDateStr;
+      applyPreset(12); // デフォルト：過去1年
+    }
+    $("fbabreakdown").innerHTML = S.view === "matched" || r.fTotal != null ? breakdownHTML(r) : "";
     backdrop.style.display = "flex";
     positionModalToParentViewport(backdrop);
     modalRepositionHandler = () => positionModalToParentViewport(backdrop);
@@ -843,6 +1023,7 @@
   }
   function closeStockModal() {
     $("stock-modal-backdrop").style.display = "none";
+    selectedSku = null;
     if (modalRepositionHandler) {
       try {
         window.parent.removeEventListener("scroll", modalRepositionHandler, true);
@@ -851,6 +1032,47 @@
       modalRepositionHandler = null;
     }
   }
+  // ---------- タブを切り替えて戻ってきたとき、前回のスクロール位置に戻す ----------
+  // Streamlitのタブは切り替えると中身が非表示になり、ページの高さが変わってスクロール位置がずれる。
+  // このタブが表示されている間のスクロール位置を覚えておき、非表示→表示に戻った瞬間に書き戻す。
+  function parentScroller() {
+    // 親ページで実際にスクロールしている要素（無ければページ全体）
+    const frame = findSelfIframeInParent();
+    try {
+      let el = frame && frame.parentElement;
+      while (el && el !== window.parent.document.body && el !== window.parent.document.documentElement) {
+        const oy = window.parent.getComputedStyle(el).overflowY;
+        if ((oy === "auto" || oy === "scroll") && el.scrollHeight > el.clientHeight + 1) return el;
+        el = el.parentElement;
+      }
+    } catch (e) {}
+    return null;
+  }
+  const getParentY = () => { try { const sc = parentScroller(); return sc ? sc.scrollTop : window.parent.scrollY; } catch (e) { return 0; } };
+  const setParentY = y => { try { const sc = parentScroller(); if (sc) sc.scrollTop = y; else window.parent.scrollTo(0, y); } catch (e) {} };
+  function selfVisible() {
+    const frame = findSelfIframeInParent();
+    if (!frame) return true;
+    return frame.getClientRects().length > 0 && frame.getBoundingClientRect().height > 0;
+  }
+  let savedY = null, wasVisible = selfVisible(), restoringUntil = 0;
+  try {
+    window.parent.addEventListener("scroll", () => {
+      // 表示中（かつ書き戻し中でない）ときだけ覚える。非表示の間や、戻った直後のずれは覚えない
+      if (wasVisible && selfVisible() && Date.now() > restoringUntil) savedY = getParentY();
+    }, true);
+  } catch (e) {}
+  setInterval(() => {
+    const vis = selfVisible();
+    if (vis && !wasVisible && savedY != null) {
+      const y = savedY;
+      restoringUntil = Date.now() + 800;
+      // タブの中身が描画し直されて高さが確定するまで、何回か書き戻す
+      [0, 60, 150, 300, 600].forEach(t => setTimeout(() => { setParentY(y); scheduleSticky(); }, t));
+    }
+    wasVisible = vis;
+  }, 200);
+
   $("stock-modal-backdrop").addEventListener("click", closeStockModal);
   $("stock-modal").addEventListener("click", e => e.stopPropagation());
   $("stock-modal-close").addEventListener("click", closeStockModal);
