@@ -87,8 +87,7 @@
   td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   td.mono { font-family: Consolas, Menlo, monospace; font-size: 11.5px; white-space: nowrap; }
   /* 商品コード・Amazon SKU は長い場合だけ「-」「_」などで折り返す */
-  td.wrapcode { white-space: normal; overflow-wrap: anywhere; min-width: 92px; }
-  th[data-col="code"], th[data-col="asku"] { min-width: 92px; }
+  td.wrapcode { white-space: normal; overflow-wrap: break-word; }   /* 通常のコードは1行、長いものだけ「-」の位置で折り返す */
   th[data-col="name"] { min-width: 120px; }
   /* 列が多いときは文字と余白を詰めて、画面幅に収める */
   table.dense { font-size: 11.5px; }
@@ -102,7 +101,7 @@
   tbody tr.r { cursor: pointer; }
   tbody tr.r:hover { background: var(--accent-soft); }
   td img { max-height: 46px; width: auto; display: block; margin: auto; border-radius: 8px; }
-  .name { min-width: 120px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.35em; cursor: text; }
+  .name { min-width: 120px; max-width: 320px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.35em; cursor: text; }
   .zero { color: #C9C5D8; }
   .tag { display: inline-block; font-size: 11px; font-weight: 700; border-radius: 999px; padding: 2px 9px; white-space: nowrap; }
   .tag.out { background: #FFE3E8; color: var(--coral); }
@@ -175,6 +174,54 @@
   .breakdown .chips span { background: #fff; border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; white-space: nowrap; }
   .breakdown .chips span.main { border-color: #D9D1FF; background: var(--violet-soft); }
   .breakdown b { font-variant-numeric: tabular-nums; }
+
+  /* 自動保存・復元 */
+  .restore-banner { display: flex; align-items: center; gap: 10px; background: #EEF4FF; border: 1px solid #B6CDFA; border-radius: 12px;
+                    padding: 9px 14px; margin-top: 10px; font-size: 12.5px; color: #1A3D7C; }
+  .restore-banner .btn { margin-left: auto; white-space: nowrap; }
+  .save-row { display: flex; align-items: center; gap: 10px; margin-top: 6px; min-height: 18px; }
+  .link-btn { border: 0; background: transparent; color: var(--ink-soft); font-size: 12px; cursor: pointer; text-decoration: underline; font-family: inherit; padding: 2px 4px; }
+  .save-row .link-btn { margin-left: auto; }
+  /* 全件／納品数入力済み */
+  .mode-tabs { display: flex; gap: 6px; margin: 0 0 10px; }
+  .mode-tabs button { border: 2px solid var(--violet-soft); background: #fff; color: var(--violet); border-radius: 12px 12px 4px 4px; padding: 8px 18px;
+                      font-weight: 700; font-size: 13px; cursor: pointer; font-family: 'M PLUS Rounded 1c', sans-serif; }
+  .mode-tabs button.on { background: var(--violet); border-color: var(--violet); color: #fff; }
+  /* 絞り込みテンプレート */
+  .presets { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
+  .preset { display: inline-flex; align-items: center; border: 2px solid #FFD6CC; border-radius: 999px; background: #fff; overflow: hidden; }
+  .preset-btn { border: 0; background: transparent; color: var(--accent); font-weight: 700; font-size: 12px; padding: 4px 10px 4px 12px; cursor: pointer; font-family: inherit; }
+  .preset-btn:hover { background: var(--accent-soft); }
+  .preset-del { border: 0; border-left: 1px solid #FFD6CC; background: transparent; color: var(--accent); cursor: pointer; padding: 4px 8px; font-weight: 800; }
+  /* 操作ボタン */
+  .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--line); }
+  .act-group { display: inline-flex; gap: 8px; }
+  .btn.danger { border-color: #F5C2C7; color: #C0392B; }
+  .btn.danger:hover { background: #FDECEE; }
+  .btn.strong { border-color: var(--violet); }
+  /* グループ */
+  .group-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .group-tools input[type=text], .group-tools select { border: 2px solid var(--line); border-radius: 8px; padding: 5px 8px; font-size: 12.5px; font-family: inherit; }
+  .group-tools .sep { color: #D5D0EA; }
+  .group-chips { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+  .gchip { display: flex; align-items: center; gap: 10px; border: 1.5px solid var(--gc); border-radius: 10px; padding: 7px 10px; background: #fff; }
+  .gchip.active { background: color-mix(in srgb, var(--gc) 14%, #fff); }
+  .gdot { width: 10px; height: 10px; border-radius: 50%; background: var(--gc); flex-shrink: 0; }
+  .gname { flex: 1; cursor: pointer; font-weight: 700; font-size: 13px; }
+  .gdl { border: 1px solid var(--gc); background: var(--gc); color: #fff; border-radius: 8px; padding: 6px 14px; font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap; font-family: inherit; }
+  .gdel { border: 0; background: transparent; color: var(--ink-soft); cursor: pointer; font-size: 12px; padding: 6px 8px; font-family: inherit; }
+  .gdel-space { width: 44px; flex-shrink: 0; }
+  .gtag { color: #fff; border-radius: 10px; padding: 2px 8px; font-size: 11px; white-space: nowrap; }
+  th.chk-col, td.chk-col { width: 30px; text-align: center; }
+  th[data-col="grp"] { min-width: 70px; }
+  tbody tr.picked { background: var(--violet-soft); }
+  /* 納品数の入力欄 */
+  td.qty-cell { text-align: right; }
+  .qin { width: 64px; text-align: right; border: 1.5px solid #D9D1FF; border-radius: 6px; padding: 4px 6px; font-size: 13px; font-family: inherit; background: #fff; }
+  .qin:focus { outline: none; border-color: var(--violet); }
+  .qin.over { border-color: var(--coral); background: #FFE3E8; color: #B4123A; font-weight: 700; }
+  table.dense .qin { width: 54px; font-size: 12px; padding: 3px 4px; }
+  .blank-chk { display: flex; align-items: center; gap: 6px; font-size: 12px; margin: -2px 0 8px; cursor: pointer; }
 </style>
 </head>
 <body>
@@ -209,6 +256,10 @@
 <div class="card">
   <h2>📦 テンポスター × FBA 在庫比較</h2>
   <div class="muted" id="dataInfo"></div>
+  <div class="restore-banner" id="restoreBanner" style="display:none">
+    <span>💾 前回の作業内容（在庫補充レポート・入力済みの納品数・グループ）を自動的に復元しました。</span>
+    <button class="btn" id="clearSaved1">🗑 保存データをクリア</button>
+  </div>
   <div class="drop" id="drop" style="margin-top:12px">
     <div>Amazonの<b>在庫補充レポートCSV</b>をここにドラッグ、またはクリックして選択</div>
     <div class="muted">（セラーセントラル → 在庫 → 在庫補充 からダウンロードしたCSV）</div>
@@ -216,15 +267,21 @@
     <input type="file" id="fileInput" accept=".csv,text/csv" hidden>
   </div>
   <div class="err" id="err"></div>
+  <div class="save-row"><span id="saveStatus" class="muted"></span><button class="link-btn" id="clearSaved2">🗑 保存データをクリア</button></div>
 </div>
 
 <div id="main" style="display:none">
   <div class="stats" id="stats"></div>
   <div class="note">
     FBA在庫合計＝レポートの「販売可能な商品の合計」（在庫あり＋FC処理中＋出荷待ち＋FC移管中＋入荷待ち。販売不可は含まない）。
-    複数のAmazon SKUが同じ商品コードに紐づく場合は1行に合算しています。
-    各列見出しの ▼ で、Excelのように値を選んで絞り込めます。
+    各列見出しの ▼ で、Excelのように値を選んで絞り込めます（もう一度 ▼ を押すと閉じます）。
     画像や数値の欄をクリックすると在庫推移グラフが開きます（商品コード〜FNSKUの欄はコピー用のため、クリックしても開きません）。
+  </div>
+
+  <!-- 全件 / 納品数入力済み -->
+  <div class="mode-tabs" id="modeTabs">
+    <button data-m="list" class="on">📋 全件</button>
+    <button data-m="delivery">✏️ 納品数入力済み <span id="deliveryCount"></span></button>
   </div>
 
   <div class="card">
@@ -237,7 +294,37 @@
       <span class="hint" id="viewHint"></span>
     </div>
     <div class="cols" id="cols"></div>
+    <div class="presets" id="presets"></div>
     <div class="active-filters" id="activeFilters"></div>
+    <div class="actions">
+      <span id="deliveryDeleteBtns" style="display:none" class="act-group">
+        <button class="btn danger" id="delSelected">🗑 選択削除</button>
+        <button class="btn danger" id="delAll">🗑 一括削除（全件）</button>
+      </span>
+      <button class="btn" id="exportCsv">⬇ CSVエクスポート</button>
+      <input type="file" id="carryInput" accept=".csv,text/csv" hidden>
+      <button class="btn" id="importCsv">⬆ CSVインポート（引き継ぎ）</button>
+      <span class="muted" id="carryStatus"></span>
+      <button class="btn strong" id="stockDownCsv">⬇ 在庫を下げるCSV</button>
+    </div>
+  </div>
+
+  <!-- グループ（納品数入力済みタブのみ） -->
+  <div class="card group-panel" id="groupPanel" style="display:none">
+    <div class="group-tools">
+      <span class="muted">📦 グループ：</span>
+      <input type="text" id="newGroupName" placeholder="新しいグループ名">
+      <button class="btn" id="addGroup">＋ グループ追加</button>
+      <span class="sep">｜</span>
+      <span class="muted">チェックした行を</span>
+      <select id="assignGroup"></select>
+      <button class="btn" id="assignBtn">選択行を割り当て</button>
+    </div>
+    <div class="muted" style="margin-top:6px">
+      「⬇ Amazon納品ファイル」で、そのグループの納品数をAmazonの納品テンプレート（xlsx）にして出力します（1グループ＝1つの納品プラン）。
+      梱包・ラベル貼付の担当はどちらも Seller、賞味期限とメーカー梱包の欄は空欄で出力します。
+    </div>
+    <div id="groupChips" class="group-chips"></div>
   </div>
 
   <div class="wrap">
@@ -262,6 +349,7 @@
     { k: "a2",     l: "属性2名",          t: "text", def: true },
     { k: "asin",   l: "ASIN",             t: "mono", def: true },
     { k: "fnsku",  l: "FNSKU",            t: "mono" },
+    { k: "qty",    l: "納品数",           t: "qty",  def: true, fixed: true },
     { k: "fTotal", l: "FBA在庫合計",      t: "num",  def: true },
     { k: "fAvail", l: "在庫あり",         t: "num" },
     { k: "fProc",  l: "FC処理中",         t: "num" },
@@ -287,23 +375,39 @@
   const fmtDays = v => v == null || v === "" ? "" : (v >= DAYS_OVER ? "365+" : fmt(v));
   const ALERT = { out_of_stock: ["在庫切れ", "out"], low_stock: ["在庫少", "low"] };
   const VIEWS = [
+    { k: "all",     l: "すべて",   hint: "" },
     { k: "matched", l: "照合済み", hint: "" },
-    { k: "fbaOnly", l: "FBAのみ", hint: "テンポスターの在庫データに無い商品コードです。sku_master の登録漏れを確認してください。" },
+    { k: "fbaOnly", l: "FBAのみ",  hint: "テンポスターの在庫データに無い商品コードです。sku_master の登録漏れを確認してください。" },
+  ];
+  const DEFAULT_GROUPS = ["グループA", "グループB", "グループC", "グループD", "グループE"];
+  const GROUP_COLORS = ["#2563eb", "#059669", "#d97706", "#dc2626", "#7c3aed", "#0891b2", "#c2410c", "#4338ca", "#be185d", "#65a30d"];
+  // 絞り込みテンプレート（最初から入っているもの。消せない）
+  const BUILTIN_PRESETS = [
+    { id: "builtin-restock", name: "補充候補（在庫日数30日以下・販売あり）", builtin: true,
+      filters: { fDays: { max: 30, blank: true }, f30: { min: 1 } }, sortKey: "asku", sortDir: "asc" },
   ];
 
-  // shown: 表示する列（初期値は def:true の列）。filters: {列キー: {vals:Set(表示する値), min, max}}
-  const S = { data: null, view: "matched", kw: "", hideZero: false, sortKey: "fTotal", sortDir: "desc", page: 0,
-              shown: new Set(COLS.filter(c => c.def).map(c => c.k)), filters: {} };
+  // mode: list（全件）/ delivery（納品数入力済み）。絞り込み条件はタブごとに別々に持つ（ZOZO機能と同じ）
+  // qty / group: Amazon SKU → 納品数 / グループ名（CSVを読み込み直しても引き継ぐ）
+  const S = { data: null, rows: [], view: "all", mode: "list", kw: "", hideZero: false, sortKey: "fTotal", sortDir: "desc", page: 0,
+              shown: new Set(COLS.filter(c => c.def).map(c => c.k)), filtersBy: { list: {}, delivery: {} },
+              qty: {}, group: {}, groupList: DEFAULT_GROUPS.slice(), groupFilter: null, selected: new Set(),
+              rawCsv: null, fileName: "", userPresets: [] };
   try {
-    const saved = JSON.parse(localStorage.getItem("fbaCmpShown_v3") || "null");
+    const saved = JSON.parse(localStorage.getItem("fbaCmpShown_v4") || "null");
     if (Array.isArray(saved)) S.shown = new Set(saved.filter(k => COL[k]));
   } catch (e) {}
-  S.shown.add("code");
+  S.shown.add("code"); S.shown.add("qty");
+  try { S.userPresets = JSON.parse(localStorage.getItem("fbaCmpPresets_v1") || "[]") || []; } catch (e) { S.userPresets = []; }
+  const filters = () => S.filtersBy[S.mode];
 
   const $ = id => document.getElementById(id);
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const fmt = n => (n == null || n === "" || isNaN(n)) ? "" : Number(n).toLocaleString("ja-JP");
   const BLANK = "(空白)";
+  const today = () => { const d = new Date(); return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`; };
+  const qtyOf = r => { const q = S.qty[r.asku]; return q > 0 ? q : null; };
+  const groupColor = name => GROUP_COLORS[Math.max(0, S.groupList.indexOf(name)) % GROUP_COLORS.length];
 
   // ---------- 上部の情報 ----------
   const nTs = Object.keys(D.ts).length, nMaster = Object.keys(D.master).length;
@@ -335,13 +439,14 @@
   }
   const numOrNull = v => { const s = String(v == null ? "" : v).trim(); if (s === "") return null; const n = Number(s.replace(/,/g, "")); return isNaN(n) ? null : n; };
 
+  // 1行＝1つのAmazon SKU（納品テンプレートはAmazon SKU単位で書くため）
   function buildData(rows) {
     const head = rows[0].map(h => h.trim());
     const ix = name => head.indexOf(name);
     if (ix("Merchant SKU") < 0) throw new Error("「Merchant SKU」列が見つかりません。在庫補充レポートのCSVか確認してください。");
     const get = (r, name) => { const i = ix(name); return i < 0 ? "" : (r[i] == null ? "" : String(r[i]).trim()); };
 
-    const byCode = new Map();
+    const bySku = new Map();
     let nRows = 0, nConv = 0;
     for (let ri = 1; ri < rows.length; ri++) {
       const r = rows[ri];
@@ -350,64 +455,67 @@
       nRows++;
       const mapped = D.master[sku];
       if (mapped) nConv++;
-      const code = mapped || sku;
-      let o = byCode.get(code);
-      if (!o) {
-        o = { code, asku: [], aname: [], asin: [], fnsku: [], alert: [], fRec: null, fDays: null };
+      let o = bySku.get(sku);
+      if (!o) {    // 同じAmazon SKUの行が複数ある場合は合算（通常は1行）
+        o = { asku: sku, code: mapped || sku, asin: get(r, "ASIN"), fnsku: get(r, "FNSKU"), aname: get(r, "商品名"),
+              alert: get(r, "注意"), fRec: null, fDays: null };
         for (const k in NUM_SRC) if (k !== "fRec") o[k] = 0;
-        byCode.set(code, o);
+        bySku.set(sku, o);
       }
-      const push = (arr, v) => { if (v && !arr.includes(v)) arr.push(v); };
-      push(o.asku, sku); push(o.aname, get(r, "商品名")); push(o.asin, get(r, "ASIN")); push(o.fnsku, get(r, "FNSKU")); push(o.alert, get(r, "注意"));
       for (const k in NUM_SRC) {
         const n = numOrNull(get(r, NUM_SRC[k]));
         if (k === "fRec") { if (n != null) o.fRec = (o.fRec || 0) + n; }
         else o[k] += n || 0;
       }
-      // 複数のAmazon SKUが同じ商品コードに紐づく場合、在庫日数は合算できないため一番長い値を採用
       const days = parseDays(get(r, DAYS_SRC));
       if (days != null) o.fDays = o.fDays == null ? days : Math.max(o.fDays, days);
     }
 
-    const matched = [], fbaOnly = [];
-    let fbaSum = 0, tsSumMatched = 0;
-    byCode.forEach(o => {
+    const all = [];
+    let fbaSum = 0, nMatched = 0;
+    const matchedCodes = new Set();
+    bySku.forEach(o => {
       const t = D.ts[o.code];   // [現在庫, 商品基本コード, 属性1名, 属性2名]
-      const rec = { code: o.code, asku: o.asku.join(" / "), asin: o.asin.join(" / "), fnsku: o.fnsku.join(" / "),
-                    alert: o.alert[0] || "", fRec: o.fRec, fDays: o.fDays };
-      for (const k in NUM_SRC) if (k !== "fRec") rec[k] = o[k];
+      const rec = Object.assign({}, o);
       fbaSum += rec.fTotal;
       if (t) {
+        rec.matched = true; nMatched++;
         rec.tStock = t[0]; rec.base = t[1]; rec.a1 = t[2]; rec.a2 = t[3];
-        rec.name = D.names[t[1]] || o.aname[0] || "";
+        rec.name = D.names[t[1]] || o.aname || "";
         rec.img = (t[1] && D.img[t[1]]) || "";
-        tsSumMatched += t[0];
-        matched.push(rec);
+        matchedCodes.add(o.code);
       } else {
-        rec.tStock = null; rec.name = o.aname[0] || ""; rec.img = ""; rec.a1 = ""; rec.a2 = "";
-        fbaOnly.push(rec);
+        rec.matched = false;
+        rec.tStock = null; rec.name = o.aname || ""; rec.img = ""; rec.a1 = ""; rec.a2 = "";
       }
+      all.push(rec);
     });
-    return { matched, fbaOnly, nRows, nConv, fbaSum, tsSumMatched };
+    // 同じ商品コードに複数のAmazon SKUが紐づいていても、テンポスター在庫は1回だけ数える
+    let tsSumMatched = 0;
+    matchedCodes.forEach(c => { tsSumMatched += D.ts[c][0]; });
+    return { all, nRows, nConv, fbaSum, tsSumMatched, nMatched, nFbaOnly: all.length - nMatched };
   }
 
-  function loadFile(file) {
+  function loadText(text, fileName, fromRestore) {
     $("err").textContent = "";
-    $("fileName").textContent = file.name;
+    $("fileName").textContent = fileName || "";
+    try {
+      const rows = parseCSV(text);
+      if (rows.length < 2) throw new Error("CSVにデータ行がありません。");
+      S.data = buildData(rows);
+      S.rawCsv = text; S.fileName = fileName || "";
+      S.page = 0; S.selected.clear();
+      $("main").style.display = "";
+      renderStats(); renderControls(); renderGroupPanel(); renderTable();
+      if (!fromRestore) autosave();
+    } catch (e) {
+      $("err").textContent = "読み込みエラー：" + e.message;
+      $("main").style.display = "none";
+    }
+  }
+  function loadFile(file) {
     const fr = new FileReader();
-    fr.onload = () => {
-      try {
-        const rows = parseCSV(decode(fr.result));
-        if (rows.length < 2) throw new Error("CSVにデータ行がありません。");
-        S.data = buildData(rows);
-        S.page = 0; S.filters = {};
-        $("main").style.display = "";
-        renderStats(); renderControls(); renderTable();
-      } catch (e) {
-        $("err").textContent = "読み込みエラー：" + e.message;
-        $("main").style.display = "none";
-      }
-    };
+    fr.onload = () => loadText(decode(fr.result), file.name, false);
     fr.readAsArrayBuffer(file);
   }
   const drop = $("drop"), fileInput = $("fileInput");
@@ -417,13 +525,59 @@
   ["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
   drop.addEventListener("drop", e => { const f = e.dataTransfer.files[0]; if (f) loadFile(f); });
 
+  // ---------- 自動保存（ZOZO機能と同じく、同じ日のうちは開き直しても復元する） ----------
+  const AUTOSAVE_KEY = "fba_cmp_autosave_v1";
+  let saveTimer = null;
+  function autosave(delay) {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      try {
+        const state = { rawCsv: S.rawCsv, fileName: S.fileName, qty: S.qty, group: S.group, groupList: S.groupList,
+                        savedAt: new Date().toISOString() };
+        localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(state));
+        showSaveStatus(state.savedAt, false);
+      } catch (e) { showSaveStatus(null, true); }
+    }, delay == null ? 300 : delay);
+  }
+  function showSaveStatus(iso, failed) {
+    const el = $("saveStatus");
+    if (failed) { el.textContent = "⚠ データが大きすぎるなどの理由で自動保存できませんでした"; el.style.color = "var(--coral)"; return; }
+    if (!iso) { el.textContent = ""; return; }
+    const d = new Date(iso);
+    el.textContent = `💾 自動保存済み（最終: ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}）`;
+    el.style.color = "";
+  }
+  function clearSaved() {
+    if (!confirm("このブラウザに保存されている自動復元用データを削除します。今の画面の内容はそのまま残ります。よろしいですか？")) return;
+    try { localStorage.removeItem(AUTOSAVE_KEY); } catch (e) {}
+    showSaveStatus(null, false);
+    $("restoreBanner").style.display = "none";
+  }
+  $("clearSaved1").addEventListener("click", clearSaved);
+  $("clearSaved2").addEventListener("click", clearSaved);
+  function restore() {
+    let st = null;
+    try { st = JSON.parse(localStorage.getItem(AUTOSAVE_KEY) || "null"); } catch (e) { st = null; }
+    if (!st) return;
+    const saved = new Date(st.savedAt), now = new Date();
+    const sameDay = saved.getFullYear() === now.getFullYear() && saved.getMonth() === now.getMonth() && saved.getDate() === now.getDate();
+    if (!sameDay) { try { localStorage.removeItem(AUTOSAVE_KEY); } catch (e) {} return; }   // 日をまたいだら破棄
+    S.qty = st.qty || {}; S.group = st.group || {};
+    if (Array.isArray(st.groupList) && st.groupList.length) S.groupList = st.groupList;
+    if (st.rawCsv) {
+      loadText(st.rawCsv, (st.fileName || "") + "（自動保存から復元）", true);
+      $("restoreBanner").style.display = "flex";
+    }
+    showSaveStatus(st.savedAt, false);
+  }
+
   // ---------- サマリー ----------
   function renderStats() {
     const d = S.data;
     const items = [
       ["FBA 商品数（CSV行）", d.nRows, "", `うち sku_master で変換 ${fmt(d.nConv)} 件`],
-      ["照合済み", d.matched.length, "v"],
-      ["FBAのみ", d.fbaOnly.length, "a"],
+      ["照合済み", d.nMatched, "v"],
+      ["FBAのみ", d.nFbaOnly, "a"],
       ["FBA在庫合計", d.fbaSum, "v"],
       ["テンポスター在庫（照合済み分）", d.tsSumMatched, "m"],
     ];
@@ -433,30 +587,48 @@
 
   // ---------- 操作パネル ----------
   const curView = () => VIEWS.find(v => v.k === S.view);
+  const viewCount = k => k === "all" ? S.data.all.length : (k === "matched" ? S.data.nMatched : S.data.nFbaOnly);
   function renderControls() {
     $("seg").innerHTML = VIEWS.map(v =>
-      `<button data-v="${v.k}" class="${v.k === S.view ? "on" : ""}">${esc(v.l)}（${fmt(S.data[v.k].length)}）</button>`).join("");
+      `<button data-v="${v.k}" class="${v.k === S.view ? "on" : ""}">${esc(v.l)}（${fmt(viewCount(v.k))}）</button>`).join("");
     $("hideZero").checked = S.hideZero;
     $("viewHint").textContent = curView().hint;
     $("cols").innerHTML = COLS.filter(c => !c.fixed).map(c =>
       `<span class="chip ${S.shown.has(c.k) ? "on" : ""}" data-k="${c.k}">${esc(c.l)}</span>`).join("");
+    $("modeTabs").querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.m === S.mode));
+    $("deliveryDeleteBtns").style.display = S.mode === "delivery" ? "" : "none";
+    $("groupPanel").style.display = S.mode === "delivery" ? "" : "none";
+    renderPresets();
     renderActiveFilters();
+    updateDeliveryCount();
   }
   function renderActiveFilters() {
-    const keys = Object.keys(S.filters);
+    const fs = filters(), keys = Object.keys(fs);
     $("clearFilters").style.display = keys.length ? "" : "none";
     $("activeFilters").innerHTML = keys.map(k => {
-      const f = S.filters[k], parts = [];
+      const f = fs[k], parts = [];
       if (f.vals) parts.push(`${fmt(f.vals.size)}件の値`);
       if (f.min != null) parts.push(`${fmt(f.min)}以上`);
       if (f.max != null) parts.push(`${fmt(f.max)}以下`);
+      if (f.blank && (f.min != null || f.max != null)) parts.push("空白含む");
       return `<span class="af">${esc(COL[k].l)}：${parts.join("・")}<button data-k="${k}" title="解除">×</button></span>`;
     }).join("");
+  }
+  function updateDeliveryCount() {
+    if (!S.data) return;
+    const n = S.data.all.filter(r => qtyOf(r)).length;
+    $("deliveryCount").textContent = n ? `（${fmt(n)}）` : "";
   }
   $("seg").addEventListener("click", e => {
     const b = e.target.closest("button"); if (!b) return;
     S.view = b.dataset.v; S.page = 0;
     renderControls(); renderTable();
+  });
+  $("modeTabs").addEventListener("click", e => {
+    const b = e.target.closest("button[data-m]"); if (!b || b.dataset.m === S.mode) return;
+    S.mode = b.dataset.m; S.page = 0; S.selected.clear(); S.groupFilter = null;
+    closeFilter();
+    renderControls(); renderGroupPanel(); renderTable();
   });
   $("kw").addEventListener("input", e => { S.kw = e.target.value.trim().toLowerCase(); S.page = 0; renderTable(); });
   $("hideZero").addEventListener("change", e => { S.hideZero = e.target.checked; S.page = 0; renderTable(); });
@@ -465,23 +637,79 @@
     const c = e.target.closest(".chip"); if (!c) return;
     const k = c.dataset.k;
     S.shown.has(k) ? S.shown.delete(k) : S.shown.add(k);
-    try { localStorage.setItem("fbaCmpShown_v3", JSON.stringify([...S.shown])); } catch (err) {}
+    try { localStorage.setItem("fbaCmpShown_v4", JSON.stringify([...S.shown])); } catch (err) {}
     renderControls(); renderTable();
   });
-  $("clearFilters").addEventListener("click", () => { S.filters = {}; S.page = 0; renderControls(); renderTable(); });
+  $("clearFilters").addEventListener("click", () => { S.filtersBy[S.mode] = {}; S.page = 0; renderControls(); renderTable(); });
   $("activeFilters").addEventListener("click", e => {
     const b = e.target.closest("button[data-k]"); if (!b) return;
-    delete S.filters[b.dataset.k]; S.page = 0; renderControls(); renderTable();
+    delete filters()[b.dataset.k]; S.page = 0; renderControls(); renderTable();
   });
 
-  const isNumCol = c => c.t === "num" || c.t === "days";
+  // ---------- 絞り込みテンプレート ----------
+  const allPresets = () => BUILTIN_PRESETS.concat(S.userPresets);
+  function renderPresets() {
+    $("presets").innerHTML = `<span class="muted">⭐ 絞り込みテンプレート：</span>` +
+      allPresets().map(p => `<span class="preset"><button class="preset-btn" data-p="${esc(p.id)}" title="この条件で絞り込む">${esc(p.name)}</button>` +
+        (p.builtin ? "" : `<button class="preset-del" data-del="${esc(p.id)}" title="このテンプレートを削除">×</button>`) + `</span>`).join("") +
+      `<button class="link-btn" id="savePreset">＋ 今の条件をテンプレートに保存</button>`;
+  }
+  function serializeFilters(fs) {
+    const out = {};
+    for (const k in fs) {
+      const f = fs[k], o = {};
+      if (f.vals) o.vals = [...f.vals];
+      if (f.min != null) o.min = f.min;
+      if (f.max != null) o.max = f.max;
+      if (f.blank) o.blank = true;
+      out[k] = o;
+    }
+    return out;
+  }
+  function applyFilterPreset(p) {
+    const fs = {};
+    for (const k in p.filters) {
+      if (!COL[k]) continue;
+      const f = Object.assign({}, p.filters[k]);
+      if (f.vals) f.vals = new Set(f.vals);
+      fs[k] = f;
+    }
+    S.filtersBy[S.mode] = fs;
+    if (p.sortKey && COL[p.sortKey]) { S.sortKey = p.sortKey; S.sortDir = p.sortDir || "asc"; }
+    S.page = 0;
+    renderControls(); renderTable();
+  }
+  $("presets").addEventListener("click", e => {
+    const pb = e.target.closest("button[data-p]");
+    if (pb) { const p = allPresets().find(x => x.id === pb.dataset.p); if (p) applyFilterPreset(p); return; }
+    const db = e.target.closest("button[data-del]");
+    if (db) {
+      const p = S.userPresets.find(x => x.id === db.dataset.del); if (!p) return;
+      if (!confirm(`テンプレート「${p.name}」を削除します。よろしいですか？`)) return;
+      S.userPresets = S.userPresets.filter(x => x.id !== p.id);
+      try { localStorage.setItem("fbaCmpPresets_v1", JSON.stringify(S.userPresets)); } catch (err) {}
+      renderPresets(); return;
+    }
+    if (e.target.id === "savePreset") {
+      const fs = filters();
+      if (!Object.keys(fs).length) { alert("保存する絞り込み条件がありません。先に列見出しの ▼ で絞り込んでください。"); return; }
+      const name = (prompt("テンプレート名を入力してください（今の絞り込み条件と並び順を保存します）") || "").trim();
+      if (!name) return;
+      S.userPresets.push({ id: "u" + Date.now(), name, filters: serializeFilters(fs), sortKey: S.sortKey, sortDir: S.sortDir });
+      try { localStorage.setItem("fbaCmpPresets_v1", JSON.stringify(S.userPresets)); } catch (err) {}
+      renderPresets();
+    }
+  });
+
+  const isNumCol = c => c.t === "num" || c.t === "days" || c.t === "qty";
   // ダブルクリックでコピーすることがある列（クリックしてもグラフを開かない）
   const COPY_COLS = new Set(["code", "asku", "name", "a1", "a2", "asin", "fnsku"]);
   const shownCols = () => COLS.filter(c => S.shown.has(c.k));
+  const val = (r, k) => k === "qty" ? qtyOf(r) : (k === "grp" ? (S.group[r.asku] || null) : r[k]);
 
   // ---------- 絞り込み・並び替え ----------
   const cellKey = (r, k) => {          // フィルターで使う「値」（空欄は (空白)）
-    const v = r[k];
+    const v = val(r, k);
     if (v == null || v === "") return BLANK;
     if (k === "alert") return ALERT[v] ? ALERT[v][0] : String(v);
     return String(v);
@@ -489,8 +717,8 @@
   function passFilter(r, k, f) {
     if (f.vals && !f.vals.has(cellKey(r, k))) return false;
     if (f.min != null || f.max != null) {
-      const v = r[k];
-      if (v == null || v === "") return false;
+      const v = val(r, k);
+      if (v == null || v === "") return !!f.blank;   // 「空白も含める」がオンなら空欄も表示
       if (f.min != null && v < f.min) return false;
       if (f.max != null && v > f.max) return false;
     }
@@ -498,20 +726,28 @@
   }
   // exceptKey を指定すると、その列のフィルターだけ無視した結果を返す（Excelと同じく、値リストは他の列の絞り込みを反映）
   function baseRows(exceptKey) {
-    let rows = S.data[S.view];
+    let rows = S.data.all;
+    if (S.view === "matched") rows = rows.filter(r => r.matched);
+    else if (S.view === "fbaOnly") rows = rows.filter(r => !r.matched);
+    if (S.mode === "delivery") {
+      rows = rows.filter(r => qtyOf(r));
+      if (S.groupFilter === "__none__") rows = rows.filter(r => !S.group[r.asku]);
+      else if (S.groupFilter) rows = rows.filter(r => S.group[r.asku] === S.groupFilter);
+    }
     if (S.hideZero) rows = rows.filter(r => (r.fTotal || 0) > 0);
     if (S.kw) {
       const kw = S.kw;
       rows = rows.filter(r => ["code", "asku", "name", "asin", "fnsku", "base"].some(k => r[k] && String(r[k]).toLowerCase().includes(kw)));
     }
-    for (const k in S.filters) if (k !== exceptKey) rows = rows.filter(r => passFilter(r, k, S.filters[k]));
+    const fs = filters();
+    for (const k in fs) if (k !== exceptKey) rows = rows.filter(r => passFilter(r, k, fs[k]));
     return rows;
   }
   function sortRows(rows) {
     const k = S.sortKey, dir = S.sortDir === "asc" ? 1 : -1;
     const isNum = COL[k] && isNumCol(COL[k]);
     return rows.slice().sort((a, b) => {
-      const x = a[k], y = b[k];
+      const x = val(a, k), y = val(b, k);
       const xn = x == null || x === "", yn = y == null || y === "";
       if (xn && yn) return 0; if (xn) return 1; if (yn) return -1;     // 空欄は常に最後
       if (isNum) return (x - y) * dir;
@@ -520,10 +756,17 @@
   }
 
   // ---------- 一覧 ----------
+  const overStock = (r, q) => q > 0 && r.tStock != null && q > r.tStock;
   function cell(c, r) {
     const v = r[c.k];
     switch (c.t) {
       case "img": return `<td>${v ? `<img src="${esc(v)}" loading="lazy" alt="">` : ""}</td>`;
+      case "qty": {
+        const q = qtyOf(r);
+        const over = overStock(r, q);
+        return `<td class="qty-cell"><input type="number" min="0" step="1" class="qin ${over ? "over" : ""}" data-sku="${esc(r.asku)}" value="${q == null ? "" : q}" placeholder="—"` +
+          ` title="${over ? `テンポスター在庫（${fmt(r.tStock)}）を超えています` : ""}"></td>`;
+      }
       case "num":
         if (v == null || v === "") return `<td class="num"></td>`;
         return `<td class="num ${v === 0 ? "zero" : ""}">${fmt(v)}</td>`;
@@ -540,23 +783,37 @@
   let pageRows = [];
   function renderTable() {
     const cols = shownCols();
-    $("thead").closest("table").classList.toggle("dense", cols.length > 13);
-    $("thead").innerHTML = "<tr>" + cols.map(c => {
-      const sorted = S.sortKey === c.k;
-      const filt = c.t !== "img"
-        ? `<button class="fbtn ${S.filters[c.k] ? "on" : ""}" data-f="${c.k}" title="絞り込み">${S.filters[c.k] ? "▼●" : "▼"}</button>` : "";
-      return `<th data-col="${c.k}" class="${isNumCol(c) ? "num" : ""} ${sorted ? "sorted" : ""}"><div class="th-in">` +
-        `<span class="lab" data-k="${c.k}">${esc(c.l)}<span class="ar">${sorted ? (S.sortDir === "asc" ? "▲" : "▼") : ""}</span></span>${filt}</div></th>`;
-    }).join("") + "</tr>";
-
+    const dmode = S.mode === "delivery";
+    $("thead").closest("table").classList.toggle("dense", cols.length + (dmode ? 2 : 0) > 13);
+    const fs = filters();
     const rows = sortRows(baseRows());
     const pages = Math.max(1, Math.ceil(rows.length / PAGE));
     if (S.page >= pages) S.page = pages - 1;
     pageRows = rows.slice(S.page * PAGE, (S.page + 1) * PAGE);
 
+    const allChecked = dmode && pageRows.length > 0 && pageRows.every(r => S.selected.has(r.asku));
+    $("thead").innerHTML = "<tr>" +
+      (dmode ? `<th class="chk-col"><input type="checkbox" id="selAll" ${allChecked ? "checked" : ""} title="表示中の行をすべて選択"></th><th data-col="grp"><div class="th-in">グループ</div></th>` : "") +
+      cols.map(c => {
+        const sorted = S.sortKey === c.k;
+        const filt = c.t !== "img"
+          ? `<button class="fbtn ${fs[c.k] ? "on" : ""}" data-f="${c.k}" title="絞り込み">${fs[c.k] ? "▼●" : "▼"}</button>` : "";
+        return `<th data-col="${c.k}" class="${isNumCol(c) ? "num" : ""} ${sorted ? "sorted" : ""}"><div class="th-in">` +
+          `<span class="lab" data-k="${c.k}">${esc(c.l)}<span class="ar">${sorted ? (S.sortDir === "asc" ? "▲" : "▼") : ""}</span></span>${filt}</div></th>`;
+      }).join("") + "</tr>";
+
+    const colCount = cols.length + (dmode ? 2 : 0);
     $("tbody").innerHTML = pageRows.length
-      ? pageRows.map((r, i) => `<tr class="r" data-i="${i}">` + cols.map(c => cell(c, r)).join("") + "</tr>").join("")
-      : `<tr><td colspan="${cols.length}" class="empty">該当する商品がありません</td></tr>`;
+      ? pageRows.map((r, i) => {
+          let pre = "";
+          if (dmode) {
+            const g = S.group[r.asku];
+            pre = `<td class="chk-col"><input type="checkbox" class="rowchk" data-sku="${esc(r.asku)}" ${S.selected.has(r.asku) ? "checked" : ""}></td>` +
+              `<td>${g ? `<span class="gtag" style="background:${groupColor(g)}">${esc(g)}</span>` : `<span class="muted">未グループ</span>`}</td>`;
+          }
+          return `<tr class="r ${dmode && S.selected.has(r.asku) ? "picked" : ""}" data-i="${i}">` + pre + cols.map(c => cell(c, r)).join("") + "</tr>";
+        }).join("")
+      : `<tr><td colspan="${colCount}" class="empty">${dmode ? "納品数が入力された商品がありません" : "該当する商品がありません"}</td></tr>`;
 
     const from = rows.length ? S.page * PAGE + 1 : 0, to = Math.min(rows.length, (S.page + 1) * PAGE);
     $("pager").innerHTML =
@@ -564,6 +821,7 @@
       `<span>${S.page + 1} / ${pages} ページ</span>` +
       `<button class="btn" data-p="1" ${S.page >= pages - 1 ? "disabled" : ""}>次へ →</button>` +
       `<span class="sp">${fmt(rows.length)} 件中 ${fmt(from)}–${fmt(to)} 件</span>`;
+    updateDeliveryCount();
     scheduleSticky();
   }
 
@@ -618,7 +876,16 @@
 
   $("thead").addEventListener("click", e => {
     const fb = e.target.closest(".fbtn");
-    if (fb) { e.stopPropagation(); openFilter(fb.dataset.f, fb); return; }
+    if (fb) {
+      e.stopPropagation();
+      // 同じ列の ▼ をもう一度押したら閉じる
+      if (fState && fState.k === fb.dataset.f) closeFilter(); else openFilter(fb.dataset.f, fb);
+      return;
+    }
+    if (e.target.id === "selAll") {
+      pageRows.forEach(r => e.target.checked ? S.selected.add(r.asku) : S.selected.delete(r.asku));
+      renderTable(); return;
+    }
     const lab = e.target.closest(".lab"); if (!lab) return;
     const k = lab.dataset.k;
     if (S.sortKey === k) S.sortDir = S.sortDir === "asc" ? "desc" : "asc";
@@ -631,14 +898,282 @@
     $("thead").scrollIntoView({ block: "start" });
   });
   $("tbody").addEventListener("click", e => {
-    // 商品コード〜FNSKUの欄（コピー用）や、文字を選択した直後はグラフを開かない
+    if (e.target.closest("input, button, select, a")) {
+      const cb = e.target.closest(".rowchk");
+      if (cb) { cb.checked ? S.selected.add(cb.dataset.sku) : S.selected.delete(cb.dataset.sku); cb.closest("tr").classList.toggle("picked", cb.checked); }
+      return;
+    }
+    // 商品コード〜FNSKUの欄（コピー用）や、文字を選択した直後は何もしない
     if (e.target.closest(".cell-text")) return;
     const sel = window.getSelection ? window.getSelection() : null;
     if (sel && sel.toString().length > 0) return;
     const tr = e.target.closest("tr.r"); if (!tr) return;
     const r = pageRows[Number(tr.dataset.i)]; if (!r) return;
+    if (S.mode === "delivery") {
+      // 納品数入力済みタブでは、行クリックでチェックを付け外し（ZOZO機能と同じ）
+      S.selected.has(r.asku) ? S.selected.delete(r.asku) : S.selected.add(r.asku);
+      const cb = tr.querySelector(".rowchk"); if (cb) cb.checked = S.selected.has(r.asku);
+      tr.classList.toggle("picked", S.selected.has(r.asku));
+      return;
+    }
     openStockModal(r);
   });
+
+  // ---------- 納品数の入力 ----------
+  const rowBySku = sku => S.data.all.find(r => r.asku === sku);
+  $("tbody").addEventListener("focusin", e => {
+    if (e.target.classList.contains("qin")) e.target.dataset.prev = e.target.value;
+  });
+  $("tbody").addEventListener("input", e => {
+    const inp = e.target; if (!inp.classList.contains("qin")) return;
+    const r = rowBySku(inp.dataset.sku); if (!r) return;
+    const n = inp.value === "" ? null : Math.max(0, parseInt(inp.value, 10) || 0);
+    if (n) S.qty[r.asku] = n; else delete S.qty[r.asku];
+    const over = overStock(r, n);
+    inp.classList.toggle("over", over);
+    inp.title = over ? `テンポスター在庫（${fmt(r.tStock)}）を超えています` : "";
+    updateDeliveryCount();
+    autosave(600);
+  });
+  // 入力を確定したとき（Enter・欄の外をクリック）に、テンポスター在庫を超えていたら確認する
+  $("tbody").addEventListener("change", e => {
+    const inp = e.target; if (!inp.classList.contains("qin")) return;
+    const r = rowBySku(inp.dataset.sku); if (!r) return;
+    const n = qtyOf(r);
+    if (overStock(r, n)) {
+      const ok = confirm(`納品数（${fmt(n)}）がテンポスター在庫（${fmt(r.tStock)}）を超えています。\n\n` +
+                         `Amazon SKU：${r.asku}\n商品コード：${r.code}\n\nこのまま入力しますか？`);
+      if (!ok) {
+        const prev = inp.dataset.prev || "";
+        inp.value = prev;
+        const p = prev === "" ? null : Math.max(0, parseInt(prev, 10) || 0);
+        if (p) S.qty[r.asku] = p; else delete S.qty[r.asku];
+        const over = overStock(r, p);
+        inp.classList.toggle("over", over);
+        updateDeliveryCount();
+        autosave();
+        return;
+      }
+    }
+    inp.dataset.prev = inp.value;
+    if (S.mode === "delivery") renderGroupPanel();
+  });
+
+  // ---------- 納品数入力済み：選択削除・一括削除 ----------
+  $("delSelected").addEventListener("click", () => {
+    const targets = [...S.selected].filter(sku => S.qty[sku]);
+    if (!targets.length) { alert("削除する行が選択されていません。"); return; }
+    if (!confirm(`選択した${targets.length}件の納品数入力を削除します。よろしいですか？`)) return;
+    targets.forEach(sku => { delete S.qty[sku]; });
+    S.selected.clear();
+    renderGroupPanel(); renderTable(); autosave();
+  });
+  $("delAll").addEventListener("click", () => {
+    const targets = S.data.all.filter(r => qtyOf(r));
+    if (!targets.length) { alert("納品数が入力された行がありません。"); return; }
+    if (!confirm(`「納品数入力済み」の${targets.length}件をすべて削除します。よろしいですか？`)) return;
+    targets.forEach(r => { delete S.qty[r.asku]; });
+    S.selected.clear();
+    renderGroupPanel(); renderTable(); autosave();
+  });
+
+  // ---------- グループ ----------
+  function renderGroupPanel() {
+    if (!S.data) return;
+    $("assignGroup").innerHTML = `<option value="__none__">－ 未グループに戻す －</option>` +
+      S.groupList.map(g => `<option value="${esc(g)}">${esc(g)}</option>`).join("");
+    const rows = S.data.all.filter(r => qtyOf(r));
+    const count = g => rows.filter(r => g === "__none__" ? !S.group[r.asku] : S.group[r.asku] === g).length;
+    const qsum = g => rows.filter(r => g === "__none__" ? !S.group[r.asku] : S.group[r.asku] === g).reduce((s, r) => s + qtyOf(r), 0);
+    const chip = (key, label, deletable) => {
+      const color = key === "__none__" ? "#9ca3af" : groupColor(key);
+      const active = S.groupFilter === key;
+      return `<div class="gchip ${active ? "active" : ""}" style="--gc:${color}">` +
+        `<span class="gdot"></span>` +
+        `<span class="gname" data-gf="${esc(key)}" title="クリックでこのグループだけ表示／解除">${esc(label)} <span class="muted">（${fmt(count(key))}件・${fmt(qsum(key))}点）</span>${active ? " ✓ 表示中" : ""}</span>` +
+        `<button class="gdl" data-dl="${esc(key)}">⬇ Amazon納品ファイル</button>` +
+        (deletable ? `<button class="gdel" data-gdel="${esc(key)}" title="グループを削除">削除</button>` : `<span class="gdel-space"></span>`) +
+        `</div>`;
+    };
+    let html = "";
+    if (rows.length) html += chip("__none__", "未グループ", false);
+    S.groupList.forEach(g => { html += chip(g, g, true); });
+    if (S.groupFilter !== null) html += `<div><button class="link-btn" data-gf="__all__">すべて表示に戻す</button></div>`;
+    $("groupChips").innerHTML = html;
+  }
+  $("addGroup").addEventListener("click", () => {
+    const name = $("newGroupName").value.trim();
+    if (!name) { alert("グループ名を入力してください。"); return; }
+    if (name === "__none__" || name === "__all__") { alert("その名前は使用できません。"); return; }
+    if (S.groupList.includes(name)) { alert("同じ名前のグループが既にあります。"); return; }
+    S.groupList.push(name); $("newGroupName").value = "";
+    renderGroupPanel(); autosave();
+  });
+  $("assignBtn").addEventListener("click", () => {
+    const targets = [...S.selected].filter(sku => S.qty[sku]);
+    if (!targets.length) { alert("割り当てる行が選択されていません。チェックボックスで対象行を選んでください。"); return; }
+    const g = $("assignGroup").value;
+    targets.forEach(sku => { if (g === "__none__") delete S.group[sku]; else S.group[sku] = g; });
+    S.selected.clear();
+    renderGroupPanel(); renderTable(); autosave();
+  });
+  $("groupChips").addEventListener("click", e => {
+    const gf = e.target.closest("[data-gf]");
+    if (gf) {
+      const k = gf.dataset.gf;
+      S.groupFilter = (k === "__all__" || S.groupFilter === k) ? null : k;
+      S.page = 0; renderGroupPanel(); renderTable(); return;
+    }
+    const dl = e.target.closest("[data-dl]");
+    if (dl) { downloadAmazonFile(dl.dataset.dl); return; }
+    const del = e.target.closest("[data-gdel]");
+    if (del) {
+      const name = del.dataset.gdel;
+      if (!confirm(`グループ「${name}」を削除します（所属する行は未グループに戻ります）。よろしいですか？`)) return;
+      Object.keys(S.group).forEach(sku => { if (S.group[sku] === name) delete S.group[sku]; });
+      S.groupList = S.groupList.filter(g => g !== name);
+      if (S.groupFilter === name) S.groupFilter = null;
+      renderGroupPanel(); renderTable(); autosave();
+    }
+  });
+
+  // ---------- ダウンロード共通 ----------
+  function downloadBlob(blob, filename) {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  }
+  const csvCell = v => { const s = v == null ? "" : String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+  const loadedScripts = {};
+  function loadScript(url) {
+    if (!loadedScripts[url]) {
+      loadedScripts[url] = new Promise((resolve, reject) => {
+        const sc = document.createElement("script");
+        sc.src = url; sc.onload = resolve; sc.onerror = () => { delete loadedScripts[url]; reject(new Error("load failed: " + url)); };
+        document.head.appendChild(sc);
+      });
+    }
+    return loadedScripts[url];
+  }
+
+  // ---------- CSVエクスポート／インポート（作業の引き継ぎ） ----------
+  $("exportCsv").addEventListener("click", () => {
+    const rows = sortRows(baseRows());
+    const head = ["Amazon SKU", "商品コード", "商品名", "属性1名", "属性2名", "ASIN", "FNSKU", "FBA在庫合計", "過去30日販売数",
+                  "在庫日数（受領中含む）", "Amazon推奨補充数", "テンポスター現在庫", "納品数(入力)", "グループ"];
+    const body = rows.map(r => [r.asku, r.code, r.name, r.a1, r.a2, r.asin, r.fnsku, r.fTotal, r.f30, fmtDays(r.fDays),
+      r.fRec, r.tStock, qtyOf(r), S.group[r.asku] || ""].map(csvCell).join(","));
+    downloadBlob(new Blob(["﻿" + head.join(",") + "\n" + body.join("\n")], { type: "text/csv" }), `FBA納品数_${today()}.csv`);
+  });
+  $("importCsv").addEventListener("click", () => $("carryInput").click());
+  $("carryInput").addEventListener("change", e => {
+    const file = e.target.files[0]; e.target.value = "";
+    if (!file) return;
+    const fr = new FileReader();
+    fr.onload = () => {
+      const rows = parseCSV(decode(fr.result));
+      const head = (rows[0] || []).map(h => h.trim());
+      const iSku = head.indexOf("Amazon SKU"), iQty = head.indexOf("納品数(入力)"), iGrp = head.indexOf("グループ");
+      if (iSku < 0 || (iQty < 0 && iGrp < 0)) {
+        alert("引き継ぎ用のCSVとして認識できませんでした。\n検出された列名: " + head.join(", ") +
+              "\n\n「⬇ CSVエクスポート」で出力したファイルをそのまま読み込んでください。");
+        return;
+      }
+      let n = 0;
+      rows.slice(1).forEach(r => {
+        const sku = (r[iSku] || "").trim(); if (!sku) return;
+        const q = iQty >= 0 ? parseInt((r[iQty] || "").trim(), 10) : NaN;
+        const g = iGrp >= 0 ? (r[iGrp] || "").trim() : "";
+        if (q > 0) { S.qty[sku] = q; n++; }
+        if (g) { S.group[sku] = g; if (!S.groupList.includes(g)) S.groupList.push(g); }
+      });
+      $("carryStatus").textContent = `✓ ${file.name} を反映しました（納品数 ${fmt(n)} 件）`;
+      renderControls(); renderGroupPanel(); renderTable(); autosave();
+    };
+    fr.readAsArrayBuffer(file);
+  });
+
+  // ---------- 在庫を下げるCSV（テンポスター用：商品コード,想定在庫数＝−納品数。Shift-JIS） ----------
+  $("stockDownCsv").addEventListener("click", async () => {
+    const rows = S.data.all.filter(r => qtyOf(r));
+    if (!rows.length) { alert("納品数が入力された行がありません。先に「納品数」欄に数値を入力してください。"); return; }
+    const unknown = rows.filter(r => !r.matched);
+    const byCode = new Map();   // 同じ商品コードに複数のAmazon SKUが紐づく場合は合算
+    rows.filter(r => r.matched).forEach(r => byCode.set(r.code, (byCode.get(r.code) || 0) + qtyOf(r)));
+    if (unknown.length) {
+      alert("以下の商品はテンポスターの商品コードが分からないため、在庫を下げるCSVから除いています（sku_master の登録漏れの可能性があります）。\n\n" +
+        unknown.slice(0, 20).map(r => `${r.asku}（${r.name}）`).join("\n") + (unknown.length > 20 ? `\n...他 ${unknown.length - 20} 件` : ""));
+    }
+    if (!byCode.size) return;
+    const text = "商品コード,想定在庫数\n" + [...byCode].map(([c, q]) => `${csvCell(c)},-${q}`).join("\n");
+    let blob;
+    try {
+      await loadScript("https://cdn.jsdelivr.net/npm/encoding-japanese@2.2.0/encoding.min.js");
+      const sjis = Encoding.convert(Encoding.stringToCode(text), { to: "SJIS", from: "UNICODE" });
+      blob = new Blob([new Uint8Array(sjis)], { type: "text/csv" });
+    } catch (e) {
+      // ライブラリを読み込めない場合：見出しだけShift-JISのバイト列を直接書き、商品コード（英数字）はそのまま書く
+      if (/[^\x00-\x7F]/.test(text.split("\n").slice(1).join("\n"))) {
+        alert("Shift-JIS変換の準備ができなかったため、UTF-8（BOM付き）で出力します。"); blob = new Blob(["﻿" + text], { type: "text/csv" });
+      } else {
+        const head = [0x8f,0xa4,0x95,0x69,0x83,0x52,0x81,0x5b,0x83,0x68,0x2c,0x91,0x7a,0x92,0xe8,0x8d,0xdd,0x8c,0xc9,0x90,0x94];
+        const rest = new TextEncoder().encode("\n" + text.split("\n").slice(1).join("\n"));
+        blob = new Blob([new Uint8Array(head), rest], { type: "text/csv" });
+      }
+    }
+    downloadBlob(blob, `在庫下げ_Amazon_${today()}.csv`);
+  });
+
+  // ---------- Amazon納品ファイル（Amazonの納品テンプレートxlsxに書き込んで出力） ----------
+  // テンプレートはこのHTMLに埋め込み（Amazonの「ManifestFileUpload_Template」と同じファイル）。出力のたびにここから作る。
+  const TEMPLATE_B64 = "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";
+  const TEMPLATE_SHEET = "Create workflow – template";
+  const PREP_OWNER = "Seller", LABEL_OWNER = "Seller";
+  async function downloadAmazonFile(groupKey) {
+    const label = groupKey === "__none__" ? "未グループ" : groupKey;
+    const rows = S.data.all
+      .filter(r => qtyOf(r) && (groupKey === "__none__" ? !S.group[r.asku] : S.group[r.asku] === groupKey))
+      .sort((a, b) => a.asku.localeCompare(b.asku));
+    if (!rows.length) { alert(`「${label}」に納品数が入力された行がありません。`); return; }
+    // Amazonの入力ルール：Merchant SKUは英数字・記号のみ80文字以内、Quantityは1以上の整数
+    const bad = rows.filter(r => !/^[\x20-\x7E]{1,80}$/.test(r.asku));
+    const ok = rows.filter(r => !bad.includes(r));
+    if (bad.length) {
+      alert("以下のSKUはAmazonのルール（英数字・記号のみ、80文字以内）に合わないため除きました。\n\n" + bad.map(r => r.asku).join("\n"));
+      if (!ok.length) return;
+    }
+    const overs = ok.filter(r => overStock(r, qtyOf(r)));
+    if (overs.length && !confirm(`テンポスター在庫を超える納品数が ${overs.length} 件あります。\n\n` +
+        overs.slice(0, 10).map(r => `${r.asku}：納品数 ${qtyOf(r)} ／ 在庫 ${r.tStock}`).join("\n") +
+        (overs.length > 10 ? `\n...他 ${overs.length - 10} 件` : "") + "\n\nこのまま出力しますか？")) return;
+    const filename = `Amazon納品_${label}_${today()}`;
+    try {
+      await loadScript("https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js");
+      const bin = Uint8Array.from(atob(TEMPLATE_B64), c => c.charCodeAt(0));
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.load(bin.buffer);
+      const ws = wb.getWorksheet(TEMPLATE_SHEET);
+      ws.getCell("B3").value = PREP_OWNER;
+      ws.getCell("B4").value = LABEL_OWNER;
+      ok.forEach((r, i) => {
+        ws.getCell(9 + i, 1).value = r.asku;     // Merchant SKU
+        ws.getCell(9 + i, 2).value = qtyOf(r);   // Quantity（ほかの列は空欄のまま）
+      });
+      const buf = await wb.xlsx.writeBuffer();
+      downloadBlob(new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), filename + ".xlsx");
+    } catch (e) {
+      // Excel用ライブラリを読み込めない場合は、Amazonが受け付けるもう1つの形式（タブ区切りtxt）で出力する
+      const lines = [["このシートに記入する前にExampleタブを確認してください"], [], ["Default prep owner", PREP_OWNER], ["Default labeling owner", LABEL_OWNER],
+        [], [], ["", "", "任意", "", "", "任意：メーカー梱包のSKUにのみ使用"],
+        ["Merchant SKU", "Quantity", "Prep owner", "Labeling owner", "Expiration date (MM/DD/YYYY)", "Units per box ", "Number of boxes",
+         "Box length (cm)", "Box width (cm)", "Box height (cm)", "Box weight (kg)"]]
+        .concat(ok.map(r => [r.asku, qtyOf(r)]));
+      alert("Excelファイルの作成に必要な部品を読み込めなかったため、タブ区切りのテキスト（.txt）で出力します。\nこのファイルもそのままセラーセントラルにアップロードできます。");
+      downloadBlob(new Blob([lines.map(l => l.join("\t")).join("\r\n")], { type: "text/plain" }), filename + ".txt");
+    }
+  }
 
   // ---------- Excel風フィルター ----------
   const fmenu = $("fmenu");
@@ -655,7 +1190,7 @@
       if (a === BLANK) return 1; if (b === BLANK) return -1;
       return isNum ? Number(a) - Number(b) : a.localeCompare(b, "ja");
     });
-    const cur = S.filters[k] || {};
+    const cur = filters()[k] || {};
     fState = { k, values, counts, checked: new Set(cur.vals ? values.filter(v => cur.vals.has(v)) : values), search: "" };
 
     fmenu.innerHTML =
@@ -663,7 +1198,8 @@
         `<button data-s="asc">${isNum ? "↑ 小さい順に並べ替え" : "↑ 昇順で並べ替え"}</button>` +
         `<button data-s="desc">${isNum ? "↓ 大きい順に並べ替え" : "↓ 降順で並べ替え"}</button>` +
       `</div>` +
-      (isNum ? `<div class="range"><input type="number" id="fmin" placeholder="以上" value="${cur.min ?? ""}">〜<input type="number" id="fmax" placeholder="以下" value="${cur.max ?? ""}"></div>` : "") +
+      (isNum ? `<div class="range"><input type="number" id="fmin" placeholder="以上" value="${cur.min ?? ""}">〜<input type="number" id="fmax" placeholder="以下" value="${cur.max ?? ""}"></div>` +
+               `<label class="blank-chk"><input type="checkbox" id="fblank" ${cur.blank ? "checked" : ""}>範囲で絞り込むとき、空白も含める</label>` : "") +
       `<input class="fsearch" id="fsearch" type="search" placeholder="値を検索">` +
       `<div class="vals" id="fvals"></div>` +
       `<div class="fbtns"><button class="btn clear" id="fclear">クリア</button><button class="btn" id="fcancel">キャンセル</button><button class="btn ok" id="fok">OK</button></div>`;
@@ -682,7 +1218,7 @@
       S.sortKey = k; S.sortDir = b.dataset.s; closeFilter(); renderTable();
     }));
     $("fcancel").addEventListener("click", closeFilter);
-    $("fclear").addEventListener("click", () => { delete S.filters[k]; closeFilter(); S.page = 0; renderControls(); renderTable(); });
+    $("fclear").addEventListener("click", () => { delete filters()[k]; closeFilter(); S.page = 0; renderControls(); renderTable(); });
     $("fok").addEventListener("click", applyFilter);
     fmenu.addEventListener("keydown", ev => { if (ev.key === "Enter") applyFilter(); if (ev.key === "Escape") closeFilter(); });
   }
@@ -717,10 +1253,11 @@
     const pool = fState.search ? visibleValues() : fState.values;
     const keep = pool.filter(v => fState.checked.has(v));
     if (keep.length !== fState.values.length) f.vals = new Set(keep);
-    const mn = $("fmin"), mx = $("fmax");
+    const mn = $("fmin"), mx = $("fmax"), bl = $("fblank");
     if (mn && mn.value !== "") f.min = Number(mn.value);
     if (mx && mx.value !== "") f.max = Number(mx.value);
-    if (Object.keys(f).length) S.filters[k] = f; else delete S.filters[k];
+    if (bl && bl.checked && (f.min != null || f.max != null)) f.blank = true;
+    if (Object.keys(f).length) filters()[k] = f; else delete filters()[k];
     closeFilter(); S.page = 0; renderControls(); renderTable();
   }
   function closeFilter() { fmenu.style.display = "none"; fmenu.innerHTML = ""; fState = null; }
@@ -1077,6 +1614,8 @@
   $("stock-modal").addEventListener("click", e => e.stopPropagation());
   $("stock-modal-close").addEventListener("click", closeStockModal);
   document.addEventListener("keydown", e => { if (e.key === "Escape") closeStockModal(); });
+  // ページを開いたとき、同じ日の自動保存データがあれば復元
+  restore();
 })();
 </script>
 </body>
