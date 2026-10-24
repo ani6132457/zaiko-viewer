@@ -209,6 +209,8 @@
   .gdot { width: 10px; height: 10px; border-radius: 50%; background: var(--gc); flex-shrink: 0; }
   .gname { flex: 1; cursor: pointer; font-weight: 700; font-size: 13px; }
   .gdl { border: 1px solid var(--gc); background: var(--gc); color: #fff; border-radius: 8px; padding: 6px 14px; font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap; font-family: inherit; }
+  .gprint { border: 1px solid var(--gc); background: #fff; color: var(--gc); border-radius: 8px; padding: 6px 14px; font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap; font-family: inherit; }
+  .gprint:hover { background: color-mix(in srgb, var(--gc) 10%, #fff); }
   .gdel { border: 0; background: transparent; color: var(--ink-soft); cursor: pointer; font-size: 12px; padding: 6px 8px; font-family: inherit; }
   .gdel-space { width: 44px; flex-shrink: 0; }
   .gtag { color: #fff; border-radius: 10px; padding: 2px 8px; font-size: 11px; white-space: nowrap; }
@@ -321,7 +323,7 @@
       <button class="btn" id="assignBtn">選択行を割り当て</button>
     </div>
     <div class="muted" style="margin-top:6px">
-      「⬇ Amazon納品ファイル」で、そのグループの納品数をAmazonの納品テンプレート（xlsx）にして出力します（1グループ＝1つの納品プラン）。
+      「🖨 ピッキングリスト」で、そのグループの分を印刷します。「⬇ Amazon納品ファイル」で、そのグループの納品数をAmazonの納品テンプレート（xlsx）にして出力します（1グループ＝1つの納品プラン）。
       梱包・ラベル貼付の担当はどちらも Seller、賞味期限とメーカー梱包の欄は空欄で出力します。
     </div>
     <div id="groupChips" class="group-chips"></div>
@@ -991,6 +993,7 @@
       return `<div class="gchip ${active ? "active" : ""}" style="--gc:${color}">` +
         `<span class="gdot"></span>` +
         `<span class="gname" data-gf="${esc(key)}" title="クリックでこのグループだけ表示／解除">${esc(label)} <span class="muted">（${fmt(count(key))}件・${fmt(qsum(key))}点）</span>${active ? " ✓ 表示中" : ""}</span>` +
+        `<button class="gprint" data-print="${esc(key)}">🖨 ピッキングリスト</button>` +
         `<button class="gdl" data-dl="${esc(key)}">⬇ Amazon納品ファイル</button>` +
         (deletable ? `<button class="gdel" data-gdel="${esc(key)}" title="グループを削除">削除</button>` : `<span class="gdel-space"></span>`) +
         `</div>`;
@@ -1026,6 +1029,8 @@
     }
     const dl = e.target.closest("[data-dl]");
     if (dl) { downloadAmazonFile(dl.dataset.dl); return; }
+    const pr = e.target.closest("[data-print]");
+    if (pr) { printPickingList(pr.dataset.print); return; }
     const del = e.target.closest("[data-gdel]");
     if (del) {
       const name = del.dataset.gdel;
@@ -1125,6 +1130,61 @@
     }
     downloadBlob(blob, `在庫下げ_Amazon_${today()}.csv`);
   });
+
+  // ---------- ピッキングリスト印刷（旧「FBA業務支援アプリ」と同じ列・並び順。グループごと） ----------
+  // 列：SKU（Amazon SKU）／商品名（Amazon側の商品名）／ASIN／FNSKU／数量／タイプ1・タイプ2（テンポスターの属性1名・属性2名）
+  // 複数ページでも見切れないよう、列幅を固定して長い文字は折り返し、見出し行は各ページに繰り返し、1行がページをまたがないようにする。
+  function printPickingList(groupKey) {
+    const label = groupKey === "__none__" ? "未グループ" : groupKey;
+    const rows = S.data.all
+      .filter(r => qtyOf(r) && (groupKey === "__none__" ? !S.group[r.asku] : S.group[r.asku] === groupKey))
+      .sort((a, b) => a.asku.localeCompare(b.asku));
+    if (!rows.length) { alert(`「${label}」に納品数が入力された行がありません。`); return; }
+    const d = new Date();
+    const dateStr = `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    const total = rows.reduce((s, r) => s + qtyOf(r), 0);
+    const body = rows.map(r =>
+      `<tr><td class="sku">${esc(r.asku)}</td><td class="name">${esc(r.aname || r.name)}</td><td class="mono">${esc(r.asin)}</td>` +
+      `<td class="mono">${esc(r.fnsku)}</td><td class="qty">${fmt(qtyOf(r))}</td><td>${esc(r.a1)}</td><td>${esc(r.a2)}</td></tr>`).join("");
+    const html = `<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"><title>ピッキングリスト_${esc(label)}</title><style>
+      @page { size: A4 portrait; margin: 10mm 8mm 12mm; }
+      * { box-sizing: border-box; }
+      body { margin: 0; font-family: 'Yu Gothic', 'YuGothic', 'Meiryo', sans-serif; font-size: 9.5pt; color: #000;
+             -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .head { display: flex; align-items: baseline; gap: 14px; margin: 0 0 6px; }
+      .head h3 { margin: 0; font-size: 13pt; }
+      .head .meta { font-size: 9pt; margin-left: auto; }
+      table { width: 99.6%; border-collapse: collapse; table-layout: fixed; }   /* 右端の罫線が用紙の余白で切れないよう、わずかに内側に収める */
+      thead { display: table-header-group; }          /* 見出し行を各ページに繰り返す */
+      tr { break-inside: avoid; page-break-inside: avoid; }   /* 1行がページをまたがない */
+      th, td { border: 1px solid #333; padding: 4px 5px; vertical-align: middle; overflow-wrap: anywhere; word-break: break-all; }
+      th { background: #f0f0f0; font-weight: 700; text-align: left; }
+      td.name { word-break: normal; overflow-wrap: anywhere; line-height: 1.3; font-size: 8.5pt; }
+      td.mono, td.sku { font-family: Consolas, 'Courier New', monospace; font-size: 8pt; }
+      td.qty, th.qty { text-align: right; font-weight: 700; font-size: 10.5pt; }
+    </style></head><body>
+      <div class="head"><h3>ピッキングリスト（${esc(label)}）</h3>
+        <span class="meta">印刷日時：${dateStr}　SKU数：${fmt(rows.length)}　合計点数：${fmt(total)}</span></div>
+      <table>
+        <colgroup><col style="width:17.5%"><col style="width:36.5%"><col style="width:10.5%"><col style="width:10.5%"><col style="width:6%"><col style="width:9.5%"><col style="width:9.5%"></colgroup>
+        <thead><tr><th>SKU</th><th>商品名</th><th>ASIN</th><th>FNSKU</th><th class="qty">数量</th><th>タイプ1</th><th>タイプ2</th></tr></thead>
+        <tbody>${body}</tbody>
+      </table>
+    </body></html>`;
+    // 画面に見えない枠の中に印刷用ページを作り、その枠だけを印刷する（一覧の画面は印刷されない）
+    let pf = document.getElementById("printFrame");
+    if (pf) pf.remove();
+    pf = document.createElement("iframe");
+    pf.id = "printFrame";
+    pf.setAttribute("aria-hidden", "true");
+    pf.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden;";
+    pf.onload = () => {
+      try { pf.contentWindow.focus(); pf.contentWindow.print(); }
+      catch (e) { alert("印刷を開始できませんでした：" + e.message); }
+    };
+    pf.srcdoc = html;
+    document.body.appendChild(pf);
+  }
 
   // ---------- Amazon納品ファイル（Amazonの納品テンプレートxlsxに書き込んで出力） ----------
   // テンプレートはこのHTMLに埋め込み（Amazonの「ManifestFileUpload_Template」と同じファイル）。出力のたびにここから作る。
