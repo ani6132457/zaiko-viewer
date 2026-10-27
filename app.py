@@ -1062,6 +1062,103 @@ def render_amazon_tab(file_infos):
         render_fba_compare_tab(file_infos, df_master)
 
 
+# ==========================
+# 売上個数一覧用：他モールCSV（ZOZO在庫日報／Amazon在庫補充レポート）の読み込み
+# ==========================
+def _read_csv_bytes_as_str(raw: bytes):
+    """アップロードCSVを文字列のまま読む（UTF-8 → BOM付きUTF-8 → Shift-JIS の順に試す）。
+    品番・SKUの先頭0などが消えないよう、全列を文字列として読み込む。"""
+    for enc in ("utf-8-sig", "utf-8", "cp932"):
+        try:
+            return pd.read_csv(io.BytesIO(raw), encoding=enc, dtype=str)
+        except (UnicodeDecodeError, pd.errors.ParserError):
+            continue
+    return None
+
+
+def _to_int_series(s: pd.Series) -> pd.Series:
+    return (
+        pd.to_numeric(s.fillna("").astype(str).str.replace(",", "", regex=False).str.strip(), errors="coerce")
+        .fillna(0)
+        .astype(int)
+    )
+
+
+@st.cache_data(show_spinner=False)
+def parse_zozo_daily_report(raw: bytes, sku_master_items: tuple):
+    """ZOZOの在庫日報CSVを、テンポスターの商品コード（SKU）単位に集計する。
+    紐付けは SKUマスター（CS品番 → SKU）。1つのSKUに複数のCS品番が紐づく場合は合算する。
+    戻り値: (結果dict or None, エラーメッセージ or None)
+      結果dict: {"stock": {SKU: 販売可能数合計}, "sales30": {SKU: 直近30日販売数},
+                 "rows": CSVの行数, "unmapped": SKUマスターに無かったCS品番の件数}"""
+    df = _read_csv_bytes_as_str(raw)
+    if df is None:
+        return None, "CSVを読み込めませんでした。"
+    df.columns = [str(c).strip() for c in df.columns]
+    need = ["CS品番", "販売可能数合計", "直近30日販売数"]
+    missing = [c for c in need if c not in df.columns]
+    if missing:
+        return None, f"在庫日報CSVに次の列が見つかりません: {', '.join(missing)}"
+
+    df["CS品番"] = df["CS品番"].fillna("").astype(str).str.strip()
+    df = df[df["CS品番"] != ""].copy()
+    rows = len(df)
+
+    cs2sku = {str(cs).strip(): str(sku).strip() for cs, sku in sku_master_items if cs and sku}
+    df["_SKU"] = df["CS品番"].map(cs2sku)
+    unmapped = int(df["_SKU"].isna().sum())
+    df = df.dropna(subset=["_SKU"])
+
+    df["販売可能数合計"] = _to_int_series(df["販売可能数合計"])
+    df["直近30日販売数"] = _to_int_series(df["直近30日販売数"])
+    g = df.groupby("_SKU")[["販売可能数合計", "直近30日販売数"]].sum()
+
+    return {
+        "stock": {k: int(v) for k, v in g["販売可能数合計"].items()},
+        "sales30": {k: int(v) for k, v in g["直近30日販売数"].items()},
+        "rows": rows,
+        "unmapped": unmapped,
+    }, None
+
+
+@st.cache_data(show_spinner=False)
+def parse_fba_replenishment_report(raw: bytes, master_items: tuple):
+    """Amazonの在庫補充レポートCSVを、テンポスターの商品コード（SKU）単位に集計する。
+    紐付けは sku_master.xlsx（AmazonSKU → テンポスターSKU）。マスターに無いSKUは、
+    「テンポスター×FBA在庫比較」と同じくAmazon SKUをそのまま商品コードとして扱う。
+    戻り値: (結果dict or None, エラーメッセージ or None)
+      結果dict: {"stock": {SKU: 販売可能な商品の合計}, "sales30": {SKU: 過去30日販売数},
+                 "rows": CSVの行数, "converted": sku_masterで変換できた件数}"""
+    df = _read_csv_bytes_as_str(raw)
+    if df is None:
+        return None, "CSVを読み込めませんでした。"
+    df.columns = [str(c).strip() for c in df.columns]
+    need = ["Merchant SKU", "販売可能な商品の合計", "過去30日間に販売されたユニット数"]
+    missing = [c for c in need if c not in df.columns]
+    if missing:
+        return None, f"在庫補充レポートCSVに次の列が見つかりません: {', '.join(missing)}"
+
+    df["Merchant SKU"] = df["Merchant SKU"].fillna("").astype(str).str.strip()
+    df = df[df["Merchant SKU"] != ""].copy()
+    rows = len(df)
+
+    a2t = dict(master_items)
+    mapped = df["Merchant SKU"].map(a2t)
+    converted = int(mapped.notna().sum())
+    df["_SKU"] = mapped.fillna(df["Merchant SKU"]).astype(str).str.strip()
+
+    df["販売可能な商品の合計"] = _to_int_series(df["販売可能な商品の合計"])
+    df["過去30日間に販売されたユニット数"] = _to_int_series(df["過去30日間に販売されたユニット数"])
+    g = df.groupby("_SKU")[["販売可能な商品の合計", "過去30日間に販売されたユニット数"]].sum()
+
+    return {
+        "stock": {k: int(v) for k, v in g["販売可能な商品の合計"].items()},
+        "sales30": {k: int(v) for k, v in g["過去30日間に販売されたユニット数"].items()},
+        "rows": rows,
+        "converted": converted,
+    }, None
+
+
 def make_html_table(df: pd.DataFrame) -> str:
     thead = "<thead><tr>" + "".join(
         f"<th>{html.escape(str(c))}</th>" for c in df.columns
@@ -2836,24 +2933,10 @@ def _main_impl():
             rakuten_pairs, force=(manual_refresh or need_session_fetch)
         )
 
-    # ---------- Amazon FBA在庫（SP-API・非ブロッキング背景取得） ----------
-    # Amazon推奨（1日1回程度）に沿って、自動更新は約20時間おき。手動更新ボタンはいつでも押せる。
-    amazon_manual_refresh = st.session_state.pop("amazon_force_refresh", False)
-    if _amazon_credentials() is None:
-        diag = _amazon_credentials_diagnosis()
-        amazon_stock_map, amazon_errors, amazon_fetched_at, amazon_fetching = (
-            {}, [diag] if diag else ["認証情報が読み込めませんでした（原因不明）"], None, False
-        )
-    else:
-        amazon_skus = get_amazon_sku_list(all_paths_for_rakuten)
-        if not amazon_skus:
-            amazon_stock_map, amazon_errors, amazon_fetched_at, amazon_fetching = (
-                {}, ["Tempostarデータに「商品コード」列が無いか、対象SKUが0件のため取得を開始していません。"], None, False
-            )
-        else:
-            amazon_stock_map, amazon_errors, amazon_fetched_at, amazon_fetching = get_amazon_fba_stock_state(
-                amazon_skus, force=amazon_manual_refresh
-            )
+    # ---------- Amazon FBA在庫（SP-API） ----------
+    # いったん停止中（取得自体を行わない）。FBA在庫は売上個数一覧タブで在庫補充レポートCSVから表示する。
+    # 再開するときは get_amazon_fba_stock_state() の呼び出しを戻す。
+    amazon_stock_map, amazon_errors, amazon_fetched_at, amazon_fetching = {}, [], None, False
 
 
     # ---------- 売上個数予想用：全期間の日別売上マップ（1回だけ計算） ----------
@@ -3400,9 +3483,6 @@ h1, h2, h3, h4,
             render_rakuten_refresh_control(
                 rakuten_fetched_at, rakuten_fetching, rakuten_errors, key="restock"
             )
-            render_amazon_refresh_control(
-                amazon_fetched_at, amazon_fetching, amazon_errors, key="restock"
-            )
 
             if submit_restock:
                 st.session_state["restock_applied"] = True
@@ -3890,289 +3970,334 @@ h1, h2, h3, h4,
 
     def render_sales_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, all_sales_map, amazon_stock_map, amazon_fetching, amazon_errors, amazon_fetched_at):
         # --- 売上個数一覧タブ ---
-        left, right = st.columns([1, 3])
+        # 絞り込み条件は上部に横並びで置き、一覧は画面幅いっぱいに表示する（列を見やすくするため）
 
-        with left:
-            st.markdown('<div class="filter-card"><h3>🔍 絞り込み条件</h3>', unsafe_allow_html=True)
-            st.caption(f"データ期間：{min_date} ～ {max_date}")
+        # ---------- 絞り込み条件（上部） ----------
+        st.markdown('<div class="filter-card"><h3>🔍 絞り込み条件</h3>', unsafe_allow_html=True)
+        st.caption(f"データ期間：{min_date} ～ {max_date}")
 
-            with st.form("sku_form"):
-                st.date_input(
-                    "開始日",
-                    key="sku_start_date",
-                    min_value=min_date,
-                    max_value=max_date,
-                )
-                st.date_input(
-                    "終了日",
-                    key="sku_end_date",
-                    min_value=min_date,
-                    max_value=max_date,
-                )
-                st.text_input(
-                    "キーワード（商品コード / 商品基本コード / 商品名）",
-                    key="sku_keyword",
-                )
-                st.number_input(
-                    "売上個数（この数以上）",
-                    min_value=0,
-                    key="sku_min_sales",
-                )
+        with st.form("sku_form"):
+            f1, f2, f3, f4 = st.columns([1, 1, 2, 1])
+            with f1:
+                st.date_input("開始日", key="sku_start_date", min_value=min_date, max_value=max_date)
+            with f2:
+                st.date_input("終了日", key="sku_end_date", min_value=min_date, max_value=max_date)
+            with f3:
+                st.text_input("キーワード（商品コード / 商品基本コード / 商品名）", key="sku_keyword")
+            with f4:
+                st.number_input("売上個数（この数以上）", min_value=0, key="sku_min_sales")
 
-                st.markdown("**売上個数予想の集計期間**（デフォルト：去年翌日から1ヶ月）")
-                fc1, fc2 = st.columns(2)
-                with fc1:
-                    st.date_input("予想 開始日", key="sku_forecast_start")
-                with fc2:
-                    st.date_input("予想 終了日", key="sku_forecast_end")
-
+            g1, g2, g3 = st.columns([1, 1, 3])
+            with g1:
+                st.date_input("売上個数予想 開始日", key="sku_forecast_start")
+            with g2:
+                st.date_input("売上個数予想 終了日", key="sku_forecast_end")
+            with g3:
+                st.caption("売上個数予想の期間（デフォルト：去年翌日から1ヶ月）")
                 submit_sku = st.form_submit_button("🔎 この条件で表示", use_container_width=True)
 
-            st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
+        # ---------- 他モールCSV（任意・アップロードした時だけ列を表示） ----------
+        u1, u2 = st.columns(2)
+        with u1:
+            zozo_file = st.file_uploader(
+                "📦 ZOZO 在庫日報CSV（任意）",
+                type="csv",
+                key="sales_zozo_csv",
+                help="アップロードすると「ZOZO 30日販売」「ZOZO在庫」の列を表示します。SKUマスター（CS品番→SKU）で紐付けます。",
+            )
+        with u2:
+            fba_file = st.file_uploader(
+                "🛒 Amazon 在庫補充レポートCSV（任意）",
+                type="csv",
+                key="sales_fba_csv",
+                help="アップロードすると「Amazon 30日販売」「Amazon FBA在庫」の列を表示します。sku_master.xlsx（AmazonSKU→テンポスターSKU）で紐付けます。",
+            )
+
+        zozo_data, fba_data = None, None
+        if zozo_file is not None:
+            sku_master_items = tuple((d["cs_no"], d["sku"]) for d in load_sku_master())
+            if not sku_master_items:
+                u1.warning("『SKUマスター』フォルダにCSV（列名: CS品番, SKU）が無いため、ZOZOのデータを紐付けできません。")
+            else:
+                zozo_data, zozo_err = parse_zozo_daily_report(zozo_file.getvalue(), sku_master_items)
+                if zozo_err:
+                    u1.error(zozo_err)
+        if fba_file is not None:
+            df_fba_master, _ = load_fba_sku_master()
+            fba_master_items = tuple(sorted(fba_amazon_to_tempostar(df_fba_master).items()))
+            fba_data, fba_err = parse_fba_replenishment_report(fba_file.getvalue(), fba_master_items)
+            if fba_err:
+                u2.error(fba_err)
+            elif df_fba_master is None:
+                u2.caption("ℹ️ sku_master.xlsx が見つからないため、Amazon SKUをそのまま商品コードとして照合しています。")
+
+        rc, _ = st.columns([2, 3])
+        with rc:
             render_rakuten_refresh_control(
                 rakuten_fetched_at, rakuten_fetching, rakuten_errors, key="sales"
             )
-            render_amazon_refresh_control(
-                amazon_fetched_at, amazon_fetching, amazon_errors, key="sales"
+
+        if submit_sku:
+            # 開始・終了日の順序を自動補正
+            if st.session_state["sku_start_date"] > st.session_state["sku_end_date"]:
+                st.session_state["sku_start_date"], st.session_state["sku_end_date"] = (
+                    st.session_state["sku_end_date"], st.session_state["sku_start_date"]
+                )
+            st.session_state["sku_applied"] = True
+
+        # ---------- 一覧（画面幅いっぱい） ----------
+        if not st.session_state["sku_applied"]:
+            st.info("上で条件を設定して『この条件で表示』を押してください。")
+            return
+
+        start_date     = st.session_state["sku_start_date"]
+        end_date       = st.session_state["sku_end_date"]
+        keyword        = st.session_state["sku_keyword"]
+        min_total_sales = int(st.session_state["sku_min_sales"])
+        forecast_start_s = st.session_state["sku_forecast_start"]
+        forecast_end_s   = st.session_state["sku_forecast_end"]
+        forecast_map_s   = compute_forecast_map(all_sales_map, forecast_start_s, forecast_end_s)
+
+        # 今年ファイル
+        main_files = [fi for fi in file_infos if start_date <= fi["date"] <= end_date]
+        if not main_files:
+            st.error("選択範囲のCSVがありません。")
+            return
+
+        main_paths = [fi["path"] for fi in main_files]
+        df_main = load_tempostar_data(main_paths)
+
+        # SKU正規化
+        if "商品コード" in df_main.columns:
+            df_main["商品コード"] = df_main["商品コード"].astype(str).str.strip()
+
+        # 昨年同期間ファイル
+        last_start = (pd.Timestamp(start_date) - DateOffset(years=1)).date()
+        last_end = (pd.Timestamp(end_date) - DateOffset(years=1)).date()
+        last_files = [fi for fi in file_infos if last_start <= fi["date"] <= last_end]
+
+        df_last = None
+        if last_files:
+            last_paths = [fi["path"] for fi in last_files]
+            df_last = load_tempostar_data(last_paths)
+            if "商品コード" in df_last.columns:
+                df_last["商品コード"] = df_last["商品コード"].astype(str).str.strip()
+
+        # ---- デバッグ表示 ----
+        st.caption(
+            f"集計期間：{start_date} ～ {end_date} ｜ 昨年同期間：{last_start} ～ {last_end} ｜ "
+            f"今年CSV件数：{len(main_files)} ｜ 昨年CSV件数：{len(last_files)}"
+        )
+        if len(last_files) == 0:
+            st.warning("昨年同期間のCSVが見つかりません。tempostar_stock_YYYYMMDD.csv の昨年分も同じフォルダに必要です。")
+
+        # キーワード絞り込み（今年）
+        if keyword:
+            cond = False
+            for col in ["商品コード", "商品基本コード", "商品名"]:
+                if col in df_main.columns:
+                    cond |= df_main[col].astype(str).str.contains(keyword, case=False, na=False)
+            df_main = df_main[cond]
+
+        # キーワード絞り込み（昨年）
+        if df_last is not None and keyword:
+            cond_last = False
+            for col in ["商品コード", "商品基本コード", "商品名"]:
+                if col in df_last.columns:
+                    cond_last |= df_last[col].astype(str).str.contains(keyword, case=False, na=False)
+            df_last = df_last[cond_last]
+
+        required = {"商品コード", "商品基本コード", "増減値"}
+        if not required.issubset(df_main.columns):
+            st.error("Tempostar CSV に『商品コード』『商品基本コード』『増減値』が必要です。")
+            return
+
+        # --- 全SKUのベース（売上が0件のSKUや、期間内に動きが無い商品も含める）---
+        all_paths_for_snapshot = [fi["path"] for fi in file_infos]
+        sales_grouped = get_all_sku_snapshot(all_paths_for_snapshot).copy()
+
+        if sales_grouped.empty:
+            st.error("Tempostar CSV から商品情報を読み取れませんでした。")
+            return
+
+        # 他モールCSVの「テンポスターに無い商品コード」の件数を数えるため、絞り込み前の全SKUを控えておく
+        all_codes = set(sales_grouped["商品コード"].astype(str).str.strip())
+
+        # キーワード絞り込み（全SKUベース側にも適用）
+        if keyword:
+            cond_base = False
+            for col in ["商品コード", "商品基本コード", "商品名"]:
+                if col in sales_grouped.columns:
+                    cond_base |= sales_grouped[col].astype(str).str.contains(keyword, case=False, na=False)
+            sales_grouped = sales_grouped[cond_base]
+
+        # --- 売上集計（今年）---
+        if "更新理由" in df_main.columns:
+            df_sales_main = df_main[df_main["更新理由"].astype(str).str.contains("受注取込", na=False)].copy()
+        else:
+            df_sales_main = df_main.copy()
+
+        sales_sum_main = (
+            df_sales_main.groupby("商品コード", dropna=False)["増減値"]
+            .sum()
+            .reset_index()
+            .rename(columns={"増減値": "増減値合計"})
+        )
+        sales_grouped = sales_grouped.merge(sales_sum_main, on="商品コード", how="left")
+        sales_grouped["増減値合計"] = sales_grouped["増減値合計"].fillna(0)
+        sales_grouped["売上個数合計"] = (-sales_grouped["増減値合計"]).astype(int)
+
+        # --- 売上集計（昨年）---
+        if df_last is not None and {"商品コード", "増減値"}.issubset(df_last.columns):
+            if "更新理由" in df_last.columns:
+                df_sales_last = df_last[
+                    df_last["更新理由"].astype(str).str.contains("受注取込", na=False)
+                ].copy()
+            else:
+                df_sales_last = df_last.copy()
+
+            df_sales_last["商品コード"] = df_sales_last["商品コード"].astype(str).str.strip()
+
+            last_grouped = (
+                df_sales_last.groupby("商品コード", dropna=False)["増減値"]
+                .sum()
+                .reset_index()
+            )
+            last_grouped["昨年売上個数"] = -last_grouped["増減値"]
+            last_grouped = last_grouped.drop(columns=["増減値"])
+
+            sales_grouped = sales_grouped.merge(last_grouped, on="商品コード", how="left")
+
+        sales_grouped["昨年売上個数"] = (
+            pd.to_numeric(
+                sales_grouped["昨年売上個数"]
+                if "昨年売上個数" in sales_grouped.columns
+                else pd.Series(0, index=sales_grouped.index),
+                errors="coerce"
+            )
+            .fillna(0)
+            .astype(int)
+        )
+
+        sales_grouped["現在庫"] = (
+            pd.to_numeric(sales_grouped["現在庫"], errors="coerce")
+            .fillna(0)
+            .astype(int)
+        )
+
+        codes_s = sales_grouped["商品コード"].astype(str).str.strip()
+
+        # 楽天在庫（RMS 在庫API 2.0・リアルタイム取得）
+        sales_grouped["楽天在庫"] = codes_s.map(rakuten_stock_map)
+
+        # ZOZO（在庫日報CSV）：アップロードされている時だけ
+        # ※ テンポスターの受注取込にZOZOの注文は含まれないため、今年売上とは別の列で表示する
+        if zozo_data:
+            sales_grouped["ZOZO 30日販売"] = codes_s.map(zozo_data["sales30"])
+            sales_grouped["ZOZO在庫"] = codes_s.map(zozo_data["stock"])
+
+        # Amazon（在庫補充レポートCSV）：アップロードされている時だけ
+        if fba_data:
+            sales_grouped["Amazon 30日販売"] = codes_s.map(fba_data["sales30"])
+            sales_grouped["Amazon FBA在庫"] = codes_s.map(fba_data["stock"])
+
+        # 売上個数予想（去年翌日を起点にした期間集計）
+        sales_grouped["売上個数予想"] = codes_s.map(forecast_map_s).fillna(0).astype(int)
+
+        if min_total_sales > 0:
+            sales_grouped = sales_grouped[sales_grouped["売上個数合計"] >= min_total_sales]
+
+        sales_grouped = sales_grouped.sort_values("売上個数合計", ascending=False)
+
+        # 画像列（URL形式で直接返す）
+        img_master = load_image_master()
+        base_url = "https://image.rakuten.co.jp/hype/cabinet"
+
+        def to_img_url_s(code):
+            key = str(code).strip()
+            rel = img_master.get(key, "")
+            return (base_url + rel) if rel else ""
+
+        sales_grouped["画像"] = sales_grouped["商品基本コード"].apply(to_img_url_s)
+
+        # 今年・前年を別列で保持
+        sales_grouped["今年売上"] = sales_grouped["売上個数合計"].astype(int)
+        sales_grouped["前年売上"] = sales_grouped["昨年売上個数"].astype(int)
+
+        # 不要列を落とす
+        sales_grouped = sales_grouped.drop(
+            columns=["売上個数合計", "昨年売上個数", "増減値合計",
+                     "指定日売上個数(昨年売上個数)"], errors="ignore"
+        )
+
+        # 列の並び：商品情報 → 販売数（テンポスター → 他モール → 予想） → 在庫（テンポスター → 各モール）
+        sales_columns = [
+            {"key": "画像", "label": "画像", "type": "image"},
+            {"key": "商品コード", "label": "商品コード", "type": "text"},
+            {"key": "商品基本コード", "label": "商品基本コード", "type": "text"},
+            {"key": "商品名", "label": "商品名", "type": "text"},
+            {"key": "属性1名", "label": "属性1名", "type": "text"},
+            {"key": "属性2名", "label": "属性2名", "type": "text"},
+            {"key": "今年売上", "label": "今年売上", "type": "number"},
+            {"key": "前年売上", "label": "前年売上", "type": "number"},
+            {"key": "ZOZO 30日販売", "label": "ZOZO 30日販売", "type": "number"},
+            {"key": "Amazon 30日販売", "label": "Amazon 30日販売", "type": "number"},
+            {"key": "売上個数予想", "label": "売上個数予想", "type": "number"},
+            {"key": "現在庫", "label": "現在庫", "type": "number"},
+            {"key": "楽天在庫", "label": "楽天在庫", "type": "number"},
+            {"key": "ZOZO在庫", "label": "ZOZO在庫", "type": "number"},
+            {"key": "Amazon FBA在庫", "label": "Amazon FBA在庫", "type": "number"},
+        ]
+        sales_columns = [c for c in sales_columns if c["key"] in sales_grouped.columns]
+        df_view = sales_grouped[[c["key"] for c in sales_columns]]
+
+        chips = [
+            f'<div class="metric-chip">SKU数<strong>{len(df_view):,}</strong></div>',
+            f'<div class="metric-chip">集計期間<strong>{start_date} ～ {end_date}</strong></div>',
+            f'<div class="metric-chip">売上個数予想の期間<strong>{forecast_start_s} ～ {forecast_end_s}</strong></div>',
+        ]
+        st.markdown(f'<div class="metric-bar">{"".join(chips)}</div>', unsafe_allow_html=True)
+
+        # 他モールCSVの取り込み状況（紐付けできなかった件数など）
+        notes = []
+        if zozo_data:
+            not_in_ts = sum(1 for k in zozo_data["stock"] if k not in all_codes)
+            note = f"ZOZO在庫日報：{zozo_data['rows']:,}行"
+            if zozo_data["unmapped"]:
+                note += f"（SKUマスター未登録のCS品番 {zozo_data['unmapped']:,}件は除外）"
+            if not_in_ts:
+                note += f"／テンポスターに無い商品コード {not_in_ts:,}件"
+            notes.append(note)
+        if fba_data:
+            not_in_ts = sum(1 for k in fba_data["stock"] if k not in all_codes)
+            note = f"Amazon在庫補充レポート：{fba_data['rows']:,}行（sku_masterで変換 {fba_data['converted']:,}件）"
+            if not_in_ts:
+                note += f"／テンポスターに無い商品コード {not_in_ts:,}件"
+            notes.append(note)
+        if notes:
+            st.caption(
+                "📎 " + " ｜ ".join(notes) +
+                "　※ ZOZO・Amazonの販売数はCSVの直近30日の値です（上の集計期間とは別）。"
             )
 
-            if submit_sku:
-                # 開始・終了日の順序を自動補正
-                if st.session_state["sku_start_date"] > st.session_state["sku_end_date"]:
-                    st.session_state["sku_start_date"], st.session_state["sku_end_date"] = (
-                        st.session_state["sku_end_date"], st.session_state["sku_start_date"]
-                    )
-                st.session_state["sku_applied"] = True
+        if not rakuten_stock_map and not rakuten_fetching:
+            st.caption("ℹ️ 楽天在庫が空欄の場合は、`.streamlit/secrets.toml` に楽天APIの認証情報が未設定か、取得エラーが発生しています。")
 
-        with right:
-            if not st.session_state["sku_applied"]:
-                st.info("左側で条件を設定して『この条件で表示』を押してください。")
-            else:
-                start_date     = st.session_state["sku_start_date"]
-                end_date       = st.session_state["sku_end_date"]
-                keyword        = st.session_state["sku_keyword"]
-                min_total_sales = int(st.session_state["sku_min_sales"])
-                forecast_start_s = st.session_state["sku_forecast_start"]
-                forecast_end_s   = st.session_state["sku_forecast_end"]
-                forecast_map_s   = compute_forecast_map(all_sales_map, forecast_start_s, forecast_end_s)
+        trend_map_s = filter_trend_map(full_trend_map, df_view["商品コード"])
 
-                # 今年ファイル
-                main_files = [fi for fi in file_infos if start_date <= fi["date"] <= end_date]
-                if not main_files:
-                    st.error("選択範囲のCSVがありません。")
-                    return
-
-                main_paths = [fi["path"] for fi in main_files]
-                df_main = load_tempostar_data(main_paths)
-
-                # SKU正規化
-                if "商品コード" in df_main.columns:
-                    df_main["商品コード"] = df_main["商品コード"].astype(str).str.strip()
-
-                # 昨年同期間ファイル
-                last_start = (pd.Timestamp(start_date) - DateOffset(years=1)).date()
-                last_end = (pd.Timestamp(end_date) - DateOffset(years=1)).date()
-                last_files = [fi for fi in file_infos if last_start <= fi["date"] <= last_end]
-
-                df_last = None
-                if last_files:
-                    last_paths = [fi["path"] for fi in last_files]
-                    df_last = load_tempostar_data(last_paths)
-                    if "商品コード" in df_last.columns:
-                        df_last["商品コード"] = df_last["商品コード"].astype(str).str.strip()
-
-                # ---- デバッグ表示 ----
-                st.caption(f"集計期間：{start_date} ～ {end_date} ｜ 昨年同期間：{last_start} ～ {last_end}")
-                st.caption(f"今年CSV件数：{len(main_files)} ｜ 昨年CSV件数：{len(last_files)}")
-                if len(last_files) == 0:
-                    st.warning("昨年同期間のCSVが見つかりません。tempostar_stock_YYYYMMDD.csv の昨年分も同じフォルダに必要です。")
-
-                # キーワード絞り込み（今年）
-                if keyword:
-                    cond = False
-                    for col in ["商品コード", "商品基本コード", "商品名"]:
-                        if col in df_main.columns:
-                            cond |= df_main[col].astype(str).str.contains(keyword, case=False, na=False)
-                    df_main = df_main[cond]
-
-                # キーワード絞り込み（昨年）
-                if df_last is not None and keyword:
-                    cond_last = False
-                    for col in ["商品コード", "商品基本コード", "商品名"]:
-                        if col in df_last.columns:
-                            cond_last |= df_last[col].astype(str).str.contains(keyword, case=False, na=False)
-                    df_last = df_last[cond_last]
-
-                required = {"商品コード", "商品基本コード", "増減値"}
-                if not required.issubset(df_main.columns):
-                    st.error("Tempostar CSV に『商品コード』『商品基本コード』『増減値』が必要です。")
-                    return
-
-                # --- 全SKUのベース（売上が0件のSKUや、期間内に動きが無い商品も含める）---
-                # 集計期間内のdf_mainではなく、常に全期間の最新スナップショットを使うことで、
-                # 「その期間は全く動きが無かった商品」も現在庫つきで表示できるようにする。
-                all_paths_for_snapshot = [fi["path"] for fi in file_infos]
-                sales_grouped = get_all_sku_snapshot(all_paths_for_snapshot).copy()
-
-                if sales_grouped.empty:
-                    st.error("Tempostar CSV から商品情報を読み取れませんでした。")
-                    return
-
-                # キーワード絞り込み（全SKUベース側にも適用）
-                if keyword:
-                    cond_base = False
-                    for col in ["商品コード", "商品基本コード", "商品名"]:
-                        if col in sales_grouped.columns:
-                            cond_base |= sales_grouped[col].astype(str).str.contains(keyword, case=False, na=False)
-                    sales_grouped = sales_grouped[cond_base]
-
-                # --- 売上集計（今年）---
-                if "更新理由" in df_main.columns:
-                    df_sales_main = df_main[df_main["更新理由"].astype(str).str.contains("受注取込", na=False)].copy()
-                else:
-                    df_sales_main = df_main.copy()
-
-                sales_sum_main = (
-                    df_sales_main.groupby("商品コード", dropna=False)["増減値"]
-                    .sum()
-                    .reset_index()
-                    .rename(columns={"増減値": "増減値合計"})
-                )
-                sales_grouped = sales_grouped.merge(sales_sum_main, on="商品コード", how="left")
-                sales_grouped["増減値合計"] = sales_grouped["増減値合計"].fillna(0)
-                sales_grouped["売上個数合計"] = (-sales_grouped["増減値合計"]).astype(int)
-
-                # --- 売上集計（昨年）---
-                if df_last is not None and {"商品コード", "増減値"}.issubset(df_last.columns):
-                    if "更新理由" in df_last.columns:
-                        df_sales_last = df_last[
-                            df_last["更新理由"].astype(str).str.contains("受注取込", na=False)
-                        ].copy()
-                    else:
-                        df_sales_last = df_last.copy()
-
-                    df_sales_last["商品コード"] = df_sales_last["商品コード"].astype(str).str.strip()
-
-                    last_grouped = (
-                        df_sales_last.groupby("商品コード", dropna=False)["増減値"]
-                        .sum()
-                        .reset_index()
-                    )
-                    last_grouped["昨年売上個数"] = -last_grouped["増減値"]
-                    last_grouped = last_grouped.drop(columns=["増減値"])
-
-                    sales_grouped = sales_grouped.merge(last_grouped, on="商品コード", how="left")
-
-                sales_grouped["昨年売上個数"] = (
-                    pd.to_numeric(
-                        sales_grouped["昨年売上個数"]
-                        if "昨年売上個数" in sales_grouped.columns
-                        else pd.Series(0, index=sales_grouped.index),
-                        errors="coerce"
-                    )
-                    .fillna(0)
-                    .astype(int)
-                )
-
-                sales_grouped["現在庫"] = (
-                    pd.to_numeric(sales_grouped["現在庫"], errors="coerce")
-                    .fillna(0)
-                    .astype(int)
-                )
-
-                # 楽天在庫（RMS 在庫API 2.0・リアルタイム取得）
-                sales_grouped["楽天在庫"] = (
-                    sales_grouped["商品コード"].astype(str).str.strip().map(rakuten_stock_map)
-                )
-
-                # Amazon FBA在庫（出荷可能数量・SP-APIより取得）
-                sales_grouped["Amazon FBA在庫"] = (
-                    sales_grouped["商品コード"].astype(str).str.strip()
-                    .map(lambda k: amazon_stock_map.get(k, {}).get("fulfillable"))
-                )
-
-                # 売上個数予想（去年翌日を起点にした期間集計）
-                sales_grouped["売上個数予想"] = (
-                    sales_grouped["商品コード"].astype(str).str.strip().map(forecast_map_s).fillna(0).astype(int)
-                )
-
-                if min_total_sales > 0:
-                    sales_grouped = sales_grouped[sales_grouped["売上個数合計"] >= min_total_sales]
-
-                sales_grouped = sales_grouped.sort_values("売上個数合計", ascending=False)
-
-                # 画像列（URL形式で直接返す）
-                img_master = load_image_master()
-                base_url = "https://image.rakuten.co.jp/hype/cabinet"
-
-                def to_img_url_s(code):
-                    key = str(code).strip()
-                    rel = img_master.get(key, "")
-                    return (base_url + rel) if rel else ""
-
-                sales_grouped["画像"] = sales_grouped["商品基本コード"].apply(to_img_url_s)
-
-                # 今年・前年を別列で保持
-                sales_grouped["今年売上"] = sales_grouped["売上個数合計"].astype(int)
-                sales_grouped["前年売上"] = sales_grouped["昨年売上個数"].astype(int)
-
-                # 不要列を落とす
-                sales_grouped = sales_grouped.drop(
-                    columns=["売上個数合計", "昨年売上個数", "増減値合計",
-                             "指定日売上個数(昨年売上個数)"], errors="ignore"
-                )
-
-                display_cols = [
-                    "画像", "商品コード", "商品基本コード", "商品名",
-                    "属性1名", "属性2名", "今年売上", "前年売上", "売上個数予想", "現在庫", "楽天在庫", "Amazon FBA在庫",
-                ]
-                display_cols = [c for c in display_cols if c in sales_grouped.columns]
-                df_view = sales_grouped[display_cols]
-
-                st.markdown(
-                    f'<div class="metric-bar">'
-                    f'<div class="metric-chip">SKU数<strong>{len(df_view):,}</strong></div>'
-                    f'<div class="metric-chip">集計期間<strong>{start_date} ～ {end_date}</strong></div>'
-                    f'<div class="metric-chip">売上個数予想の期間<strong>{forecast_start_s} ～ {forecast_end_s}</strong></div>'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
-
-                if not rakuten_stock_map and not rakuten_fetching:
-                    st.caption("ℹ️ 楽天在庫が空欄の場合は、`.streamlit/secrets.toml` に楽天APIの認証情報が未設定か、取得エラーが発生しています。")
-                if not amazon_stock_map and not amazon_fetching:
-                    st.caption("ℹ️ Amazon FBA在庫が空欄の場合は、`.streamlit/secrets.toml` にAmazon APIの認証情報が未設定か、取得エラーが発生しています。")
-
-                sales_columns = [
-                    {"key": "画像", "label": "画像", "type": "image"},
-                    {"key": "商品コード", "label": "商品コード", "type": "text"},
-                    {"key": "商品基本コード", "label": "商品基本コード", "type": "text"},
-                    {"key": "商品名", "label": "商品名", "type": "text"},
-                    {"key": "属性1名", "label": "属性1名", "type": "text"},
-                    {"key": "属性2名", "label": "属性2名", "type": "text"},
-                    {"key": "今年売上", "label": "今年売上", "type": "number"},
-                    {"key": "前年売上", "label": "前年売上", "type": "number"},
-                    {"key": "売上個数予想", "label": "売上個数予想", "type": "number"},
-                    {"key": "現在庫", "label": "現在庫", "type": "number"},
-                    {"key": "楽天在庫", "label": "楽天在庫", "type": "number"},
-                    {"key": "Amazon FBA在庫", "label": "Amazon FBA在庫", "type": "number"},
-                ]
-                sales_columns = [c for c in sales_columns if c["key"] in df_view.columns]
-
-                trend_map_s = filter_trend_map(full_trend_map, df_view["商品コード"])
-
-                render_interactive_sku_table(
-                    df_view,
-                    trend_map_s,
-                    sales_columns,
-                    key="sales",
-                    event_map=filter_trend_map(full_event_map, df_view["商品コード"]),
-                    file_dates=trend_file_dates,
-                    default_sort_key="今年売上",
-                    default_sort_dir="desc",
-                    page_size=100,
-                )
+        render_interactive_sku_table(
+            df_view,
+            trend_map_s,
+            sales_columns,
+            key="sales",
+            event_map=filter_trend_map(full_event_map, df_view["商品コード"]),
+            file_dates=trend_file_dates,
+            default_sort_key="今年売上",
+            default_sort_dir="desc",
+            page_size=100,
+        )
 
         # --------------------------------------------------
         # タブ2：在庫少商品（発注目安）
