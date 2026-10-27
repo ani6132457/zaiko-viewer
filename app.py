@@ -2879,7 +2879,6 @@ def main():
 def _main_impl():
     inject_scroll_preserver()
     inject_tab_restorer()
-    st.title("Tempostar 在庫変動データ")
 
     # ---------- CSV 一覧 ----------
     _boot_step(20, "在庫変動ログのファイルを確認中…")
@@ -3430,7 +3429,6 @@ h1, h2, h3, h4,
         left, right = st.columns([1, 3])
 
         with left:
-            st.markdown('<div class="filter-card"><h3>🔍 絞り込み条件</h3>', unsafe_allow_html=True)
             st.caption(f"データ最終日：{max_date}")
 
             with st.form("restock_form"):
@@ -3478,7 +3476,6 @@ h1, h2, h3, h4,
 
                 submit_restock = st.form_submit_button("🔎 この条件で表示", use_container_width=True)
 
-            st.markdown('</div>', unsafe_allow_html=True)
 
             render_rakuten_refresh_control(
                 rakuten_fetched_at, rakuten_fetching, rakuten_errors, key="restock"
@@ -3699,7 +3696,6 @@ h1, h2, h3, h4,
 
         _filter_spacer_l, filter_col, _filter_spacer_r = st.columns([1, 2, 1])
         with filter_col:
-            st.markdown('<div class="alert-filter-card"><h3>🔍 絞り込み条件</h3>', unsafe_allow_html=True)
             st.caption(f"データ最終日：{max_date}")
 
             with st.form("alert_form"):
@@ -3732,7 +3728,6 @@ h1, h2, h3, h4,
                     st.write("")
                     submit_alert = st.form_submit_button("🔎 この条件で表示", use_container_width=True)
 
-            st.markdown('</div>', unsafe_allow_html=True)
 
         if submit_alert:
             st.session_state["alert_applied"] = True
@@ -3973,30 +3968,39 @@ h1, h2, h3, h4,
         # 絞り込み条件は上部に横並びで置き、一覧は画面幅いっぱいに表示する（列を見やすくするため）
 
         # ---------- 絞り込み条件（上部） ----------
-        st.markdown('<div class="filter-card"><h3>🔍 絞り込み条件</h3>', unsafe_allow_html=True)
-        st.caption(f"データ期間：{min_date} ～ {max_date}")
+        # キーワードと検索ボタンは常に表示し、それ以外は「⚙️ 詳細条件」の中に開閉式でまとめる。
+        # 閉じていても分かるよう、詳細条件の見出しに現在の集計期間を表示する。
+        cur_start = st.session_state.get("sku_start_date")
+        cur_end = st.session_state.get("sku_end_date")
+        detail_label = f"⚙️ 詳細条件（集計期間：{cur_start} ～ {cur_end}）"
 
         with st.form("sku_form"):
-            f1, f2, f3, f4 = st.columns([1, 1, 2, 1])
-            with f1:
-                st.date_input("開始日", key="sku_start_date", min_value=min_date, max_value=max_date)
-            with f2:
-                st.date_input("終了日", key="sku_end_date", min_value=min_date, max_value=max_date)
-            with f3:
-                st.text_input("キーワード（商品コード / 商品基本コード / 商品名）", key="sku_keyword")
-            with f4:
-                st.number_input("売上個数（この数以上）", min_value=0, key="sku_min_sales")
-
-            g1, g2, g3 = st.columns([1, 1, 3])
-            with g1:
-                st.date_input("売上個数予想 開始日", key="sku_forecast_start")
-            with g2:
-                st.date_input("売上個数予想 終了日", key="sku_forecast_end")
-            with g3:
-                st.caption("売上個数予想の期間（デフォルト：去年翌日から1ヶ月）")
+            k1, k2 = st.columns([5, 1])
+            with k1:
+                st.text_input(
+                    "キーワード（商品コード / 商品基本コード / 商品名）",
+                    key="sku_keyword",
+                    placeholder="入力して Enter でも検索できます",
+                )
+            with k2:
+                st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
                 submit_sku = st.form_submit_button("🔎 この条件で表示", use_container_width=True)
 
-        st.markdown('</div>', unsafe_allow_html=True)
+            with st.expander(detail_label, expanded=True):
+                d1, d2, d3, d4, d5 = st.columns(5)
+                with d1:
+                    st.date_input("開始日", key="sku_start_date", min_value=min_date, max_value=max_date)
+                with d2:
+                    st.date_input("終了日", key="sku_end_date", min_value=min_date, max_value=max_date)
+                with d3:
+                    st.number_input("売上個数（この数以上）", min_value=0, key="sku_min_sales")
+                with d4:
+                    st.date_input("売上個数予想 開始日", key="sku_forecast_start")
+                with d5:
+                    st.date_input("売上個数予想 終了日", key="sku_forecast_end")
+                st.caption(
+                    f"データ期間：{min_date} ～ {max_date} ｜ 売上個数予想の期間のデフォルトは「去年の翌日から1ヶ月」"
+                )
 
         # ---------- 他モールCSV（任意・アップロードした時だけ列を表示） ----------
         u1, u2 = st.columns(2)
