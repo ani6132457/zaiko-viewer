@@ -2784,6 +2784,74 @@ def save_ui_state_to_url():
         pass
 
 
+def inject_restock_scroll_keeper():
+    """発注推奨一覧タブのスクロール位置を覚えておき、他のタブから戻ってきた時に書き戻す。
+    Streamlitのタブは切り替えると中身が非表示になり、ページの高さが変わって位置がリセットされるため。
+    処理は親ページ（Streamlit本体）側に1回だけ組み込む（画面の再実行で消えないようにするため）。"""
+    js = """
+    <script>
+    (function() {
+      try {
+        var win = window.parent, doc = win.document;
+        if (win.__zvRestockScrollKeeper) return;
+        win.__zvRestockScrollKeeper = true;
+        var code = '(' + function() {
+          var TARGET = "発注推奨一覧";   // このタブ名を含むタブを対象にする
+          var savedY = null, wasVisible = false, ignoreUntil = 0;
+
+          function targetTab() {
+            var tabs = document.querySelectorAll('[role="tab"]');
+            for (var i = 0; i < tabs.length; i++) {
+              if ((tabs[i].textContent || "").indexOf(TARGET) >= 0) return tabs[i];
+            }
+            return null;
+          }
+          function isShown() {
+            // タブ自体が表示されていて（外側がテンポスター機能）、かつ選択中なら「表示中」
+            var t = targetTab();
+            return !!(t && t.getClientRects().length > 0 && t.getAttribute("aria-selected") === "true");
+          }
+          function scroller() {
+            var cands = document.querySelectorAll('[data-testid="stMain"], [data-testid="stAppViewContainer"], section.main');
+            for (var i = 0; i < cands.length; i++) {
+              var el = cands[i], oy = getComputedStyle(el).overflowY;
+              if ((oy === "auto" || oy === "scroll") && el.scrollHeight > el.clientHeight + 1) return el;
+            }
+            return null;
+          }
+          function getY() { var sc = scroller(); return sc ? sc.scrollTop : (window.scrollY || document.documentElement.scrollTop || 0); }
+          function setY(y) { var sc = scroller(); if (sc) sc.scrollTop = y; else window.scrollTo(0, y); }
+
+          // タブを押した直後は、高さが変わって位置がずれるので覚えない
+          document.addEventListener("click", function(e) {
+            if (e.target && e.target.closest && e.target.closest('[role="tab"]')) ignoreUntil = Date.now() + 400;
+          }, true);
+          window.addEventListener("scroll", function() {
+            if (Date.now() < ignoreUntil) return;
+            if (wasVisible && isShown()) savedY = getY();
+          }, true);
+
+          setInterval(function() {
+            var vis = isShown();
+            if (vis && !wasVisible && savedY !== null) {
+              var y = savedY;
+              ignoreUntil = Date.now() + 1200;
+              // 中身が描画し直されて高さが確定するまで、何回か書き戻す
+              [0, 60, 150, 300, 600, 1000].forEach(function(t) { setTimeout(function() { setY(y); }, t); });
+            }
+            wasVisible = vis;
+          }, 150);
+        } + ')();';
+        var sc = doc.createElement("script");
+        sc.textContent = code;
+        doc.head.appendChild(sc);
+      } catch (e) { /* 失敗してもアプリ本体には影響させない */ }
+    })();
+    </script>
+    """
+    components.html(js, height=0)
+
+
 def inject_tab_restorer():
     """開いているタブ（外側・内側とも）をブラウザに記録し、再起動後に同じタブを開き直す。"""
     js = """
@@ -2979,6 +3047,7 @@ def main():
 def _main_impl():
     inject_scroll_preserver()
     inject_tab_restorer()
+    inject_restock_scroll_keeper()
 
     # ---------- CSV 一覧 ----------
     _boot_step(20, "在庫変動ログのファイルを確認中…")
@@ -3509,6 +3578,19 @@ h1, h2, h3, h4,
     box-shadow: 0 4px 14px rgba(123,95,255,0.10);
 }
 
+/* 楽天在庫の「📋 ログ」ボタンが「📋 ロ…」と切れないようにする */
+[data-testid="stPopover"] button,
+[data-testid="stPopoverButton"] {
+    min-width: 110px !important;
+    white-space: nowrap !important;
+}
+[data-testid="stPopover"] button p,
+[data-testid="stPopoverButton"] p {
+    overflow: visible !important;
+    text-overflow: clip !important;
+    white-space: nowrap !important;
+}
+
 /* ===== Streamlit標準ウィジェット ===== */
 .stButton > button, .stDownloadButton > button {
     border-radius: 999px !important;
@@ -3559,6 +3641,9 @@ h1, h2, h3, h4,
         # ZOZO・Amazonの在庫補充用CSVは売上個数一覧と共通。集計期間が1ヶ月の時だけ、
         # その販売数・在庫を発注推奨数の計算に加味し、列も表示する（それ以外は非表示）。
 
+        # ---------- 他モールCSV（売上個数一覧・発注推奨一覧で共通。一番上に表示） ----------
+        zozo_data, fba_data = render_shared_csv_uploaders("restock")
+
         # ---------- 絞り込み条件（上部） ----------
         cur_months = st.session_state.get("rs_months", 1)
         cur_target = st.session_state.get("rs_target_days", 30)
@@ -3598,10 +3683,7 @@ h1, h2, h3, h4,
                     "ZOZO・Amazonは集計期間が1ヶ月の時だけ発注推奨数に加味します"
                 )
 
-        # ---------- 他モールCSV（売上個数一覧と共通） ----------
-        zozo_data, fba_data = render_shared_csv_uploaders("restock")
-
-        rc, _ = st.columns([2, 3])
+        rc, _ = st.columns([3, 2])
         with rc:
             render_rakuten_refresh_control(
                 rakuten_fetched_at, rakuten_fetching, rakuten_errors, key="restock"
@@ -3707,6 +3789,12 @@ h1, h2, h3, h4,
         # テンポスター在庫フィルターは、テンポスターの現在庫で判定する
         keep &= sales_recent["現在庫"] <= max_current_stock
 
+        # ZOZO・Amazonを加味している時は、テンポスター単体の売上を別列にして、
+        # 「売上個数合計」はテンポスター＋ZOZO＋Amazonの合計にする
+        if zozo_on or fba_on:
+            sales_recent["テンポスター売上"] = sales_recent["売上個数合計"]
+            sales_recent["売上個数合計"] = total_sales.round().astype(int)
+
         # 発注推奨数 ＝ 1日あたり売上 × 確保したい在庫日数 － 在庫
         diff = (daily_avg * target_days - total_stock).fillna(0)
         sales_recent["発注推奨数"] = diff.where(diff > 0, 0).round().astype(int)
@@ -3763,9 +3851,10 @@ h1, h2, h3, h4,
             {"key": "商品名", "label": "商品名", "type": "text"},
             {"key": "属性1名", "label": "属性1名", "type": "text"},
             {"key": "属性2名", "label": "属性2名", "type": "text"},
-            {"key": "売上個数合計", "label": "売上個数合計", "type": "number"},
+            {"key": "テンポスター売上", "label": "テンポスター売上", "type": "number"},
             {"key": "ZOZO 30日販売", "label": "ZOZO 30日販売", "type": "number"},
             {"key": "Amazon 30日販売", "label": "Amazon 30日販売", "type": "number"},
+            {"key": "売上個数合計", "label": "売上個数合計", "type": "number"},
             {"key": "売上個数予想", "label": "売上個数予想", "type": "number"},
             {"key": "現在庫", "label": "現在庫", "type": "number"},
             {"key": "楽天在庫", "label": "楽天在庫", "type": "number"},
@@ -4092,6 +4181,9 @@ h1, h2, h3, h4,
         # --- 売上個数一覧タブ ---
         # 絞り込み条件は上部に横並びで置き、一覧は画面幅いっぱいに表示する（列を見やすくするため）
 
+        # ---------- 他モールCSV（売上個数一覧・発注推奨一覧で共通。一番上に表示） ----------
+        zozo_data, fba_data = render_shared_csv_uploaders("sales")
+
         # ---------- 絞り込み条件（上部） ----------
         # キーワードと検索ボタンは常に表示し、それ以外は「⚙️ 詳細条件」の中に開閉式でまとめる。
         # 閉じていても分かるよう、詳細条件の見出しに現在の集計期間を表示する。
@@ -4127,10 +4219,7 @@ h1, h2, h3, h4,
                     f"データ期間：{min_date} ～ {max_date} ｜ 売上個数予想の期間のデフォルトは「去年の翌日から1ヶ月」"
                 )
 
-        # ---------- 他モールCSV（任意・発注推奨一覧と共通。アップロードした時だけ列を表示） ----------
-        zozo_data, fba_data = render_shared_csv_uploaders("sales")
-
-        rc, _ = st.columns([2, 3])
+        rc, _ = st.columns([3, 2])
         with rc:
             render_rakuten_refresh_control(
                 rakuten_fetched_at, rakuten_fetching, rakuten_errors, key="sales"
