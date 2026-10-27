@@ -3380,6 +3380,35 @@ h1, h2, h3, h4,
     margin-top: 8px;
 }
 
+/* ===== 検索欄・詳細条件・CSVアップロード欄：白いカードにして、背景の水玉から浮かせる ===== */
+[data-testid="stForm"] {
+    background: var(--surface) !important;
+    border: 2px solid var(--violet-soft) !important;
+    border-radius: 18px !important;
+    box-shadow: 0 4px 14px rgba(123,95,255,0.10);
+    padding: 18px 20px !important;
+}
+[data-testid="stExpander"] details {
+    background: var(--surface) !important;
+    border: 1.5px solid var(--violet-soft) !important;
+    border-radius: 14px !important;
+}
+[data-testid="stExpander"] summary {
+    background: #FAF9FF;
+    border-radius: 14px;
+}
+[data-testid="stExpander"] details[open] summary {
+    border-radius: 14px 14px 0 0;
+    border-bottom: 1px solid var(--violet-soft);
+}
+[data-testid="stFileUploader"] {
+    background: var(--surface);
+    border: 2px solid var(--violet-soft);
+    border-radius: 18px;
+    padding: 12px 14px 14px 14px;
+    box-shadow: 0 4px 14px rgba(123,95,255,0.10);
+}
+
 /* ===== Streamlit標準ウィジェット ===== */
 .stButton > button, .stDownloadButton > button {
     border-radius: 999px !important;
