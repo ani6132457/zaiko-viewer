@@ -1159,6 +1159,106 @@ def parse_fba_replenishment_report(raw: bytes, master_items: tuple):
     }, None
 
 
+# ==========================
+# 他モールCSV（ZOZO在庫日報／Amazon在庫補充レポート）の共通アップロード欄
+# ==========================
+# 売上個数一覧・発注推奨一覧のどちらでアップロードしても、両方のタブで同じCSVを使う。
+# アップロードされたファイルは session_state に保存し、アップロード欄の代わりに
+# 「読込済み：ファイル名 ✕」を表示する（✕で解除すると、アップロード欄に戻る）。
+_SHARED_CSV_SPECS = {
+    "zozo": {
+        "label": "📦 ZOZO 在庫日報CSV（任意）",
+        "help": "アップロードすると「ZOZO 30日販売」「ZOZO在庫」の列を表示します。SKUマスター（CS品番→SKU）で紐付けます。売上個数一覧・発注推奨一覧で共通です。",
+    },
+    "fba": {
+        "label": "🛒 Amazon 在庫補充レポートCSV（任意）",
+        "help": "アップロードすると「Amazon 30日販売」「Amazon FBA在庫」の列を表示します。sku_master.xlsx（AmazonSKU→テンポスターSKU）で紐付けます。売上個数一覧・発注推奨一覧で共通です。",
+    },
+}
+
+
+def _render_shared_csv_slot(kind: str, tab_key: str):
+    """1つ分のアップロード欄（または読込済み表示）を描画し、保存済みの {name, bytes} を返す。"""
+    spec = _SHARED_CSV_SPECS[kind]
+    store_key = f"shared_csv_{kind}"
+    ver_key = f"shared_csv_{kind}_ver"
+    stored = st.session_state.get(store_key)
+
+    if stored:
+        st.markdown(f"**{spec['label']}**")
+        c1, c2 = st.columns([5, 1])
+        with c1:
+            st.success(f"✅ 読込済み：{stored['name']}")
+        with c2:
+            if st.button("✕ 解除", key=f"shared_csv_clear_{kind}_{tab_key}", use_container_width=True):
+                st.session_state.pop(store_key, None)
+                # アップロード欄を作り直して、前のファイルが残らないようにする
+                st.session_state[ver_key] = st.session_state.get(ver_key, 0) + 1
+                st.rerun()
+        return stored
+
+    up = st.file_uploader(
+        spec["label"],
+        type="csv",
+        key=f"shared_csv_up_{kind}_{tab_key}_{st.session_state.get(ver_key, 0)}",
+        help=spec["help"],
+    )
+    if up is not None:
+        st.session_state[store_key] = {"name": up.name, "bytes": up.getvalue()}
+        st.rerun()   # もう一方のタブにも反映させるため、画面を作り直す
+    return None
+
+
+def render_shared_csv_uploaders(tab_key: str):
+    """ZOZO・Amazonのアップロード欄を横並びで描画し、集計済みのデータを返す。
+    戻り値: (zozo_data or None, fba_data or None)
+      各dataは parse_zozo_daily_report / parse_fba_replenishment_report の結果dict。"""
+    u1, u2 = st.columns(2)
+    with u1:
+        zozo_stored = _render_shared_csv_slot("zozo", tab_key)
+    with u2:
+        fba_stored = _render_shared_csv_slot("fba", tab_key)
+
+    zozo_data, fba_data = None, None
+    if zozo_stored:
+        sku_master_items = tuple((d["cs_no"], d["sku"]) for d in load_sku_master())
+        if not sku_master_items:
+            u1.warning("『SKUマスター』フォルダにCSV（列名: CS品番, SKU）が無いため、ZOZOのデータを紐付けできません。")
+        else:
+            zozo_data, zozo_err = parse_zozo_daily_report(zozo_stored["bytes"], sku_master_items)
+            if zozo_err:
+                u1.error(zozo_err)
+    if fba_stored:
+        df_fba_master, _ = load_fba_sku_master()
+        fba_master_items = tuple(sorted(fba_amazon_to_tempostar(df_fba_master).items()))
+        fba_data, fba_err = parse_fba_replenishment_report(fba_stored["bytes"], fba_master_items)
+        if fba_err:
+            u2.error(fba_err)
+        elif df_fba_master is None:
+            u2.caption("ℹ️ sku_master.xlsx が見つからないため、Amazon SKUをそのまま商品コードとして照合しています。")
+    return zozo_data, fba_data
+
+
+def other_csv_notes(zozo_data, fba_data, all_codes: set) -> str:
+    """他モールCSVの取り込み状況（紐付けできなかった件数など）を1行の文字列にする。"""
+    notes = []
+    if zozo_data:
+        not_in_ts = sum(1 for k in zozo_data["stock"] if k not in all_codes)
+        note = f"ZOZO在庫日報：{zozo_data['rows']:,}行"
+        if zozo_data["unmapped"]:
+            note += f"（SKUマスター未登録のCS品番 {zozo_data['unmapped']:,}件は除外）"
+        if not_in_ts:
+            note += f"／テンポスターに無い商品コード {not_in_ts:,}件"
+        notes.append(note)
+    if fba_data:
+        not_in_ts = sum(1 for k in fba_data["stock"] if k not in all_codes)
+        note = f"Amazon在庫補充レポート：{fba_data['rows']:,}行（sku_masterで変換 {fba_data['converted']:,}件）"
+        if not_in_ts:
+            note += f"／テンポスターに無い商品コード {not_in_ts:,}件"
+        notes.append(note)
+    return " ｜ ".join(notes)
+
+
 def make_html_table(df: pd.DataFrame) -> str:
     thead = "<thead><tr>" + "".join(
         f"<th>{html.escape(str(c))}</th>" for c in df.columns
@@ -3455,262 +3555,258 @@ h1, h2, h3, h4,
     # ==========================
     def render_restock_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, all_sales_map, amazon_stock_map, amazon_fetching, amazon_errors, amazon_fetched_at):
         # --- 発注推奨一覧タブ ---
-        left, right = st.columns([1, 3])
+        # 絞り込み条件は上部（キーワード常時表示＋詳細条件は開閉式）、一覧は画面幅いっぱい。
+        # ZOZO・Amazonの在庫補充用CSVは売上個数一覧と共通。集計期間が1ヶ月の時だけ、
+        # その販売数・在庫を発注推奨数の計算に加味し、列も表示する（それ以外は非表示）。
 
-        with left:
-            st.caption(f"データ最終日：{max_date}")
+        # ---------- 絞り込み条件（上部） ----------
+        cur_months = st.session_state.get("rs_months", 1)
+        cur_target = st.session_state.get("rs_target_days", 30)
+        detail_label = f"⚙️ 詳細条件（集計期間：直近{cur_months}ヶ月 ｜ 確保したい在庫：{cur_target}日分）"
 
-            with st.form("restock_form"):
+        with st.form("restock_form"):
+            k1, k2 = st.columns([5, 1])
+            with k1:
                 st.text_input(
                     "キーワード（商品コード / 商品基本コード / 商品名）",
                     key="rs_keyword",
+                    placeholder="入力して Enter でも検索できます",
                 )
-                st.number_input(
-                    "売上個数（この数以上）",
-                    min_value=0,
-                    key="rs_min_sales",
-                )
-
-                months_choices = [1, 2, 3, 4, 5, 6]
-                cur_months = st.session_state["rs_months"]
-                if cur_months not in months_choices:
-                    cur_months = 1
-                st.selectbox(
-                    "集計期間（直近◯ヶ月）",
-                    months_choices,
-                    index=months_choices.index(cur_months),
-                    key="rs_months",
-                )
-
-                st.number_input(
-                    "確保したい在庫日数",
-                    min_value=1,
-                    max_value=365,
-                    key="rs_target_days",
-                )
-
-                st.number_input(
-                    "現在庫フィルター（この数以下）",
-                    min_value=0,
-                    max_value=999999,
-                    key="rs_max_stock",
-                )
-
-                st.markdown("**売上個数予想の集計期間**（デフォルト：去年翌日から1ヶ月）")
-                fc1, fc2 = st.columns(2)
-                with fc1:
-                    st.date_input("開始日", key="rs_forecast_start")
-                with fc2:
-                    st.date_input("終了日", key="rs_forecast_end")
-
+            with k2:
+                st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
                 submit_restock = st.form_submit_button("🔎 この条件で表示", use_container_width=True)
 
+            with st.expander(detail_label, expanded=True):
+                d1, d2, d3, d4, d5, d6 = st.columns(6)
+                with d1:
+                    months_choices = [1, 2, 3, 4, 5, 6]
+                    if st.session_state["rs_months"] not in months_choices:
+                        st.session_state["rs_months"] = 1
+                    st.selectbox("集計期間（直近◯ヶ月）", months_choices, key="rs_months")
+                with d2:
+                    st.number_input("売上個数（この数以上）", min_value=0, key="rs_min_sales")
+                with d3:
+                    st.number_input("確保したい在庫日数", min_value=1, max_value=365, key="rs_target_days")
+                with d4:
+                    st.number_input("テンポスター在庫フィルター（この数以下）", min_value=0, max_value=999999, key="rs_max_stock")
+                with d5:
+                    st.date_input("売上個数予想 開始日", key="rs_forecast_start")
+                with d6:
+                    st.date_input("売上個数予想 終了日", key="rs_forecast_end")
+                st.caption(
+                    f"データ最終日：{max_date} ｜ 売上個数予想の期間のデフォルトは「去年の翌日から1ヶ月」 ｜ "
+                    "ZOZO・Amazonは集計期間が1ヶ月の時だけ発注推奨数に加味します"
+                )
 
+        # ---------- 他モールCSV（売上個数一覧と共通） ----------
+        zozo_data, fba_data = render_shared_csv_uploaders("restock")
+
+        rc, _ = st.columns([2, 3])
+        with rc:
             render_rakuten_refresh_control(
                 rakuten_fetched_at, rakuten_fetching, rakuten_errors, key="restock"
             )
 
-            if submit_restock:
-                st.session_state["restock_applied"] = True
+        if submit_restock:
+            st.session_state["restock_applied"] = True
 
-        with right:
-            if not st.session_state["restock_applied"]:
-                st.info("左側で条件を設定して『この条件で表示』を押してください。")
-            else:
-                keyword_r       = st.session_state["rs_keyword"]
-                min_total_sales_r = int(st.session_state["rs_min_sales"])
-                restock_months  = int(st.session_state["rs_months"])
-                target_days     = int(st.session_state["rs_target_days"])
-                max_current_stock = int(st.session_state["rs_max_stock"])
-                forecast_start_r = st.session_state["rs_forecast_start"]
-                forecast_end_r   = st.session_state["rs_forecast_end"]
-                forecast_map_r   = compute_forecast_map(all_sales_map, forecast_start_r, forecast_end_r)
+        # ---------- 一覧（画面幅いっぱい） ----------
+        if not st.session_state["restock_applied"]:
+            st.info("上で条件を設定して『この条件で表示』を押してください。")
+            return
 
-                end_r = max_date
-                start_r = (pd.Timestamp(max_date) - pd.DateOffset(months=restock_months)).date()
-                if start_r < min_date:
-                    start_r = min_date
+        keyword_r         = st.session_state["rs_keyword"]
+        min_total_sales_r = int(st.session_state["rs_min_sales"])
+        restock_months    = int(st.session_state["rs_months"])
+        target_days       = int(st.session_state["rs_target_days"])
+        max_current_stock = int(st.session_state["rs_max_stock"])
+        forecast_start_r  = st.session_state["rs_forecast_start"]
+        forecast_end_r    = st.session_state["rs_forecast_end"]
+        forecast_map_r    = compute_forecast_map(all_sales_map, forecast_start_r, forecast_end_r)
 
-                restock_files = [fi for fi in file_infos if start_r <= fi["date"] <= end_r]
-                if not restock_files:
-                    st.warning(f"直近{restock_months}ヶ月（{start_r} ～ {end_r}）にCSVがありません。")
-                else:
-                    restock_paths = [fi["path"] for fi in restock_files]
-                    df_restock = load_tempostar_data(restock_paths)
+        # ZOZO・Amazonを加味するのは、集計期間が1ヶ月の時だけ（CSVの販売数が直近30日のため）
+        use_other = restock_months == 1
+        zozo_on = bool(use_other and zozo_data)
+        fba_on = bool(use_other and fba_data)
 
-                    if keyword_r:
-                        cond_r = False
-                        for col in ["商品コード", "商品基本コード", "商品名"]:
-                            if col in df_restock.columns:
-                                cond_r |= df_restock[col].astype(str).str.contains(keyword_r, case=False, na=False)
-                        df_restock = df_restock[cond_r]
+        end_r = max_date
+        start_r = (pd.Timestamp(max_date) - pd.DateOffset(months=restock_months)).date()
+        if start_r < min_date:
+            start_r = min_date
 
-                    if "更新理由" in df_restock.columns:
-                        df_sales_recent = df_restock[df_restock["更新理由"] == "受注取込"].copy()
-                    else:
-                        df_sales_recent = df_restock.copy()
+        restock_files = [fi for fi in file_infos if start_r <= fi["date"] <= end_r]
+        if not restock_files:
+            st.warning(f"直近{restock_months}ヶ月（{start_r} ～ {end_r}）にCSVがありません。")
+            return
 
-                    if df_sales_recent.empty:
-                        st.warning(f"直近{restock_months}ヶ月（{start_r} ～ {end_r}）に売上データがありません。")
-                    else:
-                        agg_sales = {
-                            "商品基本コード": "last",
-                            "商品名": "last",
-                            "属性1名": "last",
-                            "属性2名": "last",
-                            "増減値": "sum",
-                        }
+        def _kw_filter(df):
+            if not keyword_r:
+                return df
+            cond = False
+            for col in ["商品コード", "商品基本コード", "商品名"]:
+                if col in df.columns:
+                    cond |= df[col].astype(str).str.contains(keyword_r, case=False, na=False)
+            return df[cond]
 
-                        sales_recent = (
-                            df_sales_recent.groupby("商品コード", dropna=False)
-                            .agg(agg_sales)
-                            .reset_index()
-                            .rename(columns={"増減値": "増減値合計"})
-                        )
-                        sales_recent["売上個数合計"] = -sales_recent["増減値合計"]
-                        sales_recent = sales_recent[sales_recent["売上個数合計"] > 0]
+        # --- 全SKUのベース（最新の商品情報・現在庫）。ZOZO・Amazonだけで売れている商品も拾えるようにする ---
+        base = get_all_sku_snapshot([fi["path"] for fi in file_infos]).copy()
+        if base.empty:
+            st.error("Tempostar CSV から商品情報を読み取れませんでした。")
+            return
+        base["商品コード"] = base["商品コード"].astype(str).str.strip()
+        all_codes = set(base["商品コード"])
+        base = _kw_filter(base)
 
-                        if min_total_sales_r > 0:
-                            sales_recent = sales_recent[sales_recent["売上個数合計"] >= min_total_sales_r]
+        # --- テンポスターの売上（集計期間内の受注取込） ---
+        df_restock = load_tempostar_data([fi["path"] for fi in restock_files])
+        if "更新理由" in df_restock.columns:
+            df_sales_recent = df_restock[df_restock["更新理由"] == "受注取込"].copy()
+        else:
+            df_sales_recent = df_restock.copy()
+        if "商品コード" in df_sales_recent.columns and "増減値" in df_sales_recent.columns:
+            df_sales_recent["商品コード"] = df_sales_recent["商品コード"].astype(str).str.strip()
+            ts_sales = (-df_sales_recent.groupby("商品コード")["増減値"].sum()).to_dict()
+        else:
+            ts_sales = {}
 
-                        if "変動後" in df_restock.columns:
-                            stock_group_r = (
-                                df_restock.groupby("商品コード", dropna=False)["変動後"]
-                                .last()
-                                .reset_index()
-                                .rename(columns={"変動後": "現在庫"})
-                            )
-                            stock_group_r["現在庫"] = (
-                                pd.to_numeric(stock_group_r["現在庫"], errors="coerce")
-                                .fillna(0)
-                                .astype(int)
-                            )
-                            sales_recent = sales_recent.merge(stock_group_r, on="商品コード", how="left")
-                        else:
-                            sales_recent["現在庫"] = 0
+        sales_recent = base
+        codes_r = sales_recent["商品コード"]
+        sales_recent["売上個数合計"] = codes_r.map(ts_sales).fillna(0).astype(int).clip(lower=0)
+        sales_recent["現在庫"] = pd.to_numeric(sales_recent["現在庫"], errors="coerce").fillna(0).astype(int)
 
-                        sales_recent["現在庫"] = (
-                            pd.to_numeric(sales_recent["現在庫"], errors="coerce")
-                            .fillna(0)
-                            .astype(int)
-                        )
+        # 楽天在庫（RMS 在庫API 2.0・リアルタイム取得）
+        sales_recent["楽天在庫"] = codes_r.map(rakuten_stock_map)
 
-                        sales_recent = sales_recent[sales_recent["現在庫"] <= max_current_stock]
+        # ZOZO・Amazon（集計期間1ヶ月かつCSVがある時だけ）
+        if zozo_on:
+            sales_recent["ZOZO 30日販売"] = codes_r.map(zozo_data["sales30"])
+            sales_recent["ZOZO在庫"] = codes_r.map(zozo_data["stock"])
+        if fba_on:
+            sales_recent["Amazon 30日販売"] = codes_r.map(fba_data["sales30"])
+            sales_recent["Amazon FBA在庫"] = codes_r.map(fba_data["stock"])
 
-                        # 楽天在庫（RMS 在庫API 2.0・リアルタイム取得）
-                        sales_recent["楽天在庫"] = (
-                            sales_recent["商品コード"].astype(str).str.strip().map(rakuten_stock_map)
-                        )
+        def _num(col):
+            if col not in sales_recent.columns:
+                return pd.Series(0, index=sales_recent.index)
+            return pd.to_numeric(sales_recent[col], errors="coerce").fillna(0)
 
-                        # Amazon FBA在庫（出荷可能数量・SP-APIより取得）
-                        sales_recent["Amazon FBA在庫"] = (
-                            sales_recent["商品コード"].astype(str).str.strip()
-                            .map(lambda k: amazon_stock_map.get(k, {}).get("fulfillable"))
-                        )
+        # 売上個数予想（去年翌日を起点にした期間集計）
+        sales_recent["売上個数予想"] = codes_r.map(forecast_map_r).fillna(0).astype(int)
 
-                        # 売上個数予想（去年翌日を起点にした期間集計）
-                        sales_recent["売上個数予想"] = (
-                            sales_recent["商品コード"].astype(str).str.strip().map(forecast_map_r).fillna(0).astype(int)
-                        )
+        # --- 全体での1日あたり売上・在庫（表示している項目だけで計算） ---
+        period_days = max((end_r - start_r).days + 1, 1)
+        other_sales30 = _num("ZOZO 30日販売") + _num("Amazon 30日販売")
+        daily_avg = sales_recent["売上個数合計"] / period_days + other_sales30 / 30
+        total_stock = _num("現在庫") + _num("ZOZO在庫") + _num("Amazon FBA在庫")
+        total_sales = sales_recent["売上個数合計"] + other_sales30   # 状態・売上個数フィルターの判定用
 
-                        img_master = load_image_master()
-                        base_url = "https://image.rakuten.co.jp/hype/cabinet"
+        # 一覧に出す商品：期間中に売上がある商品（テンポスター・ZOZO・Amazonのいずれか）
+        keep = total_sales > 0
+        if min_total_sales_r > 0:
+            keep &= total_sales >= min_total_sales_r
+        # テンポスター在庫フィルターは、テンポスターの現在庫で判定する
+        keep &= sales_recent["現在庫"] <= max_current_stock
 
-                        def to_img_url(code):
-                            key = str(code).strip()
-                            rel = img_master.get(key, "")
-                            return (base_url + rel) if rel else ""
+        # 発注推奨数 ＝ 1日あたり売上 × 確保したい在庫日数 － 在庫
+        diff = (daily_avg * target_days - total_stock).fillna(0)
+        sales_recent["発注推奨数"] = diff.where(diff > 0, 0).round().astype(int)
 
-                        sales_recent["画像"] = sales_recent["商品基本コード"].apply(to_img_url)
+        # 在庫残日数（在庫 ÷ 1日あたり売上）
+        def _days_label(stock, avg):
+            if stock <= 0:
+                return "在庫切れ"
+            if avg <= 0:
+                return "実績なし"
+            return f"{int(round(stock / avg))}日"
+        sales_recent["在庫残日数"] = [_days_label(s, a) for s, a in zip(total_stock, daily_avg)]
 
-                        # 発注推奨数計算
-                        period_days = max((end_r - start_r).days + 1, 1)
-                        one_day_avg = sales_recent["売上個数合計"] / period_days
-                        target_stock = one_day_avg * target_days
-                        target_qty = pd.to_numeric(target_stock, errors="coerce")
-                        current_stock = pd.to_numeric(sales_recent["現在庫"], errors="coerce")
-                        diff = (target_qty - current_stock).fillna(0)
-                        sales_recent["発注推奨数"] = diff.where(diff > 0, 0).round().astype(int)
+        def _status(s, v):
+            if s <= 0: return "🔴 在庫切れ"
+            if s <= 10 or s < v: return "🟡 在庫少"
+            return ""
+        sales_recent["状態"] = [_status(s, v) for s, v in zip(total_stock, total_sales)]
 
-                        # 在庫残日数（現在庫 ÷ 1日あたり平均売上個数）
-                        def _days_label(row):
-                            _, label = compute_stock_days_remaining(
-                                row["現在庫"], row["売上個数合計"], period_days
-                            )
-                            return label
-                        sales_recent["在庫残日数"] = sales_recent.apply(_days_label, axis=1)
+        # 画像
+        img_master = load_image_master()
+        base_url = "https://image.rakuten.co.jp/hype/cabinet"
 
-                        restock_view = sales_recent[sales_recent["発注推奨数"] > 0].copy()
-                        restock_view = restock_view.sort_values("発注推奨数", ascending=False)
+        def to_img_url(code):
+            key = str(code).strip()
+            rel = img_master.get(key, "")
+            return (base_url + rel) if rel else ""
 
-                        st.info(f"発注目安：直近 {restock_months} ヶ月（{start_r} ～ {end_r}）の売上から計算 ｜ 目標在庫 {target_days} 日分")
+        sales_recent["画像"] = sales_recent["商品基本コード"].apply(to_img_url)
 
-                        if restock_view.empty:
-                            st.success("✅ 発注推奨の商品はありません。")
-                        else:
-                            display_cols = [
-                                "画像", "商品コード", "商品基本コード", "商品名",
-                                "属性1名", "属性2名", "売上個数合計", "売上個数予想", "現在庫",
-                                "楽天在庫", "在庫残日数", "発注推奨数",
-                            ]
-                            display_cols = [c for c in display_cols if c in restock_view.columns]
-                            df_view_r = restock_view[display_cols].copy()
+        restock_view = sales_recent[keep & (sales_recent["発注推奨数"] > 0)].copy()
+        restock_view = restock_view.sort_values("発注推奨数", ascending=False)
 
-                            # 在庫ステータス列を追加
-                            stock_num = pd.to_numeric(df_view_r["現在庫"], errors="coerce").fillna(0).astype(int)
-                            sales_num = pd.to_numeric(df_view_r["売上個数合計"], errors="coerce").fillna(0).astype(int)
-                            def _status(s, v):
-                                if s <= 0: return "🔴 在庫切れ"
-                                if s <= 10 or s < v: return "🟡 在庫少"
-                                return ""
-                            df_view_r.insert(
-                                df_view_r.columns.tolist().index("楽天在庫") + 1,
-                                "状態",
-                                [_status(s, v) for s, v in zip(stock_num, sales_num)]
-                            )
+        if zozo_on or fba_on:
+            parts_sales = ["テンポスター"] + (["ZOZO"] if zozo_on else []) + (["Amazon"] if fba_on else [])
+            parts_stock = ["現在庫"] + (["ZOZO在庫"] if zozo_on else []) + (["FBA在庫"] if fba_on else [])
+            st.info(
+                f"発注目安：直近 1 ヶ月（{start_r} ～ {end_r}）の売上（{'＋'.join(parts_sales)}）と、"
+                f"在庫（{'＋'.join(parts_stock)}）から計算 ｜ 目標在庫 {target_days} 日分"
+            )
+        else:
+            st.info(f"発注目安：直近 {restock_months} ヶ月（{start_r} ～ {end_r}）の売上から計算 ｜ 目標在庫 {target_days} 日分")
+        if (zozo_data or fba_data) and not use_other:
+            st.caption(f"ℹ️ ZOZO・Amazonは集計期間が1ヶ月の時だけ加味します（今は{restock_months}ヶ月のため、項目と計算から外しています）。")
 
-                            st.markdown(
-                                f'<div class="metric-bar">'
-                                f'<div class="metric-chip">抽出SKU数<strong>{len(df_view_r):,}</strong></div>'
-                                f'<div class="metric-chip">集計期間<strong>{start_r} ～ {end_r}</strong></div>'
-                                f'<div class="metric-chip">売上個数予想の期間<strong>{forecast_start_r} ～ {forecast_end_r}</strong></div>'
-                                f'</div>',
-                                unsafe_allow_html=True,
-                            )
+        if restock_view.empty:
+            st.success("✅ 発注推奨の商品はありません。")
+            return
 
-                            if not rakuten_stock_map and not rakuten_fetching:
-                                st.caption("ℹ️ 楽天在庫が空欄の場合は、`.streamlit/secrets.toml` に楽天APIの認証情報が未設定か、取得エラーが発生しています。")
+        restock_columns = [
+            {"key": "画像", "label": "画像", "type": "image"},
+            {"key": "商品コード", "label": "商品コード", "type": "text"},
+            {"key": "商品基本コード", "label": "商品基本コード", "type": "text"},
+            {"key": "商品名", "label": "商品名", "type": "text"},
+            {"key": "属性1名", "label": "属性1名", "type": "text"},
+            {"key": "属性2名", "label": "属性2名", "type": "text"},
+            {"key": "売上個数合計", "label": "売上個数合計", "type": "number"},
+            {"key": "ZOZO 30日販売", "label": "ZOZO 30日販売", "type": "number"},
+            {"key": "Amazon 30日販売", "label": "Amazon 30日販売", "type": "number"},
+            {"key": "売上個数予想", "label": "売上個数予想", "type": "number"},
+            {"key": "現在庫", "label": "現在庫", "type": "number"},
+            {"key": "楽天在庫", "label": "楽天在庫", "type": "number"},
+            {"key": "ZOZO在庫", "label": "ZOZO在庫", "type": "number"},
+            {"key": "Amazon FBA在庫", "label": "Amazon FBA在庫", "type": "number"},
+            {"key": "状態", "label": "状態", "type": "status"},
+            {"key": "在庫残日数", "label": "在庫残日数", "type": "text"},
+            {"key": "発注推奨数", "label": "発注推奨数", "type": "order"},
+        ]
+        restock_columns = [c for c in restock_columns if c["key"] in restock_view.columns]
+        df_view_r = restock_view[[c["key"] for c in restock_columns]].copy()
 
-                            restock_columns = [
-                                {"key": "画像", "label": "画像", "type": "image"},
-                                {"key": "商品コード", "label": "商品コード", "type": "text"},
-                                {"key": "商品基本コード", "label": "商品基本コード", "type": "text"},
-                                {"key": "商品名", "label": "商品名", "type": "text"},
-                                {"key": "属性1名", "label": "属性1名", "type": "text"},
-                                {"key": "属性2名", "label": "属性2名", "type": "text"},
-                                {"key": "売上個数合計", "label": "売上個数合計", "type": "number"},
-                                {"key": "売上個数予想", "label": "売上個数予想", "type": "number"},
-                                {"key": "現在庫", "label": "現在庫", "type": "number"},
-                                {"key": "楽天在庫", "label": "楽天在庫", "type": "number"},
-                                {"key": "状態", "label": "状態", "type": "status"},
-                                {"key": "在庫残日数", "label": "在庫残日数", "type": "text"},
-                                {"key": "発注推奨数", "label": "発注推奨数", "type": "order"},
-                            ]
-                            restock_columns = [c for c in restock_columns if c["key"] in df_view_r.columns]
+        st.markdown(
+            f'<div class="metric-bar">'
+            f'<div class="metric-chip">抽出SKU数<strong>{len(df_view_r):,}</strong></div>'
+            f'<div class="metric-chip">集計期間<strong>{start_r} ～ {end_r}</strong></div>'
+            f'<div class="metric-chip">売上個数予想の期間<strong>{forecast_start_r} ～ {forecast_end_r}</strong></div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
 
-                            trend_map_r = filter_trend_map(full_trend_map, df_view_r["商品コード"])
+        if zozo_on or fba_on:
+            note = other_csv_notes(zozo_data if zozo_on else None, fba_data if fba_on else None, all_codes)
+            st.caption("📎 " + note + "　※ ZOZO・Amazonの販売数はCSVの直近30日の値です。")
 
-                            render_interactive_sku_table(
-                                df_view_r,
-                                trend_map_r,
-                                restock_columns,
-                                key="restock",
-                                event_map=filter_trend_map(full_event_map, df_view_r["商品コード"]),
-                                file_dates=trend_file_dates,
-                                default_sort_key="発注推奨数",
-                                default_sort_dir="desc",
-                                page_size=100,
-                            )
+        if not rakuten_stock_map and not rakuten_fetching:
+            st.caption("ℹ️ 楽天在庫が空欄の場合は、`.streamlit/secrets.toml` に楽天APIの認証情報が未設定か、取得エラーが発生しています。")
+
+        trend_map_r = filter_trend_map(full_trend_map, df_view_r["商品コード"])
+
+        render_interactive_sku_table(
+            df_view_r,
+            trend_map_r,
+            restock_columns,
+            key="restock",
+            event_map=filter_trend_map(full_event_map, df_view_r["商品コード"]),
+            file_dates=trend_file_dates,
+            default_sort_key="発注推奨数",
+            default_sort_dir="desc",
+            page_size=100,
+        )
 
     def render_alert_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, amazon_stock_map, amazon_fetching, amazon_errors, amazon_fetched_at):
         # --- 在庫アラートタブ ---
@@ -4031,40 +4127,8 @@ h1, h2, h3, h4,
                     f"データ期間：{min_date} ～ {max_date} ｜ 売上個数予想の期間のデフォルトは「去年の翌日から1ヶ月」"
                 )
 
-        # ---------- 他モールCSV（任意・アップロードした時だけ列を表示） ----------
-        u1, u2 = st.columns(2)
-        with u1:
-            zozo_file = st.file_uploader(
-                "📦 ZOZO 在庫日報CSV（任意）",
-                type="csv",
-                key="sales_zozo_csv",
-                help="アップロードすると「ZOZO 30日販売」「ZOZO在庫」の列を表示します。SKUマスター（CS品番→SKU）で紐付けます。",
-            )
-        with u2:
-            fba_file = st.file_uploader(
-                "🛒 Amazon 在庫補充レポートCSV（任意）",
-                type="csv",
-                key="sales_fba_csv",
-                help="アップロードすると「Amazon 30日販売」「Amazon FBA在庫」の列を表示します。sku_master.xlsx（AmazonSKU→テンポスターSKU）で紐付けます。",
-            )
-
-        zozo_data, fba_data = None, None
-        if zozo_file is not None:
-            sku_master_items = tuple((d["cs_no"], d["sku"]) for d in load_sku_master())
-            if not sku_master_items:
-                u1.warning("『SKUマスター』フォルダにCSV（列名: CS品番, SKU）が無いため、ZOZOのデータを紐付けできません。")
-            else:
-                zozo_data, zozo_err = parse_zozo_daily_report(zozo_file.getvalue(), sku_master_items)
-                if zozo_err:
-                    u1.error(zozo_err)
-        if fba_file is not None:
-            df_fba_master, _ = load_fba_sku_master()
-            fba_master_items = tuple(sorted(fba_amazon_to_tempostar(df_fba_master).items()))
-            fba_data, fba_err = parse_fba_replenishment_report(fba_file.getvalue(), fba_master_items)
-            if fba_err:
-                u2.error(fba_err)
-            elif df_fba_master is None:
-                u2.caption("ℹ️ sku_master.xlsx が見つからないため、Amazon SKUをそのまま商品コードとして照合しています。")
+        # ---------- 他モールCSV（任意・発注推奨一覧と共通。アップロードした時だけ列を表示） ----------
+        zozo_data, fba_data = render_shared_csv_uploaders("sales")
 
         rc, _ = st.columns([2, 3])
         with rc:
@@ -4294,24 +4358,10 @@ h1, h2, h3, h4,
         st.markdown(f'<div class="metric-bar">{"".join(chips)}</div>', unsafe_allow_html=True)
 
         # 他モールCSVの取り込み状況（紐付けできなかった件数など）
-        notes = []
-        if zozo_data:
-            not_in_ts = sum(1 for k in zozo_data["stock"] if k not in all_codes)
-            note = f"ZOZO在庫日報：{zozo_data['rows']:,}行"
-            if zozo_data["unmapped"]:
-                note += f"（SKUマスター未登録のCS品番 {zozo_data['unmapped']:,}件は除外）"
-            if not_in_ts:
-                note += f"／テンポスターに無い商品コード {not_in_ts:,}件"
-            notes.append(note)
-        if fba_data:
-            not_in_ts = sum(1 for k in fba_data["stock"] if k not in all_codes)
-            note = f"Amazon在庫補充レポート：{fba_data['rows']:,}行（sku_masterで変換 {fba_data['converted']:,}件）"
-            if not_in_ts:
-                note += f"／テンポスターに無い商品コード {not_in_ts:,}件"
-            notes.append(note)
-        if notes:
+        notes_text = other_csv_notes(zozo_data, fba_data, all_codes)
+        if notes_text:
             st.caption(
-                "📎 " + " ｜ ".join(notes) +
+                "📎 " + notes_text +
                 "　※ ZOZO・Amazonの販売数はCSVの直近30日の値です（上の集計期間とは別）。"
             )
 
