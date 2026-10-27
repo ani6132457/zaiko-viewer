@@ -2022,6 +2022,24 @@ def render_interactive_sku_table(
 
   function positionModalNear(rowEl) {
     const wrap = modalWrap;
+    // 枠の中のスクロールが無い表（ページ全体の1本スクロール）では、
+    // 親ページで今見えている範囲（固定タブの下〜画面下端）の中央にグラフを出す
+    if (AUTO_H) {
+      const frame = findSelfIframe();
+      if (frame) {
+        const fr = frame.getBoundingClientRect();
+        const bar = parentTopBar();
+        const viewH = window.parent.innerHeight;
+        const visTop = Math.max(0, bar - fr.top);               // この表の中での、見えている範囲の上端
+        const visH = Math.max(0, viewH - Math.max(bar, fr.top)); // 見えている範囲の高さ
+        const boxH = wrap.firstElementChild ? wrap.firstElementChild.offsetHeight : 0;
+        let top = visTop + Math.max(10, (visH - boxH) / 2);
+        const maxTop = document.documentElement.scrollHeight - boxH - 10;
+        if (maxTop > 0) top = Math.min(top, maxTop);
+        wrap.style.top = Math.max(0, top) + "px";
+        return;
+      }
+    }
     if (!rowEl) {
       wrap.style.top = "40px";
       return;
