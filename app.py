@@ -1473,6 +1473,7 @@ def render_interactive_sku_table(
     font-family: 'M PLUS Rounded 1c', sans-serif; letter-spacing:0.03em; padding:12px 10px; border-bottom:2px solid #fff; white-space:nowrap;
     position: sticky; top: 0; z-index: 2; cursor: pointer; user-select: none; }
   .sku-table th .arrow { margin-left:4px; opacity:0.5; font-size:10px; }
+  .sku-table thead.stuck th { box-shadow: 0 3px 6px -2px rgba(42,36,64,0.18); }
   .sku-table th.sorted .arrow { opacity:1; color: var(--accent); }
   .sku-table td { padding:9px 10px; border-bottom:1px solid #f1eefc; vertical-align:middle; color:var(--ink); }
   .sku-table tbody tr { cursor:pointer; }
@@ -2074,8 +2075,89 @@ def render_interactive_sku_table(
     if (e.key === "Escape" && backdrop.classList.contains("open")) closeModal();
   });
 
-  prevBtn.addEventListener("click", function() { if (page > 1) { page--; renderBody(); } });
-  nextBtn.addEventListener("click", function() { if (page < totalPages()) { page++; renderBody(); } });
+  // ---------- 枠の中のスクロールが無い時（ページ全体の1本スクロール）の補助 ----------
+  // この表は Streamlit の中に高さいっぱいで埋め込まれ、スクロールは親ページ側で起きるため、CSSの sticky が効かない。
+  // 親ページのスクロール位置から「見出しが画面上端（固定タブの下）に来る位置」を計算して、見出しをずらして表示する。
+  const AUTO_H = __AUTO_H__;
+  function findSelfIframe() {
+    try {
+      const frames = window.parent.document.querySelectorAll("iframe");
+      for (let i = 0; i < frames.length; i++) if (frames[i].contentWindow === window) return frames[i];
+    } catch (e) {}
+    return null;
+  }
+  function parentTopBar() {
+    // 親ページで画面上部に固定表示されているタブ列の下端（無ければ0）
+    let bottom = 0;
+    try {
+      const pdoc = window.parent.document;
+      pdoc.querySelectorAll('[role="tablist"]').forEach(function(list) {
+        const r = list.getBoundingClientRect();
+        if (r.height > 0 && r.top >= -1 && r.top < 200 && r.bottom < 260 &&
+            window.parent.getComputedStyle(list).position === "fixed") {
+          bottom = Math.max(bottom, r.bottom);
+        }
+      });
+    } catch (e) {}
+    return bottom;
+  }
+  function parentScroller() {
+    try {
+      const pdoc = window.parent.document;
+      const cands = pdoc.querySelectorAll('[data-testid="stMain"], [data-testid="stAppViewContainer"], section.main');
+      for (let i = 0; i < cands.length; i++) {
+        const el = cands[i], oy = window.parent.getComputedStyle(el).overflowY;
+        if ((oy === "auto" || oy === "scroll") && el.scrollHeight > el.clientHeight + 1) return el;
+      }
+    } catch (e) {}
+    return null;
+  }
+  const tableEl = document.getElementById("tbl_" + KEY);
+  let stickyRaf = 0;
+  function updateStickyHead() {
+    stickyRaf = 0;
+    const frame = findSelfIframe();
+    const thead = tableEl && tableEl.tHead;
+    if (!frame || !thead) return;
+    const fr = frame.getBoundingClientRect();
+    if (fr.height === 0) return;   // タブが非表示の間は何もしない
+    const tr = tableEl.getBoundingClientRect();
+    const headH = thead.offsetHeight;
+    let off = parentTopBar() - (fr.top + tr.top);
+    off = Math.max(0, Math.min(off, tr.height - headH));
+    const val = off > 0 ? "translateY(" + off + "px)" : "";
+    thead.querySelectorAll("th").forEach(function(th) { th.style.transform = val; });
+    thead.classList.toggle("stuck", off > 0);
+  }
+  function scheduleSticky() { if (!stickyRaf) stickyRaf = requestAnimationFrame(updateStickyHead); }
+  function scrollToTableTop() {
+    // ページを切り替えたら、表の先頭（見出しのすぐ下）が見える位置まで戻す
+    const frame = findSelfIframe();
+    if (!frame) return;
+    const target = frame.getBoundingClientRect().top + tableEl.getBoundingClientRect().top - parentTopBar() - 8;
+    if (target >= 0) return;   // すでに表の先頭が見えている
+    try {
+      const sc = parentScroller();
+      if (sc) sc.scrollTop += target; else window.parent.scrollBy(0, target);
+    } catch (e) {}
+  }
+  if (AUTO_H) {
+    try {
+      window.parent.addEventListener("scroll", scheduleSticky, true);
+      window.parent.addEventListener("resize", scheduleSticky);
+      // 画面の再実行でこの表が作り直される時は、親ページに付けた処理を外す
+      window.addEventListener("pagehide", function() {
+        try {
+          window.parent.removeEventListener("scroll", scheduleSticky, true);
+          window.parent.removeEventListener("resize", scheduleSticky);
+        } catch (e) {}
+      });
+    } catch (e) {}
+    setInterval(scheduleSticky, 400);
+  }
+
+  prevBtn.addEventListener("click", function() { if (page > 1) { page--; renderBody(); if (AUTO_H) { scrollToTableTop(); scheduleSticky(); } } });
+  nextBtn.addEventListener("click", function() { if (page < totalPages()) { page++; renderBody(); if (AUTO_H) { scrollToTableTop(); scheduleSticky(); } } });
 
   applySort();
   renderHead();
@@ -2089,6 +2171,7 @@ def render_interactive_sku_table(
         .replace("__KEY__", key)
         .replace("__TABLE_MAXH__", str(max(height - 120, 300)))
         .replace("__SCROLL_AREA_EXTRA_CLASS__", "auto-h" if auto_height else "")
+        .replace("__AUTO_H__", "true" if auto_height else "false")
         .replace("__DATA_JSON__", data_json)
         .replace("__TREND_JSON__", trend_json)
         .replace("__EVENTS_JSON__", events_json)
@@ -2785,7 +2868,7 @@ def save_ui_state_to_url():
 
 
 def inject_restock_scroll_keeper():
-    """発注推奨一覧タブのスクロール位置を覚えておき、他のタブから戻ってきた時に書き戻す。
+    """発注推奨一覧・売上個数一覧タブのスクロール位置を覚えておき、他のタブから戻ってきた時に書き戻す。
     Streamlitのタブは切り替えると中身が非表示になり、ページの高さが変わって位置がリセットされるため。
     処理は親ページ（Streamlit本体）側に1回だけ組み込む（画面の再実行で消えないようにするため）。"""
     js = """
@@ -2793,22 +2876,22 @@ def inject_restock_scroll_keeper():
     (function() {
       try {
         var win = window.parent, doc = win.document;
-        if (win.__zvRestockScrollKeeper) return;
-        win.__zvRestockScrollKeeper = true;
+        if (win.__zvTabScrollKeeper2) return;
+        win.__zvTabScrollKeeper2 = true;
         var code = '(' + function() {
-          var TARGET = "発注推奨一覧";   // このタブ名を含むタブを対象にする
-          var savedY = null, wasVisible = false, ignoreUntil = 0;
+          var TARGETS = ["発注推奨一覧", "売上個数一覧"];   // このタブ名を含むタブを対象にする
+          var savedY = {}, wasVisible = {}, ignoreUntil = 0;
 
-          function targetTab() {
+          function targetTab(name) {
             var tabs = document.querySelectorAll('[role="tab"]');
             for (var i = 0; i < tabs.length; i++) {
-              if ((tabs[i].textContent || "").indexOf(TARGET) >= 0) return tabs[i];
+              if ((tabs[i].textContent || "").indexOf(name) >= 0) return tabs[i];
             }
             return null;
           }
-          function isShown() {
+          function isShown(name) {
             // タブ自体が表示されていて（外側がテンポスター機能）、かつ選択中なら「表示中」
-            var t = targetTab();
+            var t = targetTab(name);
             return !!(t && t.getClientRects().length > 0 && t.getAttribute("aria-selected") === "true");
           }
           function scroller() {
@@ -2828,18 +2911,22 @@ def inject_restock_scroll_keeper():
           }, true);
           window.addEventListener("scroll", function() {
             if (Date.now() < ignoreUntil) return;
-            if (wasVisible && isShown()) savedY = getY();
+            TARGETS.forEach(function(name) {
+              if (wasVisible[name] && isShown(name)) savedY[name] = getY();
+            });
           }, true);
 
           setInterval(function() {
-            var vis = isShown();
-            if (vis && !wasVisible && savedY !== null) {
-              var y = savedY;
-              ignoreUntil = Date.now() + 1200;
-              // 中身が描画し直されて高さが確定するまで、何回か書き戻す
-              [0, 60, 150, 300, 600, 1000].forEach(function(t) { setTimeout(function() { setY(y); }, t); });
-            }
-            wasVisible = vis;
+            TARGETS.forEach(function(name) {
+              var vis = isShown(name);
+              if (vis && !wasVisible[name] && savedY[name] != null) {
+                var y = savedY[name];
+                ignoreUntil = Date.now() + 1200;
+                // 中身が描画し直されて高さが確定するまで、何回か書き戻す
+                [0, 60, 150, 300, 600, 1000].forEach(function(t) { setTimeout(function() { setY(y); }, t); });
+              }
+              wasVisible[name] = vis;
+            });
           }, 150);
         } + ')();';
         var sc = doc.createElement("script");
@@ -3895,6 +3982,7 @@ h1, h2, h3, h4,
             default_sort_key="発注推奨数",
             default_sort_dir="desc",
             page_size=100,
+            auto_height=True,
         )
 
     def render_alert_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, amazon_stock_map, amazon_fetching, amazon_errors, amazon_fetched_at):
@@ -4469,6 +4557,7 @@ h1, h2, h3, h4,
             default_sort_key="今年売上",
             default_sort_dir="desc",
             page_size=100,
+            auto_height=True,
         )
 
         # --------------------------------------------------
