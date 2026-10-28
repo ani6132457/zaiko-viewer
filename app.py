@@ -1482,6 +1482,16 @@ def render_interactive_sku_table(
   .sku-table tbody tr.selected { background:var(--violet-soft); }
   .sku-table img { max-height:56px; width:auto; display:block; margin:auto; border-radius:8px; }
   .sku-table td.num, .sku-table th.num { text-align:right; font-variant-numeric: tabular-nums; white-space:nowrap; }
+  /* 強調列（売上個数合計・現在庫など）：太字・少し大きめ＋列全体にごく薄い色 */
+  .sku-table td.emph-violet { font-weight:800; font-size:15px; color:#4B2FD6; background:rgba(123,95,255,0.07); }
+  .sku-table th.emph-violet { background:#E2DAFF; color:#4B2FD6; }
+  .sku-table td.emph-blue   { font-weight:800; font-size:15px; color:#1C6FD1; background:rgba(46,140,255,0.07); }
+  .sku-table th.emph-blue   { background:#DCEBFF; color:#1C6FD1; }
+  .sku-table tbody tr:hover td.emph-violet, .sku-table tbody tr:hover td.emph-blue,
+  .sku-table tbody tr.selected td.emph-violet, .sku-table tbody tr.selected td.emph-blue { background:transparent; }
+  /* 状態列の「📦 10/15 注文済」 */
+  .ordered-badge { display:inline-block; margin-top:3px; font-size:11px; font-weight:700; white-space:nowrap;
+    color:#B35A00; background:#FFF1DC; border:1px solid #FFD8A8; border-radius:10px; padding:1px 8px; }
   .sku-table td.name-cell { max-width:320px; }
   .name-clamp {
     display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
@@ -1662,9 +1672,13 @@ def render_interactive_sku_table(
     }
     if (col.type === "status") {
       if (!val) return "";
-      const cls = String(val).indexOf("在庫切れ") >= 0 ? "stock-danger"
-                : (String(val).indexOf("在庫少") >= 0 ? "stock-warn" : "");
-      return '<span class="' + cls + '">' + escapeHtml(val) + '</span>';
+      const parts = String(val).split("｜");
+      const main = parts[0];
+      const cls = main.indexOf("在庫切れ") >= 0 ? "stock-danger"
+                : (main.indexOf("在庫少") >= 0 ? "stock-warn" : "");
+      let html = main ? '<span class="' + cls + '">' + escapeHtml(main) + '</span>' : "";
+      if (parts[1]) html += (html ? "<br>" : "") + '<span class="ordered-badge">' + escapeHtml(parts[1]) + '</span>';
+      return html;
     }
     if (col.type === "alert") {
       if (!val) return "";
@@ -1687,6 +1701,7 @@ def render_interactive_sku_table(
     COLUMNS.forEach(function(col) {
       const th = document.createElement("th");
       if (col.type === "number" || col.type === "order") th.classList.add("num");
+      if (col.emph) th.classList.add("emph-" + col.emph);
       th.textContent = col.label;
       const arrow = document.createElement("span");
       arrow.className = "arrow";
@@ -1752,6 +1767,7 @@ def render_interactive_sku_table(
       COLUMNS.forEach(function(col) {
         const td = document.createElement("td");
         if (col.type === "number" || col.type === "order") td.classList.add("num");
+        if (col.emph) td.classList.add("emph-" + col.emph);
         if (col.key === "商品名") td.classList.add("name-cell");
         if (col.type === "text") td.classList.add("cell-text-select");
         td.innerHTML = cellHtml(col, row[col.key]);
@@ -1827,6 +1843,11 @@ def render_interactive_sku_table(
     });
     const ot = otherPosNegText(e.op || 0, e.on || 0);
     if (ot) lines.push("🔧 その他: " + ot);
+    (e.od || []).forEach(function(o) {
+      lines.push('<span style="color:#FFD08A;">📦 注文（' + escapeHtml(o[0]) + '）: ' +
+        escapeHtml(o[1] || "属性未記入") + (o[2] !== null && o[2] !== "" ? " " + escapeHtml(o[2]) + "個" : "") +
+        (o[3] ? "（" + escapeHtml(o[3]) + "）" : "") + '</span>');
+    });
     if (!lines.length) return "";
     return '<div style="margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.3);">' +
       '<span style="opacity:0.7;">この日の内訳</span><br>' + lines.join("<br>") + "</div>";
@@ -1862,7 +1883,7 @@ def render_interactive_sku_table(
     let pointsSvg = "";        // 変動があった点（手前に描く・反応エリア大）
     let filledSvg = "";        // 変動が無かった日の点（奥に描く・反応エリア小）
     let auraSvg = "";
-    let hasAura = false, hasFilled = false;
+    let hasAura = false, hasFilled = false, hasOrder = false, orderSvg = "";
     let prevVal = null;
     points.forEach(function(p, i) {
       const x = xAt(i), y = yAt(p.value);
@@ -1876,6 +1897,12 @@ def render_interactive_sku_table(
       }
       prevVal = p.value;
       const ev = (EVENTS[selectedSku] || {})[p.date];
+      if (ev && ev.od && ev.od.length) {
+        // 注文日：オレンジの縦の点線と、上端に「注文」ラベル
+        hasOrder = true;
+        orderSvg += '<line x1="' + x + '" y1="' + padT + '" x2="' + x + '" y2="' + (H - padB) + '" stroke="#FF8A3D" stroke-width="1.5" stroke-dasharray="4 3" opacity="0.85" pointer-events="none"></line>' +
+          '<text x="' + x + '" y="' + (padT - 8) + '" text-anchor="middle" font-size="11" font-weight="700" fill="#E26A12" pointer-events="none">📦注文</text>';
+      }
       if (ev && ev.c && ev.c.length) {
         hasAura = true;
         auraSvg += '<circle class="chart-aura" cx="' + x + '" cy="' + y + '" r="17" fill="url(#aura_' + KEY + ')"></circle>' +
@@ -1907,11 +1934,12 @@ def render_interactive_sku_table(
         '<stop offset="0.55" stop-color="#2EC5FF" stop-opacity="0.28"></stop>' +
         '<stop offset="1" stop-color="#2EC5FF" stop-opacity="0"></stop></radialGradient></defs>' +
       '<path d="' + pathD + '" fill="none" stroke="#7B5FFF" stroke-width="2"></path>' +
-      auraSvg + filledSvg + pointsSvg + xLabelsSvg +
+      orderSvg + auraSvg + filledSvg + pointsSvg + xLabelsSvg +
       '</svg>' +
       '<div class="chart-tooltip"></div>' +
       '</div>' +
       '<div class="chart-legend">' +
+        (hasOrder ? '<span style="color:#E26A12;">┆ オレンジの点線＝発注履歴の注文日（点にカーソルを合わせると属性・注文数を表示）</span>' + (hasAura || hasFilled ? '　／　' : '') : '') +
         (hasAura ? '◎ 青いオーラ＝その日に在庫CSV取込があった点' : '') +
         (hasAura && hasFilled ? '　／　' : '') +
         (hasFilled ? '薄い小さな点＝在庫の変動がなかった日' : '') +
@@ -2331,6 +2359,67 @@ def load_order_history_sheet(spreadsheet_id: str, _cache_bust: int = 0) -> tuple
         return pd.DataFrame(), f"スプレッドシートの読み込みに失敗しました（APIエラー）: {e}"
     except Exception as e:
         return pd.DataFrame(), f"スプレッドシートの読み込みに失敗しました: {e}"
+
+
+# ==========================
+# 発注履歴 → 発注推奨一覧（注文済表示・グラフの注文日）
+# ==========================
+# スプレッドシートの列：発注日付 / 商品番号（＝商品基本コード）/ 属性（カラー・サイズ）/ 注文数 / 備考
+def parse_order_history(df_hist: pd.DataFrame) -> pd.DataFrame:
+    """発注履歴シートを、[日付(date), 基本コード, 属性, 注文数, 備考] に整える。読めない行は除外。"""
+    cols = ["日付", "基本コード", "属性", "注文数", "備考"]
+    if df_hist is None or df_hist.empty or not {"発注日付", "商品番号"}.issubset(df_hist.columns):
+        return pd.DataFrame(columns=cols)
+    df = pd.DataFrame()
+    df["日付"] = pd.to_datetime(df_hist["発注日付"].astype(str).str.strip(), errors="coerce").dt.date
+    code = df_hist["商品番号"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+    df["基本コード"] = code
+    df["属性"] = df_hist["属性"].astype(str).str.strip() if "属性" in df_hist.columns else ""
+    df["注文数"] = df_hist["注文数"].astype(str).str.strip() if "注文数" in df_hist.columns else ""
+    df["備考"] = df_hist["備考"].astype(str).str.strip() if "備考" in df_hist.columns else ""
+    df = df[df["日付"].notna() & (df["基本コード"] != "") & (df["基本コード"].str.lower() != "nan")]
+    return df[cols]
+
+
+def latest_order_date_map(orders: pd.DataFrame, since, until) -> dict:
+    """since〜until（両端含む）に注文がある基本コード → 一番新しい注文日。"""
+    if orders.empty:
+        return {}
+    o = orders[(orders["日付"] >= since) & (orders["日付"] <= until)]
+    return o.groupby("基本コード")["日付"].max().to_dict()
+
+
+def add_order_events(event_map: dict, sku_to_base: dict, orders: pd.DataFrame, file_dates) -> dict:
+    """グラフ用の内訳マップに、注文日のイベント（od）を足した新しいdictを返す（元のキャッシュは変更しない）。
+    注文日がCSVの無い日（グラフに点が無い日）の場合は、その日以降で一番近いCSVの日に寄せる。"""
+    if orders.empty or not sku_to_base:
+        return event_map
+    import bisect
+    dates = sorted(file_dates or [])
+    by_base = {}
+    for r in orders.itertuples(index=False):
+        d = r.日付.strftime("%Y-%m-%d")
+        i = bisect.bisect_left(dates, d)
+        if i >= len(dates):
+            continue   # グラフの範囲より後の注文
+        attr = "" if r.属性 in ("", "nan") else r.属性
+        qty = "" if r.注文数 in ("", "nan") else r.注文数
+        note = "" if r.備考 in ("", "nan") else r.備考
+        by_base.setdefault(r.基本コード, []).append(
+            (dates[i], [f"{r.日付.month}/{r.日付.day}", attr, qty, note])
+        )
+    out = dict(event_map)
+    for sku, base in sku_to_base.items():
+        items = by_base.get(base)
+        if not items:
+            continue
+        days = dict(out.get(sku, {}))
+        for snap, entry in items:
+            slot = dict(days.get(snap, {}))
+            slot["od"] = list(slot.get("od", [])) + [entry]
+            days[snap] = slot
+        out[sku] = days
+    return out
 
 
 @st.fragment
@@ -3933,6 +4022,24 @@ h1, h2, h3, h4,
         restock_view = sales_recent[keep & (sales_recent["発注推奨数"] > 0)].copy()
         restock_view = restock_view.sort_values("発注推奨数", ascending=False)
 
+        # --- 発注履歴：今日から1ヶ月以内に注文がある商品に「📦 10/15 注文済」を付ける ---
+        # 発注履歴は商品基本コード単位のため、その基本コードのすべてのSKUに付く（一番新しい注文日を表示）
+        hist_df, hist_err = load_order_history_sheet(
+            ORDER_HISTORY_SPREADSHEET_ID, st.session_state.get("order_history_cache_bust", 0)
+        )
+        orders = parse_order_history(hist_df)
+        today = datetime.now(timezone(timedelta(hours=9))).date()   # 日本時間の今日
+        since = (pd.Timestamp(today) - pd.DateOffset(months=1)).date()
+        ordered_map = latest_order_date_map(orders, since, today)
+        if ordered_map and not restock_view.empty:
+            base_codes = restock_view["商品基本コード"].astype(str).str.strip()
+            def _with_order(status, base):
+                d = ordered_map.get(base)
+                if d is None:
+                    return status
+                return f"{status}｜📦 {d.month}/{d.day} 注文済"
+            restock_view["状態"] = [_with_order(st_, b) for st_, b in zip(restock_view["状態"], base_codes)]
+
         if zozo_on or fba_on:
             parts_sales = ["テンポスター"] + (["ZOZO"] if zozo_on else []) + (["Amazon"] if fba_on else [])
             parts_stock = ["現在庫"] + (["ZOZO在庫"] if zozo_on else []) + (["FBA在庫"] if fba_on else [])
@@ -3959,9 +4066,9 @@ h1, h2, h3, h4,
             {"key": "テンポスター売上", "label": "テンポスター売上", "type": "number"},
             {"key": "ZOZO 30日販売", "label": "ZOZO 30日販売", "type": "number"},
             {"key": "Amazon 30日販売", "label": "Amazon 30日販売", "type": "number"},
-            {"key": "売上個数合計", "label": "売上個数合計", "type": "number"},
+            {"key": "売上個数合計", "label": "売上個数合計", "type": "number", "emph": "violet"},
             {"key": "売上個数予想", "label": "売上個数予想", "type": "number"},
-            {"key": "現在庫", "label": "現在庫", "type": "number"},
+            {"key": "現在庫", "label": "現在庫", "type": "number", "emph": "blue"},
             {"key": "楽天在庫", "label": "楽天在庫", "type": "number"},
             {"key": "ZOZO在庫", "label": "ZOZO在庫", "type": "number"},
             {"key": "Amazon FBA在庫", "label": "Amazon FBA在庫", "type": "number"},
@@ -3987,15 +4094,25 @@ h1, h2, h3, h4,
 
         if not rakuten_stock_map and not rakuten_fetching:
             st.caption("ℹ️ 楽天在庫が空欄の場合は、`.streamlit/secrets.toml` に楽天APIの認証情報が未設定か、取得エラーが発生しています。")
+        if hist_err:
+            st.caption(f"ℹ️ 発注履歴を読み込めなかったため、注文済の表示はしていません（{hist_err}）")
 
         trend_map_r = filter_trend_map(full_trend_map, df_view_r["商品コード"])
+        # グラフに発注履歴の注文日（属性・注文数）を重ねる
+        sku_to_base_r = dict(zip(
+            df_view_r["商品コード"].astype(str).str.strip(),
+            restock_view.loc[df_view_r.index, "商品基本コード"].astype(str).str.strip(),
+        ))
+        event_map_r = add_order_events(
+            filter_trend_map(full_event_map, df_view_r["商品コード"]), sku_to_base_r, orders, trend_file_dates
+        )
 
         render_interactive_sku_table(
             df_view_r,
             trend_map_r,
             restock_columns,
             key="restock",
-            event_map=filter_trend_map(full_event_map, df_view_r["商品コード"]),
+            event_map=event_map_r,
             file_dates=trend_file_dates,
             default_sort_key="発注推奨数",
             default_sort_dir="desc",
@@ -4532,12 +4649,12 @@ h1, h2, h3, h4,
             {"key": "商品名", "label": "商品名", "type": "text"},
             {"key": "属性1名", "label": "属性1名", "type": "text"},
             {"key": "属性2名", "label": "属性2名", "type": "text"},
-            {"key": "今年売上", "label": "今年売上", "type": "number"},
+            {"key": "今年売上", "label": "今年売上", "type": "number", "emph": "violet"},
             {"key": "前年売上", "label": "前年売上", "type": "number"},
             {"key": "ZOZO 30日販売", "label": "ZOZO 30日販売", "type": "number"},
             {"key": "Amazon 30日販売", "label": "Amazon 30日販売", "type": "number"},
             {"key": "売上個数予想", "label": "売上個数予想", "type": "number"},
-            {"key": "現在庫", "label": "現在庫", "type": "number"},
+            {"key": "現在庫", "label": "現在庫", "type": "number", "emph": "blue"},
             {"key": "楽天在庫", "label": "楽天在庫", "type": "number"},
             {"key": "ZOZO在庫", "label": "ZOZO在庫", "type": "number"},
             {"key": "Amazon FBA在庫", "label": "Amazon FBA在庫", "type": "number"},
