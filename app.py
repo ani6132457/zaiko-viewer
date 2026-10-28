@@ -1518,8 +1518,8 @@ def render_interactive_sku_table(
   .modal-backdrop.open { display:block; }
   .modal-box-wrap { display:none; position:absolute; left:0; width:100%; z-index:1000; text-align:center; }
   .modal-box-wrap.open { display:block; }
-  .modal-box { display:inline-block; text-align:left; background:#fff; border-radius:20px; width:min(940px, 95vw); max-height:640px;
-    overflow-y:auto; padding:18px 20px 20px 20px; box-shadow:0 16px 44px rgba(42,36,64,0.28); }
+  .modal-box { display:inline-block; text-align:left; background:#fff; border-radius:20px; width:min(940px, 95vw);
+    overflow:visible; padding:18px 20px 20px 20px; box-shadow:0 16px 44px rgba(42,36,64,0.28); }
   .modal-box h4 { margin:0 0 10px 0; font-size:15px; font-family:'M PLUS Rounded 1c', sans-serif; color:var(--ink); }
   .modal-close { float:right; border:none; background:var(--violet-soft); color:var(--violet); border-radius:999px; padding:5px 14px;
     cursor:pointer; font-weight:600; font-size:13px; }
@@ -1868,8 +1868,10 @@ def render_interactive_sku_table(
 
   function buildChartSvg(points) {
     const anyOrder = points.some(function(p) { return (((EVENTS[selectedSku] || {})[p.date] || {}).od || []).length > 0; });
-    const ORDER_ROW = anyOrder ? 30 : 0;   // 札の段の高さ
-    const W = 860, H = 420 + ORDER_ROW, padL = 56, padR = 24, padT = 24, padB = 40 + ORDER_ROW;
+    const ORDER_ROW = anyOrder ? 28 : 0;   // 札の段の高さ（グラフ本体と日付の目盛りの間）
+    // グラフ画面にスクロールが出ないよう、本体の高さは控えめにする
+    const W = 860, H = 350 + ORDER_ROW, padL = 56, padR = 24, padT = 18, padB = 40 + ORDER_ROW;
+    const plotBottom = H - padB;
     const innerW = W - padL - padR, innerH = H - padT - padB;
     const values = points.map(function(p) { return p.value; });
     let vMin = Math.min.apply(null, values), vMax = Math.max.apply(null, values);
@@ -1915,11 +1917,11 @@ def render_interactive_sku_table(
       if (ev && ev.od && ev.od.length) {
         // 注文日：オレンジの縦の点線と、上端に「注文」ラベル
         hasOrder = true;
-        orderSvg += '<line x1="' + x + '" y1="' + padT + '" x2="' + x + '" y2="' + (H - 24) + '" stroke="#FF8A3D" stroke-width="1.5" stroke-dasharray="4 3" opacity="0.85" pointer-events="none"></line>';
+        orderSvg += '<line x1="' + x + '" y1="' + padT + '" x2="' + x + '" y2="' + (plotBottom + 4) + '" stroke="#FF8A3D" stroke-width="1.5" stroke-dasharray="4 3" opacity="0.85" pointer-events="none"></line>';
         // 「📦注文」の文字にカーソルを合わせると、その日の注文内容（属性・注文数）を表示する
         orderLabelSvg += '<g class="order-label" data-date="' + escapeHtml(p.date) + '">' +
-          '<rect x="' + (x - 26) + '" y="' + (H - 24) + '" width="52" height="20" rx="6" fill="#FFF1DC" stroke="#FFD8A8"></rect>' +
-          '<text x="' + x + '" y="' + (H - 10) + '" text-anchor="middle" font-size="11" font-weight="700" fill="#E26A12" pointer-events="none">📦注文</text></g>';
+          '<rect x="' + (x - 26) + '" y="' + (plotBottom + 4) + '" width="52" height="20" rx="6" fill="#FFF1DC" stroke="#FFD8A8"></rect>' +
+          '<text x="' + x + '" y="' + (plotBottom + 18) + '" text-anchor="middle" font-size="11" font-weight="700" fill="#E26A12" pointer-events="none">📦注文</text></g>';
       }
       if (ev && ev.c && ev.c.length) {
         hasAura = true;
@@ -1936,13 +1938,38 @@ def render_interactive_sku_table(
       if (real) pointsSvg += pointSvg; else filledSvg += pointSvg;
     });
 
-    const labelIdxs = points.length <= 10
-      ? points.map(function(_, i) { return i; })
-      : [0, Math.floor((points.length - 1) / 2), points.length - 1];
-    let xLabelsSvg = "";
-    labelIdxs.forEach(function(i) {
-      xLabelsSvg += '<text class="axis-label" x="' + xAt(i) + '" y="' + (H - padB + 20) + '" text-anchor="middle">' + points[i].date + '</text>';
+    // 各月の最初の点（＝その月の1日。CSVが無い日はその月で一番早い日）を探す
+    const monthStarts = [];
+    let prevYm = null;
+    points.forEach(function(p, i) {
+      const ym = p.date.slice(0, 7);
+      if (ym !== prevYm) {
+        if (i > 0 || p.date.slice(8, 10) === "01") monthStarts.push(i);   // 期間の初日が月の途中なら、その月は除く
+        prevYm = ym;
+      }
     });
+    const labelY = plotBottom + ORDER_ROW + 20;
+    const labelStep = Math.max(1, Math.ceil(monthStarts.length / 12));   // 13ヶ月以上の時はラベルを間引く
+    let monthLinesSvg = "", xLabelsSvg = "";
+    const labeledXs = [];
+    monthStarts.forEach(function(i, k) {
+      const x = xAt(i);
+      monthLinesSvg += '<line x1="' + x + '" y1="' + padT + '" x2="' + x + '" y2="' + plotBottom + '" stroke="#B9B3D6" stroke-width="1" stroke-dasharray="3 4" pointer-events="none"></line>';
+      if (k % labelStep !== 0) return;
+      const y = Number(points[i].date.slice(0, 4)), m = Number(points[i].date.slice(5, 7));
+      const text = (m === 1 || labeledXs.length === 0) ? (y + "/" + m + "/1") : (m + "/1");
+      xLabelsSvg += '<text class="axis-label" x="' + x + '" y="' + labelY + '" text-anchor="middle">' + text + '</text>';
+      labeledXs.push(x);
+    });
+    // 月の1日が1つも無い（期間が短い）時は、期間の最初と最後の日付を出す
+    if (labeledXs.length === 0 && points.length) {
+      [0, points.length - 1].forEach(function(i, k) {
+        if (k === 1 && i === 0) return;
+        const d = points[i].date;
+        xLabelsSvg += '<text class="axis-label" x="' + xAt(i) + '" y="' + labelY + '" text-anchor="' + (k === 0 ? "start" : "end") + '">' +
+          Number(d.slice(5, 7)) + "/" + Number(d.slice(8, 10)) + '</text>';
+      });
+    }
 
     return '<div class="chart-wrap">' +
       '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto;display:block;">' +
@@ -1952,7 +1979,7 @@ def render_interactive_sku_table(
         '<stop offset="0.55" stop-color="#2EC5FF" stop-opacity="0.28"></stop>' +
         '<stop offset="1" stop-color="#2EC5FF" stop-opacity="0"></stop></radialGradient></defs>' +
       '<path d="' + pathD + '" fill="none" stroke="#7B5FFF" stroke-width="2"></path>' +
-      orderSvg + auraSvg + filledSvg + pointsSvg + xLabelsSvg + orderLabelSvg +
+      monthLinesSvg + orderSvg + auraSvg + filledSvg + pointsSvg + xLabelsSvg + orderLabelSvg +
       '</svg>' +
       '<div class="chart-tooltip"></div>' +
       '</div>' +
