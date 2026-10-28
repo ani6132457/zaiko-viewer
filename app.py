@@ -1867,7 +1867,9 @@ def render_interactive_sku_table(
   }
 
   function buildChartSvg(points) {
-    const W = 860, H = 420, padL = 56, padR = 24, padT = 24, padB = 40;
+    const anyOrder = points.some(function(p) { return (((EVENTS[selectedSku] || {})[p.date] || {}).od || []).length > 0; });
+    const ORDER_ROW = anyOrder ? 30 : 0;   // 札の段の高さ
+    const W = 860, H = 420 + ORDER_ROW, padL = 56, padR = 24, padT = 24, padB = 40 + ORDER_ROW;
     const innerW = W - padL - padR, innerH = H - padT - padB;
     const values = points.map(function(p) { return p.value; });
     let vMin = Math.min.apply(null, values), vMax = Math.max.apply(null, values);
@@ -1913,11 +1915,11 @@ def render_interactive_sku_table(
       if (ev && ev.od && ev.od.length) {
         // 注文日：オレンジの縦の点線と、上端に「注文」ラベル
         hasOrder = true;
-        orderSvg += '<line x1="' + x + '" y1="' + padT + '" x2="' + x + '" y2="' + (H - padB) + '" stroke="#FF8A3D" stroke-width="1.5" stroke-dasharray="4 3" opacity="0.85" pointer-events="none"></line>';
+        orderSvg += '<line x1="' + x + '" y1="' + padT + '" x2="' + x + '" y2="' + (H - 24) + '" stroke="#FF8A3D" stroke-width="1.5" stroke-dasharray="4 3" opacity="0.85" pointer-events="none"></line>';
         // 「📦注文」の文字にカーソルを合わせると、その日の注文内容（属性・注文数）を表示する
         orderLabelSvg += '<g class="order-label" data-date="' + escapeHtml(p.date) + '">' +
-          '<rect x="' + (x - 26) + '" y="' + (padT - 22) + '" width="52" height="20" rx="6" fill="#FFF1DC" stroke="#FFD8A8"></rect>' +
-          '<text x="' + x + '" y="' + (padT - 8) + '" text-anchor="middle" font-size="11" font-weight="700" fill="#E26A12" pointer-events="none">📦注文</text></g>';
+          '<rect x="' + (x - 26) + '" y="' + (H - 24) + '" width="52" height="20" rx="6" fill="#FFF1DC" stroke="#FFD8A8"></rect>' +
+          '<text x="' + x + '" y="' + (H - 10) + '" text-anchor="middle" font-size="11" font-weight="700" fill="#E26A12" pointer-events="none">📦注文</text></g>';
       }
       if (ev && ev.c && ev.c.length) {
         hasAura = true;
@@ -1955,7 +1957,7 @@ def render_interactive_sku_table(
       '<div class="chart-tooltip"></div>' +
       '</div>' +
       '<div class="chart-legend">' +
-        (hasOrder ? '<span style="color:#E26A12;">┆ オレンジの点線＝発注履歴の注文日（上の「📦注文」にカーソルを合わせると属性・注文数を表示）</span>' + (hasAura || hasFilled ? '　／　' : '') : '') +
+        (hasOrder ? '<span style="color:#E26A12;">┆ オレンジの点線＝発注履歴の注文日（下の「📦注文」にカーソルを合わせると属性・注文数を表示）</span>' + (hasAura || hasFilled ? '　／　' : '') : '') +
         (hasAura ? '◎ 青いオーラ＝その日に在庫CSV取込があった点' : '') +
         (hasAura && hasFilled ? '　／　' : '') +
         (hasFilled ? '薄い小さな点＝在庫の変動がなかった日' : '') +
@@ -1970,7 +1972,7 @@ def render_interactive_sku_table(
       lab.addEventListener("mouseenter", function() {
         if (!tooltip || !wrap) return;
         tooltip.innerHTML = orderTipHtml(selectedSku, lab.dataset.date);
-        tooltip.classList.add("below");
+        tooltip.classList.remove("below");
         tooltip.style.display = "block";
         const r = lab.getBoundingClientRect();
         const wrapRect = wrap.getBoundingClientRect();
@@ -1978,7 +1980,7 @@ def render_interactive_sku_table(
         let left = r.left - wrapRect.left + r.width / 2;
         left = Math.max(half + 4, Math.min(wrapRect.width - half - 4, left));
         tooltip.style.left = left + "px";
-        tooltip.style.top = (r.bottom - wrapRect.top) + "px";
+        tooltip.style.top = (r.top - wrapRect.top) + "px";
       });
       lab.addEventListener("mouseleave", function() {
         if (!tooltip) return;
