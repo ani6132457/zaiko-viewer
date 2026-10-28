@@ -326,14 +326,42 @@
   }
   .stock-modal {
     background: var(--surface);
-    border-radius: 12px;
+    border-radius: 20px;
     padding: 18px 20px 20px 20px;
-    width: 700px;
-    max-width: 92vw;
-    max-height: 86vh;
-    overflow: auto;
-    box-shadow: 0 12px 36px rgba(0,0,0,0.25);
+    width: min(940px, 95vw);
+    overflow: visible;
+    box-shadow: 0 16px 44px rgba(42,36,64,0.28);
   }
+  /* 在庫推移グラフ（テンポスター機能・Amazon機能と同じ見た目） */
+  .sc-period-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .sc-period-btn { border: 2px solid #ECE7FF; background: #fff; color: #7B5FFF; border-radius: 999px;
+    padding: 5px 16px; font-size: 12px; font-weight: 600; cursor: pointer; font-family: inherit; }
+  .sc-period-btn.active { background: #FF6B4A; border-color: #FF6B4A; color: #fff; font-weight: 700; }
+  .sc-period-sep { color: #ccc; margin: 0 2px; }
+  .sc-period-custom { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); }
+  .sc-period-custom input[type="date"] { border: 2px solid #ECE7FF; border-radius: 8px; padding: 4px 6px; font-size: 12px; font-family: inherit; }
+  .sc-period-apply { border: 2px solid #FF6B4A; background: #fff; color: #FF6B4A; border-radius: 999px;
+    padding: 4px 14px; font-size: 12px; font-weight: 600; cursor: pointer; font-family: inherit; }
+  .sc-period-apply:hover { background: #FFE7DE; }
+  .sc-summary { display: none; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin: -4px 0 12px 0; padding: 8px 12px;
+    background: #ECE7FF; border-radius: 12px; font-size: 12px; line-height: 1.6; color: #2A2440; }
+  .sc-summary .ps-title { font-weight: 700; color: #7B5FFF; }
+  .sc-summary .ps-item { background: #fff; border-radius: 999px; padding: 2px 10px; white-space: nowrap; }
+  .sc-summary .ps-empty { color: var(--text-muted); }
+  .sc-wrap { position: relative; }
+  .sc-grid { stroke: #f1eefc; stroke-width: 1; }
+  .sc-axis { font-size: 10px; fill: #74708C; }
+  .sc-dot { transition: r 0.12s ease, fill 0.12s ease; }
+  .sc-tooltip { position: absolute; display: none; background: #2A2440; color: #fff; font-size: 12px; padding: 6px 10px; border-radius: 8px;
+    pointer-events: none; white-space: nowrap; transform: translate(-50%, -100%); margin-top: -10px; z-index: 10; line-height: 1.5; }
+  .sc-tooltip:after { content: ""; position: absolute; top: 100%; left: 50%; transform: translateX(-50%); border: 5px solid transparent; border-top-color: #2A2440; }
+  @keyframes sc-aurapulse { 0%,100% { transform: scale(0.85); opacity: 0.95; } 50% { transform: scale(1.3); opacity: 0.5; } }
+  .sc-aura { transform-box: fill-box; transform-origin: center; animation: sc-aurapulse 2.2s ease-in-out infinite; pointer-events: none; }
+  @media (prefers-reduced-motion: reduce) { .sc-aura { animation: none; } }
+  .sc-legend { font-size: 11px; color: #74708C; margin-top: 6px; }
+  .sc-order-label { cursor: pointer; }
+  .sc-order-label:hover text { fill: #B34A00; text-decoration: underline; }
+  .sc-nodata { color: var(--text-muted); font-size: 13px; padding: 20px 0; }
   .stock-modal-head {
     display: flex;
     align-items: center;
@@ -356,7 +384,23 @@
       <span id="stock-modal-title" class="stock-modal-title">📈 在庫推移</span>
       <button class="export-btn" onclick="closeStockModal()">✕ 閉じる</button>
     </div>
-    <div id="stock-modal-body"></div>
+    <div id="stock-modal-body">
+      <div class="sc-period-bar" id="sc-periodbar">
+        <button class="sc-period-btn" data-preset="1" onclick="scApplyPreset(1)">1ヶ月</button>
+        <button class="sc-period-btn" data-preset="3" onclick="scApplyPreset(3)">3ヶ月</button>
+        <button class="sc-period-btn" data-preset="6" onclick="scApplyPreset(6)">6ヶ月</button>
+        <button class="sc-period-btn" data-preset="12" onclick="scApplyPreset(12)">1年</button>
+        <span class="sc-period-sep">|</span>
+        <span class="sc-period-custom">
+          <input type="date" id="sc-start">
+          <span>〜</span>
+          <input type="date" id="sc-end">
+          <button class="sc-period-apply" onclick="scApplyCustom()">適用</button>
+        </span>
+      </div>
+      <div class="sc-summary" id="sc-summary"></div>
+      <div id="sc-chartarea"></div>
+    </div>
   </div>
 </div>
 
@@ -875,132 +919,330 @@ function handleAllRowClick(event, rowId) {
   openStockModal(row.sku, row.name || row.cs_no);
 }
 
-function renderStockChart(container, history) {
-  if (!history || history.length === 0) {
-    container.innerHTML = `<p style="color:var(--text-muted);font-size:13px;">在庫推移データがありません。</p>`;
+// ── 在庫推移グラフ（テンポスター機能・Amazon機能のグラフと同じ内容） ──
+// 期間ボタン・期間合計・在庫CSV取込のオーラ・日ごとの内訳・各月1日の点線・発注履歴の「📦注文」
+// データはStreamlit側から注入：__STOCK_HISTORY__（推移）／__STOCK_EVENTS__（内訳）／__FILE_DATES__（CSVのある日）／__ORDER_EVENTS__（注文日）
+const SC = {
+  sku: null,
+  points: [],
+  events: {},
+  fileDates: [],
+};
+(function initStockChartData() {
+  SC.events = (typeof window.__STOCK_EVENTS__ === 'object' && window.__STOCK_EVENTS__) ? window.__STOCK_EVENTS__ : {};
+  SC.fileDates = Array.isArray(window.__FILE_DATES__) ? window.__FILE_DATES__.slice().sort() : [];
+  const OE = (typeof window.__ORDER_EVENTS__ === 'object' && window.__ORDER_EVENTS__) ? window.__ORDER_EVENTS__ : {};
+  Object.keys(OE).forEach(sku => {
+    const days = SC.events[sku] = SC.events[sku] || {};
+    Object.keys(OE[sku]).forEach(d => {
+      const slot = days[d] = days[d] || {};
+      slot.od = (OE[sku][d] || {}).od || [];
+    });
+  });
+})();
+
+function scFmtNum(v) { return (v == null || v === '') ? '' : Number(v).toLocaleString('ja-JP'); }
+function scSigned(n) { return (n > 0 ? '+' : '') + scFmtNum(n); }
+function scOtherText(pos, neg) {
+  const parts = [];
+  if (pos) parts.push('+' + scFmtNum(pos));
+  if (neg) parts.push('−' + scFmtNum(Math.abs(neg)));
+  return parts.join(' / ');
+}
+
+// 指定期間の内訳を集計する（startStr〜endStr、両端含む）
+function scSummarize(sku, startStr, endStr) {
+  const days = SC.events[sku] || {};
+  let sales = 0, hasSales = false, otherPos = 0, otherNeg = 0;
+  const users = {};
+  Object.keys(days).forEach(d => {
+    if (d < startStr || d > endStr) return;
+    const e = days[d];
+    if (e.s !== undefined) { sales += e.s; hasSales = true; }
+    if (e.op !== undefined) otherPos += e.op;
+    if (e.on !== undefined) otherNeg += e.on;
+    (e.c || []).forEach(c => {
+      if (!users[c[0]]) users[c[0]] = { n: 0, delta: 0 };
+      users[c[0]].n += c[1];
+      users[c[0]].delta += c[2];
+    });
+  });
+  return { sales, hasSales, otherPos, otherNeg, users };
+}
+
+function scRenderSummary(startStr, endStr) {
+  const el = document.getElementById('sc-summary');
+  const r = scSummarize(SC.sku, startStr, endStr);
+  const items = [];
+  if (r.hasSales) items.push('<span class="ps-item">🛒 売上: <b>' + scFmtNum(r.sales) + '個</b></span>');
+  Object.keys(r.users).forEach(u => {
+    items.push('<span class="ps-item">📥 在庫CSV取込 ' + esc(u) + '×' + r.users[u].n + '回（' + scSigned(r.users[u].delta) + '）</span>');
+  });
+  const ot = scOtherText(r.otherPos, r.otherNeg);
+  if (ot) items.push('<span class="ps-item">🔧 その他の増減: <b>' + ot + '</b></span>');
+  el.innerHTML = '<span class="ps-title">📊 期間合計（' + esc(startStr) + ' 〜 ' + esc(endStr) + '）</span>' +
+    (items.length ? items.join('') : '<span class="ps-empty">この期間の内訳データはありません</span>');
+  el.style.display = 'flex';
+}
+
+// 点のチップ用：その日の内訳（HTML）
+function scDayLines(sku, dateStr) {
+  const e = (SC.events[sku] || {})[dateStr];
+  if (!e) return '';
+  const lines = [];
+  if (e.s !== undefined) lines.push('🛒 売上: ' + scFmtNum(e.s) + '個');
+  (e.c || []).forEach(c => {
+    lines.push('📥 在庫CSV取込: ' + esc(c[0]) + (c[1] > 1 ? '×' + c[1] + '回' : '') + '（' + scSigned(c[2]) + '）');
+  });
+  const ot = scOtherText(e.op || 0, e.on || 0);
+  if (ot) lines.push('🔧 その他: ' + ot);
+  if (!lines.length) return '';
+  return '<div style="margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.3);">' +
+    '<span style="opacity:0.7;">この日の内訳</span><br>' + lines.join('<br>') + '</div>';
+}
+
+// 「📦注文」ラベル用：その日の注文内容（HTML）
+function scOrderTip(sku, dateStr) {
+  const od = ((SC.events[sku] || {})[dateStr] || {}).od || [];
+  if (!od.length) return '';
+  const byDate = {};
+  od.forEach(o => { (byDate[o[0]] = byDate[o[0]] || []).push(o); });
+  return Object.keys(byDate).map(d =>
+    '<b>📦 ' + esc(d) + ' 注文</b><br>' + byDate[d].map(o =>
+      esc(o[1] || '属性未記入') + (o[2] !== null && o[2] !== '' ? '：' + esc(o[2]) + '個' : '') +
+      (o[3] ? '<span style="opacity:0.75;">（' + esc(o[3]) + '）</span>' : '')
+    ).join('<br>')
+  ).join('<div style="height:4px;"></div>');
+}
+
+function scBuildSvg(points) {
+  const anyOrder = points.some(p => (((SC.events[SC.sku] || {})[p.date] || {}).od || []).length > 0);
+  const ORDER_ROW = anyOrder ? 28 : 0;   // 札の段の高さ（グラフ本体と日付の目盛りの間）
+  // グラフ画面にスクロールが出ないよう、本体の高さは控えめにする
+  const W = 860, H = 350 + ORDER_ROW, padL = 56, padR = 24, padT = 18, padB = 40 + ORDER_ROW;
+  const plotBottom = H - padB;
+  const innerW = W - padL - padR, innerH = H - padT - padB;
+  const values = points.map(p => p.value);
+  let vMin = Math.min.apply(null, values), vMax = Math.max.apply(null, values);
+  if (vMin === vMax) { vMin -= 1; vMax += 1; }
+  const pad = (vMax - vMin) * 0.1;
+  vMin -= pad; vMax += pad;
+  const xAt = i => points.length <= 1 ? padL + innerW / 2 : padL + (innerW * i) / (points.length - 1);
+  const yAt = v => padT + innerH - ((v - vMin) / (vMax - vMin)) * innerH;
+
+  let gridSvg = '';
+  for (let g = 0; g <= 4; g++) {
+    const yy = padT + (innerH * g) / 4;
+    const val = vMax - ((vMax - vMin) * g) / 4;
+    gridSvg += '<line class="sc-grid" x1="' + padL + '" y1="' + yy + '" x2="' + (W - padR) + '" y2="' + yy + '"></line>';
+    gridSvg += '<text class="sc-axis" x="' + (padL - 8) + '" y="' + (yy + 4) + '" text-anchor="end">' + Math.round(val) + '</text>';
+  }
+
+  let pathD = '', pointsSvg = '', filledSvg = '', auraSvg = '', orderSvg = '', orderLabelSvg = '';
+  let hasAura = false, hasFilled = false, hasOrder = false, prevVal = null;
+  points.forEach((p, i) => {
+    const x = xAt(i), y = yAt(p.value);
+    pathD += (i === 0 ? 'M' : 'L') + x + ',' + y + ' ';
+    let diffText = '—';
+    if (prevVal !== null) { const d = p.value - prevVal; diffText = d > 0 ? ('+' + d) : String(d); }
+    prevVal = p.value;
+    const ev = (SC.events[SC.sku] || {})[p.date];
+    if (ev && ev.od && ev.od.length) {
+      hasOrder = true;
+      orderSvg += '<line x1="' + x + '" y1="' + padT + '" x2="' + x + '" y2="' + (plotBottom + 4) + '" stroke="#FF8A3D" stroke-width="1.5" stroke-dasharray="4 3" opacity="0.85" pointer-events="none"></line>';
+      orderLabelSvg += '<g class="sc-order-label" data-date="' + esc(p.date) + '">' +
+        '<rect x="' + (x - 26) + '" y="' + (plotBottom + 4) + '" width="52" height="20" rx="6" fill="#FFF1DC" stroke="#FFD8A8"></rect>' +
+        '<text x="' + x + '" y="' + (plotBottom + 18) + '" text-anchor="middle" font-size="11" font-weight="700" fill="#E26A12" pointer-events="none">📦注文</text></g>';
+    }
+    if (ev && ev.c && ev.c.length) {
+      hasAura = true;
+      auraSvg += '<circle class="sc-aura" cx="' + x + '" cy="' + y + '" r="17" fill="url(#sc_aura)"></circle>' +
+        '<circle cx="' + x + '" cy="' + y + '" r="8.5" fill="none" stroke="#2EC5FF" stroke-width="1.5" opacity="0.9" pointer-events="none"></circle>';
+    }
+    const real = p.real !== false;
+    if (!real) hasFilled = true;
+    const baseR = real ? 4.5 : 3;
+    const hitR = real ? 12 : 4;   // 変動の無い日の点は反応エリアを小さくして、変動のある点にカーソルが合いやすくする
+    const pt = '<circle class="sc-dot" cx="' + x + '" cy="' + y + '" r="' + baseR + '" fill="#7B5FFF"' + (real ? '' : ' opacity="0.55"') + ' data-r="' + baseR + '"></circle>' +
+      '<circle class="sc-hit" cx="' + x + '" cy="' + y + '" r="' + hitR + '" fill="transparent" style="cursor:pointer" ' +
+      'data-date="' + esc(p.date) + '" data-value="' + p.value + '" data-diff="' + esc(diffText) + '" data-real="' + (real ? '1' : '0') + '"></circle>';
+    if (real) pointsSvg += pt; else filledSvg += pt;
+  });
+
+  // 横軸：各月の1日に目盛りと縦の点線（1日にCSVが無い月は、その月で一番早い日。期間が長い時はラベルだけ間引く）
+  const monthStarts = [];
+  let prevYm = null;
+  points.forEach((p, i) => {
+    const ym = p.date.slice(0, 7);
+    if (ym !== prevYm) {
+      if (i > 0 || p.date.slice(8, 10) === '01') monthStarts.push(i);   // 期間の初日が月の途中なら、その月は除く
+      prevYm = ym;
+    }
+  });
+  const labelY = plotBottom + ORDER_ROW + 20;
+  const labelStep = Math.max(1, Math.ceil(monthStarts.length / 12));
+  let monthLinesSvg = '', xLabelsSvg = '', labeled = 0;
+  monthStarts.forEach((i, k) => {
+    const x = xAt(i);
+    monthLinesSvg += '<line x1="' + x + '" y1="' + padT + '" x2="' + x + '" y2="' + plotBottom + '" stroke="#B9B3D6" stroke-width="1" stroke-dasharray="3 4" pointer-events="none"></line>';
+    if (k % labelStep !== 0) return;
+    const y = Number(points[i].date.slice(0, 4)), m = Number(points[i].date.slice(5, 7));
+    const text = (m === 1 || labeled === 0) ? (y + '/' + m + '/1') : (m + '/1');
+    xLabelsSvg += '<text class="sc-axis" x="' + x + '" y="' + labelY + '" text-anchor="middle">' + text + '</text>';
+    labeled++;
+  });
+  if (labeled === 0 && points.length) {
+    [0, points.length - 1].forEach((i, k) => {
+      if (k === 1 && i === 0) return;
+      const d = points[i].date;
+      xLabelsSvg += '<text class="sc-axis" x="' + xAt(i) + '" y="' + labelY + '" text-anchor="' + (k === 0 ? 'start' : 'end') + '">' +
+        Number(d.slice(5, 7)) + '/' + Number(d.slice(8, 10)) + '</text>';
+    });
+  }
+
+  return '<div class="sc-wrap">' +
+    '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto;display:block;">' +
+    gridSvg +
+    '<defs><radialGradient id="sc_aura">' +
+      '<stop offset="0" stop-color="#2EC5FF" stop-opacity="0.75"></stop>' +
+      '<stop offset="0.55" stop-color="#2EC5FF" stop-opacity="0.28"></stop>' +
+      '<stop offset="1" stop-color="#2EC5FF" stop-opacity="0"></stop></radialGradient></defs>' +
+    monthLinesSvg + orderSvg +
+    '<path d="' + pathD + '" fill="none" stroke="#7B5FFF" stroke-width="2"></path>' +
+    auraSvg + filledSvg + pointsSvg + xLabelsSvg + orderLabelSvg +
+    '</svg>' +
+    '<div class="sc-tooltip"></div>' +
+    '</div>' +
+    '<div class="sc-legend">' +
+      (hasOrder ? '<span style="color:#E26A12;">┆ オレンジの点線＝発注履歴の注文日（下の「📦注文」にカーソルを合わせると属性・注文数を表示）</span>' + (hasAura || hasFilled ? '　／　' : '') : '') +
+      (hasAura ? '◎ 青いオーラ＝その日に在庫CSV取込があった点' : '') +
+      (hasAura && hasFilled ? '　／　' : '') +
+      (hasFilled ? '薄い小さな点＝在庫の変動がなかった日' : '') +
+    '</div>';
+}
+
+function scWireHover(area) {
+  const wrap = area.querySelector('.sc-wrap');
+  const tooltip = area.querySelector('.sc-tooltip');
+  if (!wrap || !tooltip) return;
+  function place(el) {
+    const r = el.getBoundingClientRect();
+    const wr = wrap.getBoundingClientRect();
+    const half = tooltip.offsetWidth / 2;
+    let left = r.left - wr.left + r.width / 2;
+    left = Math.max(half + 4, Math.min(wr.width - half - 4, left));
+    tooltip.style.left = left + 'px';
+    tooltip.style.top = (r.top - wr.top) + 'px';
+  }
+  area.querySelectorAll('.sc-hit').forEach(hit => {
+    const dot = hit.previousElementSibling;
+    hit.addEventListener('mouseenter', () => {
+      dot.setAttribute('r', '6.5');
+      dot.setAttribute('fill', '#FF6B4A');
+      tooltip.innerHTML = esc(hit.dataset.date) + '<br>在庫: ' + esc(hit.dataset.value) + '（前回比 ' + esc(hit.dataset.diff) + '）' +
+        (hit.dataset.real === '0' ? '<div style="opacity:0.7;margin-top:2px;">この日は在庫の変動なし</div>' : '') +
+        scDayLines(SC.sku, hit.dataset.date);
+      tooltip.style.display = 'block';
+      place(hit);
+    });
+    hit.addEventListener('mouseleave', () => {
+      dot.setAttribute('r', dot.dataset.r || '4.5');
+      dot.setAttribute('fill', '#7B5FFF');
+      tooltip.style.display = 'none';
+    });
+  });
+  area.querySelectorAll('.sc-order-label').forEach(lab => {
+    lab.addEventListener('mouseenter', () => {
+      tooltip.innerHTML = scOrderTip(SC.sku, lab.dataset.date);
+      tooltip.style.display = 'block';
+      place(lab);
+    });
+    lab.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
+  });
+}
+
+// 変動があった日の点に、CSVはあるが変動が無かった日を前日の在庫数で埋めた系列を作る
+function scBuildSeries(history) {
+  if (!history || !history.length) return [];
+  const toIso = d => (d && d.length === 8) ? d.slice(0, 4) + '-' + d.slice(4, 6) + '-' + d.slice(6, 8) : d;
+  const raw = history.map(h => ({ date: toIso(h.d), value: Number(h.stock) }));
+  const byDate = {};
+  raw.forEach(p => { byDate[p.date] = p.value; });
+  const first = raw[0].date;
+  const dateSet = {};
+  raw.forEach(p => { dateSet[p.date] = true; });
+  SC.fileDates.forEach(d => { if (d >= first) dateSet[d] = true; });
+  const out = [];
+  let last = null;
+  Object.keys(dateSet).sort().forEach(d => {
+    if (byDate[d] !== undefined) { last = byDate[d]; out.push({ date: d, value: last, real: true }); }
+    else if (last !== null) out.push({ date: d, value: last, real: false });
+  });
+  return out;
+}
+
+function scSubtractMonths(dateStr, months) {
+  const d = new Date(dateStr + 'T00:00:00');
+  d.setMonth(d.getMonth() - months);
+  const p = n => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+}
+
+function scDrawRange(startStr, endStr) {
+  const area = document.getElementById('sc-chartarea');
+  const filtered = SC.points.filter(p => p.date >= startStr && p.date <= endStr);
+  scRenderSummary(startStr, endStr);
+  if (!filtered.length) {
+    area.innerHTML = '<p class="sc-nodata">この期間の在庫推移データがありません。</p>';
     return;
   }
-  const width = 640, height = 260;
-  const padding = { top: 20, right: 20, bottom: 34, left: 46 };
-  const values = history.map(h => h.stock);
-  let maxV = Math.max(...values, 0);
-  let minV = Math.min(...values, 0);
-  if (maxV === minV) { maxV += 1; minV -= 1; }
-  const n = history.length;
-  const innerW = width - padding.left - padding.right;
-  const innerH = height - padding.top - padding.bottom;
-  const xStep = n > 1 ? innerW / (n - 1) : 0;
-  const yScale = v => padding.top + innerH - ((v - minV) / (maxV - minV)) * innerH;
-  const xOf = i => padding.left + i * xStep;
+  area.innerHTML = scBuildSvg(filtered);
+  scWireHover(area);
+}
 
-  const points = history.map((h, i) => `${xOf(i)},${yScale(h.stock)}`).join(' ');
-
-  const fmtDate = d => (d && d.length === 8) ? `${d.slice(4,6)}/${d.slice(6,8)}` : d;
-  const fmtDateWithYear = d => (d && d.length === 8) ? `${d.slice(0,4)}/${d.slice(4,6)}/${d.slice(6,8)}` : d;
-  let labelIdxs;
-  if (n <= 6) {
-    labelIdxs = history.map((_, i) => i);
-  } else {
-    labelIdxs = [0, Math.floor((n - 1) / 2), n - 1];
-  }
-  const xLabels = labelIdxs.map(i =>
-    `<text x="${xOf(i)}" y="${height - padding.bottom + 18}" font-size="10" fill="var(--text-muted)" text-anchor="middle">${esc(fmtDate(history[i].d))}</text>`
-  ).join('');
-
-  const dots = history.map((h, i) =>
-    `<circle cx="${xOf(i)}" cy="${yScale(h.stock)}" r="2.5" fill="var(--accent)" />`
-  ).join('');
-
-  // 横線メモリ（値の範囲に応じて10単位 or 100単位で引く）
-  const valueRange = maxV - minV;
-  const gridStep = valueRange <= 200 ? 10 : 100;
-  const gridStart = Math.ceil(minV / gridStep) * gridStep;
-  let gridLines = '';
-  for (let v = gridStart; v <= maxV; v += gridStep) {
-    const gy = yScale(v);
-    gridLines += `<line x1="${padding.left}" y1="${gy}" x2="${width-padding.right}" y2="${gy}" stroke="var(--border)" stroke-dasharray="2,2" />`;
-    gridLines += `<text x="${padding.left-6}" y="${gy+3}" font-size="9" fill="var(--text-muted)" text-anchor="end">${v}</text>`;
-  }
-
-  container.innerHTML = `
-    <div style="position:relative;">
-      <svg id="stock-chart-svg" viewBox="0 0 ${width} ${height}" style="width:100%;height:auto;display:block;cursor:crosshair;">
-        ${gridLines}
-        <line x1="${padding.left}" y1="${padding.top}" x2="${padding.left}" y2="${height-padding.bottom}" stroke="var(--border-md)" />
-        <line x1="${padding.left}" y1="${height-padding.bottom}" x2="${width-padding.right}" y2="${height-padding.bottom}" stroke="var(--border-md)" />
-        <polyline points="${points}" fill="none" stroke="var(--accent)" stroke-width="2" />
-        ${dots}
-        ${xLabels}
-        <line id="stock-chart-hoverline" x1="0" y1="${padding.top}" x2="0" y2="${height-padding.bottom}" stroke="var(--text-muted)" stroke-dasharray="3,3" style="display:none;" />
-        <circle id="stock-chart-hoverdot" r="4.5" fill="var(--accent)" stroke="#fff" stroke-width="1.5" style="display:none;" />
-      </svg>
-      <div id="stock-chart-tooltip" style="position:absolute;display:none;pointer-events:none;background:rgba(30,30,30,0.92);color:#fff;padding:5px 9px;border-radius:6px;font-size:12px;white-space:nowrap;transform:translate(-50%,-125%);z-index:10;"></div>
-    </div>`;
-
-  const svg = container.querySelector('#stock-chart-svg');
-  const tooltip = container.querySelector('#stock-chart-tooltip');
-  const hoverLine = container.querySelector('#stock-chart-hoverline');
-  const hoverDot = container.querySelector('#stock-chart-hoverdot');
-
-  function updateHover(clientX, clientY) {
-    const rect = svg.getBoundingClientRect();
-    const scaleX = width / rect.width;
-    const scaleY = height / rect.height;
-    const mouseX = (clientX - rect.left) * scaleX;
-    let idx = Math.round((mouseX - padding.left) / (xStep || 1));
-    idx = Math.max(0, Math.min(n - 1, idx));
-    const h = history[idx];
-    const px = xOf(idx), py = yScale(h.stock);
-
-    hoverLine.setAttribute('x1', px);
-    hoverLine.setAttribute('x2', px);
-    hoverLine.style.display = 'block';
-    hoverDot.setAttribute('cx', px);
-    hoverDot.setAttribute('cy', py);
-    hoverDot.style.display = 'block';
-
-    let diffText = '—';
-    if (idx > 0) {
-      const d = h.stock - history[idx - 1].stock;
-      diffText = d > 0 ? `+${d}` : (d < 0 ? `${d}` : '±0');
-    }
-
-    tooltip.textContent = `${fmtDateWithYear(h.d)}：${h.stock}（前回比 ${diffText}）`;
-    tooltip.style.display = 'block';
-
-    // ツールチップがグラフ（モーダル）の外に出て見切れないよう、表示領域の内側に収める
-    const wrapW = rect.width;
-    const tipW = tooltip.offsetWidth;
-    const tipH = tooltip.offsetHeight;
-    const pxPx = px / scaleX;
-    const pyPx = py / scaleY;
-    const margin = 4;
-    const half = tipW / 2;
-    // 左右：中心を点の真上に置きつつ、はみ出す場合だけ内側へずらす
-    const left = Math.max(half + margin, Math.min(wrapW - half - margin, pxPx));
-    tooltip.style.left = `${left}px`;
-    tooltip.style.top = `${pyPx}px`;
-    // 上下：上に収まらない（点がグラフ上端付近）場合は点の下側に出す
-    if (pyPx - tipH * 1.25 < 0) {
-      tooltip.style.transform = 'translate(-50%, 25%)';
-    } else {
-      tooltip.style.transform = 'translate(-50%, -125%)';
-    }
-  }
-
-  svg.addEventListener('mousemove', (e) => updateHover(e.clientX, e.clientY));
-  svg.addEventListener('mouseleave', () => {
-    hoverLine.style.display = 'none';
-    hoverDot.style.display = 'none';
-    tooltip.style.display = 'none';
+function scSetActive(months) {
+  document.querySelectorAll('#sc-periodbar .sc-period-btn').forEach(b => {
+    b.classList.toggle('active', months !== null && String(months) === b.dataset.preset);
   });
-  // タッチ操作でも追従できるように
-  svg.addEventListener('touchmove', (e) => {
-    if (e.touches && e.touches[0]) {
-      updateHover(e.touches[0].clientX, e.touches[0].clientY);
-      e.preventDefault();
-    }
-  }, { passive: false });
+}
+
+function scApplyPreset(months) {
+  if (!SC.points.length) return;
+  const maxD = SC.points[SC.points.length - 1].date, minD = SC.points[0].date;
+  let startD = scSubtractMonths(maxD, months);
+  if (startD < minD) startD = minD;
+  document.getElementById('sc-start').value = startD;
+  document.getElementById('sc-end').value = maxD;
+  scSetActive(months);
+  scDrawRange(startD, maxD);
+}
+
+function scApplyCustom() {
+  const s = document.getElementById('sc-start').value, e = document.getElementById('sc-end').value;
+  if (!s || !e || s > e) return;
+  scSetActive(null);
+  scDrawRange(s, e);
+}
+
+function renderStockChart(sku, history) {
+  SC.sku = sku;
+  SC.points = scBuildSeries(history);
+  const bar = document.getElementById('sc-periodbar');
+  const summary = document.getElementById('sc-summary');
+  const area = document.getElementById('sc-chartarea');
+  if (!SC.points.length) {
+    bar.style.display = 'none';
+    summary.style.display = 'none';
+    area.innerHTML = '<p class="sc-nodata">在庫推移データがありません。</p>';
+    return;
+  }
+  bar.style.display = 'flex';
+  const minD = SC.points[0].date, maxD = SC.points[SC.points.length - 1].date;
+  ['sc-start', 'sc-end'].forEach(id => {
+    const el = document.getElementById(id);
+    el.min = minD; el.max = maxD;
+  });
+  scApplyPreset(12);   // デフォルト：過去1年
 }
 
 // ── モーダルを「親ページ（Streamlit本体）から見て今画面に映っている範囲」に合わせて配置する ──
@@ -1044,7 +1286,7 @@ function openStockModal(sku, label) {
   const backdrop = document.getElementById('stock-modal-backdrop');
   if (!title || !body || !backdrop) return;
   title.textContent = `📈 在庫推移（${label || sku}）`;
-  renderStockChart(body, stockHistoryMap[sku]);
+  renderStockChart(sku, stockHistoryMap[sku]);
   backdrop.style.display = 'flex';
   positionModalToParentViewport(backdrop);
 

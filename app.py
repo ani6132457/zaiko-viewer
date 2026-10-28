@@ -1033,7 +1033,13 @@ def render_fba_compare_tab(file_infos, df_master):
     with open(FBA_COMPARE_HTML, "r", encoding="utf-8") as f:
         html_content = f.read()
     # 本体スクリプトが動く前に注入データを読み込ませるため、<head>の直後に挿入
-    html_content = html_content.replace("<head>", f"<head><script>window.__FBA_DATA__ = {payload};</script>", 1)
+    order_events = build_order_events_all([p for p, _ in paths_with_mtime], list(trend_file_dates))
+    order_json = json.dumps(order_events, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
+    html_content = html_content.replace(
+        "<head>",
+        f"<head><script>window.__FBA_DATA__ = {payload}; window.__ORDER_EVENTS__ = {order_json};</script>",
+        1,
+    )
 
     if hasattr(st, "iframe"):
         st.iframe(html_content, height="content", width="stretch")
@@ -2445,6 +2451,33 @@ def parse_order_history(df_hist: pd.DataFrame) -> pd.DataFrame:
     df["備考"] = df_hist["備考"].astype(str).str.strip() if "備考" in df_hist.columns else ""
     df = df[df["日付"].notna() & (df["基本コード"] != "") & (df["基本コード"].str.lower() != "nan")]
     return df[cols]
+
+
+def load_order_history_orders():
+    """発注履歴スプレッドシートを読み込み、parse_order_history で整えて返す。戻り値: (orders, エラー or None)"""
+    hist_df, err = load_order_history_sheet(
+        ORDER_HISTORY_SPREADSHEET_ID, st.session_state.get("order_history_cache_bust", 0)
+    )
+    return parse_order_history(hist_df), err
+
+
+def build_order_events_all(file_paths, file_dates) -> dict:
+    """HTMLツール（ZOZO・Amazon）のグラフ用：発注履歴の注文日を、全SKU分の
+    {SKU: {日付: {"od": [[注文日, 属性, 注文数, 備考], ...]}}} にして返す（注文がある基本コードのSKUだけ）。"""
+    try:
+        orders, _ = load_order_history_orders()
+        if orders.empty or not file_paths:
+            return {}
+        snap = get_all_sku_snapshot(list(file_paths))
+        if snap.empty or not {"商品コード", "商品基本コード"}.issubset(snap.columns):
+            return {}
+        bases = set(orders["基本コード"])
+        codes = snap["商品コード"].astype(str).str.strip()
+        base_col = snap["商品基本コード"].astype(str).str.strip()
+        mask = base_col.isin(bases)
+        return add_order_events({}, dict(zip(codes[mask], base_col[mask])), orders, file_dates)
+    except Exception:
+        return {}   # 発注履歴が読めなくても、グラフ本体は表示する
 
 
 def latest_order_date_map(orders: pd.DataFrame, since, until) -> dict:
@@ -4747,13 +4780,20 @@ h1, h2, h3, h4,
             st.caption("ℹ️ 楽天在庫が空欄の場合は、`.streamlit/secrets.toml` に楽天APIの認証情報が未設定か、取得エラーが発生しています。")
 
         trend_map_s = filter_trend_map(full_trend_map, df_view["商品コード"])
+        # グラフに発注履歴の注文日（属性・注文数）を重ねる（発注推奨一覧と同じ）
+        orders_s, _ = load_order_history_orders()
+        event_map_s = add_order_events(
+            filter_trend_map(full_event_map, df_view["商品コード"]),
+            dict(zip(df_view["商品コード"].astype(str).str.strip(), df_view["商品基本コード"].astype(str).str.strip())),
+            orders_s, trend_file_dates,
+        )
 
         render_interactive_sku_table(
             df_view,
             trend_map_s,
             sales_columns,
             key="sales",
-            event_map=filter_trend_map(full_event_map, df_view["商品コード"]),
+            event_map=event_map_s,
             file_dates=trend_file_dates,
             default_sort_key="今年売上",
             default_sort_dir="desc",
@@ -4822,6 +4862,15 @@ h1, h2, h3, h4,
                 "在庫連携なしで表示します。"
             )
 
+        # 在庫推移グラフ用（テンポスター機能のグラフと同じ内容）：
+        # 日ごとの内訳（直近1年）・CSVのある日・発注履歴の注文日。SKUマスターにあるSKUだけに絞って軽くする
+        zozo_skus = {str(d.get("sku", "")).strip() for d in sku_master if d.get("sku")}
+        all_file_dates = sorted(fi["date"].strftime("%Y-%m-%d") for fi in file_infos)
+        stock_events = {k: v for k, v in full_event_map.items() if k in zozo_skus}
+        order_events = {k: v for k, v in build_order_events_all(all_paths, all_file_dates).items() if k in zozo_skus}
+        stock_events_json = json.dumps(stock_events, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
+        order_events_json = json.dumps(order_events, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
+
         with open(html_path, "r", encoding="utf-8") as f:
             html_content = f.read()
 
@@ -4833,6 +4882,9 @@ h1, h2, h3, h4,
             f"window.__TEMPOSTAR_SALES__ = {json.dumps(sales_map, ensure_ascii=False)};"
             f"window.__STOCK_HISTORY__ = {json.dumps(stock_history_map, ensure_ascii=False)};"
             f"window.__FORECAST_SALES__ = {json.dumps(forecast_map_d, ensure_ascii=False)};"
+            f"window.__STOCK_EVENTS__ = {stock_events_json};"
+            f"window.__FILE_DATES__ = {json.dumps(all_file_dates)};"
+            f"window.__ORDER_EVENTS__ = {order_events_json};"
             "</script>"
         )
         # 本体スクリプトが動く前に注入データを読み込ませるため、<script>タグの直前に挿入
