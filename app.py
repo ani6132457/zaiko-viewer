@@ -1530,6 +1530,12 @@ def render_interactive_sku_table(
   .modal-close { float:right; border:none; background:var(--violet-soft); color:var(--violet); border-radius:999px; padding:5px 14px;
     cursor:pointer; font-weight:600; font-size:13px; }
   .no-data { color:var(--ink-soft); font-size:13px; padding:20px 0; }
+  /* グラフ画面：タイトル（商品名）の下の SKU・カラー・サイズ */
+  .modal-meta { display:flex; flex-wrap:wrap; gap:6px; margin:-4px 0 12px 0; }
+  .modal-meta span { font-size:12px; color:#2A2440; background:#F4F2FB; border:1px solid #E6E1F7; border-radius:999px; padding:2px 10px; white-space:nowrap; }
+  .modal-meta span b { font-weight:500; color:#74708C; margin-right:6px; }
+  .modal-meta .meta-sku { user-select:all; cursor:text; font-variant-numeric:tabular-nums; }
+
   .axis-label { font-size:10px; fill:var(--ink-soft); }
   .grid-line { stroke:#f1eefc; stroke-width:1; }
   .chart-dot { transition: r 0.12s ease, fill 0.12s ease; }
@@ -1588,6 +1594,7 @@ def render_interactive_sku_table(
   <div class="modal-box">
     <button class="modal-close" id="closebtn___KEY__">✕ 閉じる</button>
     <h4 id="modaltitle___KEY__"></h4>
+    <div class="modal-meta" id="modalmeta___KEY__"></div>
     <div class="period-bar" id="periodbar___KEY__">
       <button class="period-btn" data-preset="1">1ヶ月</button>
       <button class="period-btn" data-preset="3">3ヶ月</button>
@@ -2151,10 +2158,24 @@ def render_interactive_sku_table(
     wrap.style.top = top + "px";
   }
 
+  // グラフ画面：タイトル下の SKU・カラー・サイズ（空の項目は出さない）
+  function metaChipsHtml(sku, color, size) {
+    const esc_ = function(v) { return String(v).replace(/[&<>"']/g, function(c) { return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); };
+    const items = [];
+    if (sku) items.push('<span class="meta-sku" title="ダブルクリックで選択してコピーできます"><b>SKU</b>' + esc_(sku) + '</span>');
+    if (color) items.push('<span><b>カラー</b>' + esc_(color) + '</span>');
+    if (size) items.push('<span><b>サイズ</b>' + esc_(size) + '</span>');
+    return items.join("");
+  }
+
   function openModal(sku, rowEl) {
     selectedSku = sku;
     renderBody();
-    modalTitle.textContent = "📈 在庫推移（SKU: " + sku + "）";
+    // タイトルは商品名、その下に SKU・カラー（属性2名）・サイズ（属性1名）
+    const row = DATA.find(function(r) { return String(r[SKU_COL] || "").trim() === sku; }) || {};
+    modalTitle.textContent = "📈 " + (row["商品名"] || "在庫推移");
+    const metaEl = document.getElementById("modalmeta_" + KEY);
+    if (metaEl) metaEl.innerHTML = metaChipsHtml(sku, row["属性2名"] || "", row["属性1名"] || "");
     currentPoints = buildSeries(TREND[sku] || []);
     if (currentPoints.length === 0) {
       periodBar.style.display = "none";
