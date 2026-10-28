@@ -1537,6 +1537,10 @@ def render_interactive_sku_table(
     content:""; position:absolute; top:100%; left:50%; transform:translateX(-50%);
     border:5px solid transparent; border-top-color:var(--ink);
   }
+  .chart-tooltip.below { transform:translate(-50%, 0); margin-top:10px; }
+  .chart-tooltip.below:after { top:auto; bottom:100%; border-top-color:transparent; border-bottom-color:var(--ink); }
+  .order-label { cursor:pointer; }
+  .order-label:hover text { fill:#B34A00; text-decoration:underline; }
   .period-bar { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:12px; }
   .period-btn { border:2px solid var(--violet-soft); background:#fff; color:var(--violet); border-radius:999px;
     padding:5px 16px; font-size:12px; font-weight:600; cursor:pointer; }
@@ -1843,14 +1847,23 @@ def render_interactive_sku_table(
     });
     const ot = otherPosNegText(e.op || 0, e.on || 0);
     if (ot) lines.push("🔧 その他: " + ot);
-    (e.od || []).forEach(function(o) {
-      lines.push('<span style="color:#FFD08A;">📦 注文（' + escapeHtml(o[0]) + '）: ' +
-        escapeHtml(o[1] || "属性未記入") + (o[2] !== null && o[2] !== "" ? " " + escapeHtml(o[2]) + "個" : "") +
-        (o[3] ? "（" + escapeHtml(o[3]) + "）" : "") + '</span>');
-    });
     if (!lines.length) return "";
     return '<div style="margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.3);">' +
       '<span style="opacity:0.7;">この日の内訳</span><br>' + lines.join("<br>") + "</div>";
+  }
+
+  // 「📦注文」ラベル用：その日の注文内容（HTML）
+  function orderTipHtml(sku, dateStr) {
+    const od = ((EVENTS[sku] || {})[dateStr] || {}).od || [];
+    if (!od.length) return "";
+    const byDate = {};
+    od.forEach(function(o) { (byDate[o[0]] = byDate[o[0]] || []).push(o); });
+    return Object.keys(byDate).map(function(d) {
+      return '<b>📦 ' + escapeHtml(d) + ' 注文</b><br>' + byDate[d].map(function(o) {
+        return escapeHtml(o[1] || "属性未記入") + (o[2] !== null && o[2] !== "" ? "：" + escapeHtml(o[2]) + "個" : "") +
+          (o[3] ? '<span style="opacity:0.75;">（' + escapeHtml(o[3]) + '）</span>' : "");
+      }).join("<br>");
+    }).join('<div style="height:4px;"></div>');
   }
 
   function buildChartSvg(points) {
@@ -1883,7 +1896,7 @@ def render_interactive_sku_table(
     let pointsSvg = "";        // 変動があった点（手前に描く・反応エリア大）
     let filledSvg = "";        // 変動が無かった日の点（奥に描く・反応エリア小）
     let auraSvg = "";
-    let hasAura = false, hasFilled = false, hasOrder = false, orderSvg = "";
+    let hasAura = false, hasFilled = false, hasOrder = false, orderSvg = "", orderLabelSvg = "";
     let prevVal = null;
     points.forEach(function(p, i) {
       const x = xAt(i), y = yAt(p.value);
@@ -1900,8 +1913,11 @@ def render_interactive_sku_table(
       if (ev && ev.od && ev.od.length) {
         // 注文日：オレンジの縦の点線と、上端に「注文」ラベル
         hasOrder = true;
-        orderSvg += '<line x1="' + x + '" y1="' + padT + '" x2="' + x + '" y2="' + (H - padB) + '" stroke="#FF8A3D" stroke-width="1.5" stroke-dasharray="4 3" opacity="0.85" pointer-events="none"></line>' +
-          '<text x="' + x + '" y="' + (padT - 8) + '" text-anchor="middle" font-size="11" font-weight="700" fill="#E26A12" pointer-events="none">📦注文</text>';
+        orderSvg += '<line x1="' + x + '" y1="' + padT + '" x2="' + x + '" y2="' + (H - padB) + '" stroke="#FF8A3D" stroke-width="1.5" stroke-dasharray="4 3" opacity="0.85" pointer-events="none"></line>';
+        // 「📦注文」の文字にカーソルを合わせると、その日の注文内容（属性・注文数）を表示する
+        orderLabelSvg += '<g class="order-label" data-date="' + escapeHtml(p.date) + '">' +
+          '<rect x="' + (x - 26) + '" y="' + (padT - 22) + '" width="52" height="20" rx="6" fill="#FFF1DC" stroke="#FFD8A8"></rect>' +
+          '<text x="' + x + '" y="' + (padT - 8) + '" text-anchor="middle" font-size="11" font-weight="700" fill="#E26A12" pointer-events="none">📦注文</text></g>';
       }
       if (ev && ev.c && ev.c.length) {
         hasAura = true;
@@ -1934,12 +1950,12 @@ def render_interactive_sku_table(
         '<stop offset="0.55" stop-color="#2EC5FF" stop-opacity="0.28"></stop>' +
         '<stop offset="1" stop-color="#2EC5FF" stop-opacity="0"></stop></radialGradient></defs>' +
       '<path d="' + pathD + '" fill="none" stroke="#7B5FFF" stroke-width="2"></path>' +
-      orderSvg + auraSvg + filledSvg + pointsSvg + xLabelsSvg +
+      orderSvg + auraSvg + filledSvg + pointsSvg + xLabelsSvg + orderLabelSvg +
       '</svg>' +
       '<div class="chart-tooltip"></div>' +
       '</div>' +
       '<div class="chart-legend">' +
-        (hasOrder ? '<span style="color:#E26A12;">┆ オレンジの点線＝発注履歴の注文日（点にカーソルを合わせると属性・注文数を表示）</span>' + (hasAura || hasFilled ? '　／　' : '') : '') +
+        (hasOrder ? '<span style="color:#E26A12;">┆ オレンジの点線＝発注履歴の注文日（上の「📦注文」にカーソルを合わせると属性・注文数を表示）</span>' + (hasAura || hasFilled ? '　／　' : '') : '') +
         (hasAura ? '◎ 青いオーラ＝その日に在庫CSV取込があった点' : '') +
         (hasAura && hasFilled ? '　／　' : '') +
         (hasFilled ? '薄い小さな点＝在庫の変動がなかった日' : '') +
@@ -1950,12 +1966,33 @@ def render_interactive_sku_table(
     const hits = chartArea.querySelectorAll(".chart-hit");
     const wrap = chartArea.querySelector(".chart-wrap");
     const tooltip = chartArea.querySelector(".chart-tooltip");
+    chartArea.querySelectorAll(".order-label").forEach(function(lab) {
+      lab.addEventListener("mouseenter", function() {
+        if (!tooltip || !wrap) return;
+        tooltip.innerHTML = orderTipHtml(selectedSku, lab.dataset.date);
+        tooltip.classList.add("below");
+        tooltip.style.display = "block";
+        const r = lab.getBoundingClientRect();
+        const wrapRect = wrap.getBoundingClientRect();
+        const half = tooltip.offsetWidth / 2;
+        let left = r.left - wrapRect.left + r.width / 2;
+        left = Math.max(half + 4, Math.min(wrapRect.width - half - 4, left));
+        tooltip.style.left = left + "px";
+        tooltip.style.top = (r.bottom - wrapRect.top) + "px";
+      });
+      lab.addEventListener("mouseleave", function() {
+        if (!tooltip) return;
+        tooltip.style.display = "none";
+        tooltip.classList.remove("below");
+      });
+    });
     hits.forEach(function(hit) {
       const dot = hit.previousElementSibling;
       hit.addEventListener("mouseenter", function() {
         dot.setAttribute("r", "6.5");
         dot.setAttribute("fill", "#FF6B4A");
         if (tooltip && wrap) {
+          tooltip.classList.remove("below");
           tooltip.innerHTML = hit.dataset.date + "<br>在庫: " + hit.dataset.value + "（前回比 " + hit.dataset.diff + "）" +
             (hit.dataset.real === "0" ? '<div style="opacity:0.7;margin-top:2px;">この日は在庫の変動なし</div>' : "") +
             dayEventLines(selectedSku, hit.dataset.date);
