@@ -1480,7 +1480,49 @@ def render_interactive_sku_table(
   .sku-table th { background:var(--violet-soft); color:var(--violet); font-size:12px; font-weight:700;
     font-family: 'M PLUS Rounded 1c', sans-serif; letter-spacing:0.03em; padding:12px 10px; border-bottom:2px solid #fff; white-space:nowrap;
     position: sticky; top: 0; z-index: 2; cursor: pointer; user-select: none; }
-  .sku-table th .arrow { margin-left:4px; opacity:0.5; font-size:10px; }
+  .sku-table th .arrow { margin-left:4px; opacity:0.45; font-size:10px; }
+  .sku-table td { overflow-wrap:anywhere; }
+  .sku-table td.no-rows { text-align:center; color:var(--ink-soft); padding:28px 10px; cursor:default; }
+  /* 見出しの「▼」フィルターボタン */
+  .sku-table th .fbtn { margin-left:4px; border:1px solid transparent; background:transparent; color:var(--violet); border-radius:6px;
+    cursor:pointer; font-size:10px; padding:1px 4px; opacity:0.55; font-family:inherit; vertical-align:middle; }
+  .sku-table th .fbtn:hover { opacity:1; background:#fff; border-color:#D9D1FF; }
+  .sku-table th .fbtn.on { opacity:1; background:var(--accent); color:#fff; }
+  /* かけているフィルターの札 */
+  .filter-chips { display:none; flex-wrap:wrap; align-items:center; gap:6px 8px; padding:10px 14px; background:#FFF8F5;
+    border-bottom:1px solid #FFE1D6; font-size:12px; }
+  .filter-chips .fc-title { font-weight:700; color:var(--accent); }
+  .filter-chips .fc-chip { display:inline-flex; align-items:center; gap:4px; background:#fff; border:1px solid #FFD2C2; border-radius:999px;
+    padding:2px 4px 2px 10px; color:var(--ink); white-space:nowrap; }
+  .filter-chips .fc-chip b { color:var(--accent); font-weight:700; }
+  .filter-chips .fc-chip button { border:0; background:transparent; color:var(--ink-soft); cursor:pointer; font-size:11px; padding:0 4px; border-radius:999px; }
+  .filter-chips .fc-chip button:hover { background:var(--accent-soft); color:var(--accent); }
+  .filter-chips .fc-clear { margin-left:auto; border:1px solid #FFD2C2; background:#fff; color:var(--accent); border-radius:999px;
+    padding:3px 12px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit; }
+  .filter-chips .fc-clear:hover { background:var(--accent-soft); }
+  /* フィルターのメニュー（Amazon機能の在庫比較と同じ形） */
+  .fmenu { display:none; position:absolute; z-index:3000; width:280px; background:#fff; border:1px solid #DDD7F5; border-radius:12px;
+    box-shadow:0 10px 30px rgba(42,36,64,0.18); padding:10px; font-size:12.5px; color:var(--ink); }
+  .fmenu .sorts { display:flex; flex-direction:column; gap:2px; padding-bottom:8px; border-bottom:1px solid #f1eefc; margin-bottom:8px; }
+  .fmenu .sorts button { text-align:left; border:0; background:transparent; padding:5px 8px; border-radius:6px; cursor:pointer; font-family:inherit; font-size:12.5px; color:var(--ink); }
+  .fmenu .sorts button:hover { background:var(--violet-soft); }
+  .fmenu .flabel { font-size:11px; color:var(--ink-soft); margin-bottom:4px; }
+  .fmenu .range { display:flex; gap:6px; align-items:center; margin-bottom:8px; }
+  .fmenu .range input { width:100%; border:1px solid #DDD7F5; border-radius:6px; padding:5px 7px; font-family:inherit; font-size:12px; }
+  .fmenu .fblank { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--ink-soft); margin-bottom:4px; cursor:pointer; }
+  .fmenu .fsearch { width:100%; border:1px solid #DDD7F5; border-radius:6px; padding:6px 8px; font-family:inherit; font-size:12px; margin-bottom:6px; }
+  .fmenu .vals { max-height:240px; overflow-y:auto; border:1px solid #f1eefc; border-radius:8px; padding:4px 0; }
+  .fmenu .vals label { display:flex; align-items:center; gap:6px; padding:3px 8px; cursor:pointer; white-space:nowrap; }
+  .fmenu .vals label span:first-of-type { overflow:hidden; text-overflow:ellipsis; }
+  .fmenu .vals label:hover { background:#F7F5FF; }
+  .fmenu .vals .cnt { margin-left:auto; color:var(--ink-soft); font-size:11px; padding-left:8px; }
+  .fmenu .vals .all { font-weight:700; border-bottom:1px solid #f1eefc; margin-bottom:2px; }
+  .fmenu .vals .more { color:var(--ink-soft); padding:4px 8px; font-size:11px; }
+  .fmenu .fbtns { display:flex; justify-content:flex-end; gap:6px; margin-top:10px; }
+  .fmenu .fbtns button { border:1px solid #DDD7F5; background:#fff; color:var(--ink); border-radius:999px; padding:4px 12px; cursor:pointer; font-family:inherit; font-size:12px; }
+  .fmenu .fbtns .clear { margin-right:auto; color:var(--ink-soft); }
+  .fmenu .fbtns .ok { background:var(--violet); border-color:var(--violet); color:#fff; font-weight:700; }
+  .fmenu .fbtns .ok:hover { background:#6A4EF0; }
   .sku-table thead.stuck th { box-shadow: 0 3px 6px -2px rgba(42,36,64,0.18); }
   .sku-table th.sorted .arrow { opacity:1; color: var(--accent); }
   .sku-table td { padding:9px 10px; border-bottom:1px solid #f1eefc; vertical-align:middle; color:var(--ink); }
@@ -1726,31 +1768,313 @@ def render_interactive_sku_table(
     return escapeHtml(val);
   }
 
+  // ================== 列の幅（全件の中で一番長い値に合わせて決め、以後は固定） ==================
+  // ページに表示中の100件だけで幅を決めると、並べ替え・ページ送り・フィルターのたびに幅が変わるため。
+  const measureCtx = document.createElement("canvas").getContext("2d");
+  const measureCache = {};
+  function textW(text, font) {
+    const k = font + "\u0001" + text;
+    if (measureCache[k] === undefined) { measureCtx.font = font; measureCache[k] = measureCtx.measureText(String(text)).width; }
+    return measureCache[k];
+  }
+  const F_BODY = "400 13px 'Noto Sans JP', sans-serif";
+  const F_EMPH = "800 15px 'Noto Sans JP', sans-serif";
+  const F_ORDER = "800 13px 'M PLUS Rounded 1c', sans-serif";
+  const F_SMALL_B = "700 12px 'Noto Sans JP', sans-serif";
+  const F_TINY = "500 11px 'Noto Sans JP', sans-serif";
+  const F_TINY_B = "700 11px 'Noto Sans JP', sans-serif";
+  const F_HEAD = "700 12px 'M PLUS Rounded 1c', sans-serif";
+
+  function computeColWidths() {
+    const widths = [36];   // 先頭のチェック列
+    COLUMNS.forEach(function(col) {
+      // 見出し：文字＋字間＋並べ替えの矢印＋フィルターボタン
+      let w = textW(col.label, F_HEAD) + col.label.length * 0.36 + (col.type === "image" ? 0 : 16 + 26);
+      if (col.type === "image") {
+        w = Math.max(w, 64);
+      } else {
+        const font = col.emph ? F_EMPH : (col.type === "order" ? F_ORDER : F_BODY);
+        let maxW = 0;
+        for (let i = 0; i < DATA.length; i++) {
+          const row = DATA[i], v = row[col.key];
+          let cw;
+          if (col.type === "number") cw = textW(fmtNum(v), font);
+          else if (col.type === "order") cw = textW(fmtNum(v), F_ORDER) + 32;
+          else if (col.type === "status" || col.type === "alert") {
+            const parts = String(v || "").split("｜");
+            cw = Math.max(textW(parts[0] || "", F_SMALL_B), parts[1] ? textW(parts[1], F_TINY_B) + 20 : 0);
+          } else cw = textW(v === null || v === undefined ? "" : v, F_BODY);
+          if (col.sub) {
+            const prev = row[col.sub];
+            let t = "前年 -";
+            if (prev !== null && prev !== undefined && prev !== "") {
+              const d = (Number(v) || 0) - (Number(prev) || 0);
+              t = "前年 " + fmtNum(prev) + "（" + (d > 0 ? "+" + fmtNum(d) : (d < 0 ? "−" + fmtNum(-d) : "±0")) + "）";
+            }
+            cw = Math.max(cw, textW(t, F_TINY_B));
+          }
+          if (cw > maxW) maxW = cw;
+        }
+        // 商品名は2行で折り返すので上限を決める。そのほかの文字列も極端に長いものは上限で止める
+        if (col.key === "商品名") maxW = Math.min(maxW, 300);
+        else if (col.type === "text") maxW = Math.min(maxW, 260);
+        w = Math.max(w, maxW);
+      }
+      widths.push(Math.ceil(w + 20 + 8));   // セルの左右の余白＋ゆとり
+    });
+    return widths;
+  }
+  const tableEl0 = document.getElementById("tbl_" + KEY);
+  function applyColWidths() {
+    const widths = computeColWidths();
+    let cg = tableEl0.querySelector("colgroup");
+    if (!cg) { cg = document.createElement("colgroup"); tableEl0.insertBefore(cg, tableEl0.firstChild); }
+    cg.innerHTML = widths.map(function(w) { return '<col style="width:' + w + 'px">'; }).join("");
+    const total = widths.reduce(function(a, b) { return a + b; }, 0);
+    tableEl0.style.tableLayout = "fixed";
+    tableEl0.style.minWidth = total + "px";
+  }
+
+  // ================== フィルター ==================
+  // FILTERS = { 列名: {t:"range", min, max, blank} | {t:"vals", vals:[...]} }
+  // 検索し直しやタブ切り替えで表が作り直されても残るよう、並べ替えと同じくブラウザに保存する
+  const FILTER_STORAGE_KEY = "zv_filter_" + KEY;
+  let FILTERS = {};
+  try {
+    const saved = JSON.parse(window.sessionStorage.getItem(FILTER_STORAGE_KEY) || "null");
+    if (saved && typeof saved === "object") {
+      Object.keys(saved).forEach(function(k) { if (COLUMNS.some(function(c) { return c.key === k; })) FILTERS[k] = saved[k]; });
+    }
+  } catch (e) {}
+  function saveFilters() {
+    try { window.sessionStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify(FILTERS)); } catch (e) {}
+  }
+  const isNumCol = function(col) { return col.type === "number" || col.type === "order"; };
+  const isBlank = function(v) { return v === null || v === undefined || v === ""; };
+  const BLANK_LABEL = "（空欄）";
+
+  // 状態列は「在庫切れ／在庫少／注文済」の札で絞り込む（1つの行に複数付くことがある）
+  function statusTags(v) {
+    const s = String(v || "");
+    const tags = [];
+    if (s.indexOf("在庫切れ") >= 0) tags.push("在庫切れ");
+    if (s.indexOf("在庫少") >= 0) tags.push("在庫少");
+    if (s.indexOf("注文済") >= 0) tags.push("注文済");
+    if (!tags.length) tags.push("（なし）");
+    return tags;
+  }
+  function valuesOf(col, v) {
+    if (col.type === "status") return statusTags(v);
+    return [isBlank(v) ? BLANK_LABEL : String(v)];
+  }
+  function rowMatches(row) {
+    for (let i = 0; i < COLUMNS.length; i++) {
+      const col = COLUMNS[i], f = FILTERS[col.key];
+      if (!f) continue;
+      const v = row[col.key];
+      if (f.t === "range") {
+        if (isBlank(v)) { if (!f.blank) return false; continue; }
+        const n = Number(v);
+        if (f.min !== null && f.min !== undefined && n < f.min) return false;
+        if (f.max !== null && f.max !== undefined && n > f.max) return false;
+      } else if (f.t === "vals") {
+        const set = f.vals;
+        if (!valuesOf(col, v).some(function(x) { return set.indexOf(x) >= 0; })) return false;
+      }
+    }
+    return true;
+  }
+  function filterText(col, f) {
+    if (f.t === "range") {
+      const a = (f.min !== null && f.min !== undefined) ? fmtNum(f.min) : "";
+      const b = (f.max !== null && f.max !== undefined) ? fmtNum(f.max) : "";
+      // 空欄（—）は含めるのが標準。外している時だけ札に書く
+      return (a && b ? a + "〜" + b : (a ? a + "以上" : (b ? b + "以下" : "すべて"))) + (f.blank ? "" : "・空欄（—）除く");
+    }
+    const vs = f.vals;
+    return vs.length <= 3 ? vs.join("、") : vs.slice(0, 3).join("、") + " ほか" + (vs.length - 3) + "件";
+  }
+
+  // 表の上：かけているフィルターの札
+  const chipBar = document.createElement("div");
+  chipBar.className = "filter-chips";
+  document.querySelector(".wrap").insertBefore(chipBar, document.querySelector(".wrap").firstChild);
+  function renderChips() {
+    const keys = Object.keys(FILTERS);
+    if (!keys.length) { chipBar.style.display = "none"; chipBar.innerHTML = ""; return; }
+    chipBar.style.display = "flex";
+    chipBar.innerHTML = '<span class="fc-title">🔽 絞り込み中</span>' + keys.map(function(k) {
+      const col = COLUMNS.find(function(c) { return c.key === k; });
+      return '<span class="fc-chip"><b>' + escapeHtml(col ? col.label : k) + '</b> ' + escapeHtml(filterText(col || {}, FILTERS[k])) +
+        '<button data-k="' + escapeHtml(k) + '" title="このフィルターを解除">✕</button></span>';
+    }).join("") + '<button class="fc-clear">すべて解除</button>';
+    chipBar.querySelectorAll(".fc-chip button").forEach(function(b) {
+      b.addEventListener("click", function() { delete FILTERS[b.dataset.k]; onFiltersChanged(); });
+    });
+    chipBar.querySelector(".fc-clear").addEventListener("click", function() { FILTERS = {}; onFiltersChanged(); });
+  }
+  function onFiltersChanged() {
+    saveFilters();
+    page = 1;
+    applySort();
+    renderHead();
+    renderChips();
+    renderBody();
+    if (typeof scheduleSticky === "function") scheduleSticky();
+  }
+
+  // 見出しの「▼」で開くメニュー
+  const fmenu = document.createElement("div");
+  fmenu.className = "fmenu";
+  document.body.appendChild(fmenu);
+  let fmenuKey = null;
+  function closeFilterMenu() { fmenu.style.display = "none"; fmenu.innerHTML = ""; fmenuKey = null; }
+
+  function openFilterMenu(col, anchor) {
+    if (fmenuKey === col.key) { closeFilterMenu(); return; }
+    fmenuKey = col.key;
+    const cur = FILTERS[col.key];
+    let html = '<div class="sorts">' +
+      '<button data-s="asc">' + (isNumCol(col) ? "↑ 小さい順に並べ替え" : "↑ 昇順に並べ替え") + '</button>' +
+      '<button data-s="desc">' + (isNumCol(col) ? "↓ 大きい順に並べ替え" : "↓ 降順に並べ替え") + '</button></div>';
+    let counts = null, allVals = null;
+    if (isNumCol(col)) {
+      const hasBlank = DATA.some(function(r) { return isBlank(r[col.key]); });
+      html += '<div class="flabel">数値の範囲</div><div class="range">' +
+        '<input type="number" class="fmin" placeholder="下限" value="' + (cur && cur.t === "range" && cur.min != null ? cur.min : "") + '">' +
+        '<span>〜</span>' +
+        '<input type="number" class="fmax" placeholder="上限" value="' + (cur && cur.t === "range" && cur.max != null ? cur.max : "") + '"></div>' +
+        (hasBlank ? '<label class="fblank"><input type="checkbox" class="fblankchk"' + (!cur || cur.blank ? " checked" : "") + '> 空欄（—）の行も含める</label>' : "");
+    } else {
+      counts = {};
+      DATA.forEach(function(r) { valuesOf(col, r[col.key]).forEach(function(x) { counts[x] = (counts[x] || 0) + 1; }); });
+      allVals = Object.keys(counts).sort(function(a, b) {
+        if (a === BLANK_LABEL) return 1; if (b === BLANK_LABEL) return -1;
+        return a.localeCompare(b, "ja", { numeric: true });
+      });
+      html += '<input type="text" class="fsearch" placeholder="値を検索…">' + '<div class="vals"></div>';
+    }
+    html += '<div class="fbtns"><button class="clear">解除</button><button class="cancel">キャンセル</button><button class="ok">OK</button></div>';
+    fmenu.innerHTML = html;
+
+    // 値のチェックリスト（多い時は検索で絞る。表示は先頭300件まで）
+    let checked = null;
+    if (allVals) {
+      checked = {};
+      allVals.forEach(function(v) { checked[v] = !cur || cur.t !== "vals" || cur.vals.indexOf(v) >= 0; });
+      const valsEl = fmenu.querySelector(".vals");
+      const searchEl = fmenu.querySelector(".fsearch");
+      const LIMIT = 300;
+      function shownVals() {
+        const q = searchEl.value.trim().toLowerCase();
+        return q ? allVals.filter(function(v) { return v.toLowerCase().indexOf(q) >= 0; }) : allVals;
+      }
+      function drawVals() {
+        const shown = shownVals();
+        const allOn = shown.length > 0 && shown.every(function(v) { return checked[v]; });
+        let h = '<label class="all"><input type="checkbox" class="vall"' + (allOn ? " checked" : "") + '> ' +
+          (searchEl.value.trim() ? "（検索結果をすべて選択）" : "（すべて選択）") + '</label>';
+        shown.slice(0, LIMIT).forEach(function(v, i) {
+          h += '<label><input type="checkbox" data-i="' + i + '"' + (checked[v] ? " checked" : "") + '> <span>' + escapeHtml(v) + '</span><span class="cnt">' + counts[v] + '</span></label>';
+        });
+        if (shown.length > LIMIT) h += '<div class="more">ほか ' + (shown.length - LIMIT).toLocaleString("ja-JP") + ' 件（検索で絞り込んでください）</div>';
+        if (!shown.length) h += '<div class="more">該当する値がありません</div>';
+        valsEl.innerHTML = h;
+        valsEl.querySelector(".vall").addEventListener("change", function(e) {
+          const on = e.target.checked;
+          if (searchEl.value.trim()) {
+            // 検索中は、検索結果だけを選択（それ以外は外す）＝Excelと同じ動き
+            allVals.forEach(function(v) { checked[v] = false; });
+          }
+          shownVals().forEach(function(v) { checked[v] = on; });
+          drawVals();
+        });
+        valsEl.querySelectorAll("input[data-i]").forEach(function(cb) {
+          cb.addEventListener("change", function() { checked[shown[Number(cb.dataset.i)]] = cb.checked; drawVals(); });
+        });
+      }
+      searchEl.addEventListener("input", drawVals);
+      drawVals();
+      setTimeout(function() { searchEl.focus(); }, 0);
+    }
+
+    fmenu.querySelectorAll(".sorts button").forEach(function(b) {
+      b.addEventListener("click", function() {
+        sortKey = col.key; sortDir = b.dataset.s; saveSort();
+        closeFilterMenu(); page = 1; applySort(); renderHead(); renderBody();
+      });
+    });
+    fmenu.querySelector(".clear").addEventListener("click", function() { delete FILTERS[col.key]; closeFilterMenu(); onFiltersChanged(); });
+    fmenu.querySelector(".cancel").addEventListener("click", closeFilterMenu);
+    function applyMenu() {
+      if (isNumCol(col)) {
+        const a = fmenu.querySelector(".fmin").value, b = fmenu.querySelector(".fmax").value;
+        const blankEl = fmenu.querySelector(".fblankchk");
+        const blank = blankEl ? blankEl.checked : true;
+        const min = a === "" ? null : Number(a), max = b === "" ? null : Number(b);
+        if (min === null && max === null && blank) delete FILTERS[col.key];
+        else FILTERS[col.key] = { t: "range", min: min, max: max, blank: blank };
+      } else {
+        const sel = allVals.filter(function(v) { return checked[v]; });
+        if (sel.length === allVals.length) delete FILTERS[col.key];
+        else FILTERS[col.key] = { t: "vals", vals: sel };
+      }
+      closeFilterMenu();
+      onFiltersChanged();
+    }
+    fmenu.querySelector(".ok").addEventListener("click", applyMenu);
+    fmenu.querySelectorAll(".range input").forEach(function(inp) {
+      inp.addEventListener("keydown", function(e) { if (e.key === "Enter") applyMenu(); });
+    });
+
+    // 見出しのボタンの下に出す（画面の右端からはみ出さないように）
+    fmenu.style.display = "block";
+    const r = anchor.getBoundingClientRect();
+    const mw = fmenu.offsetWidth;
+    let left = r.right + window.scrollX - mw;
+    if (left < 8) left = Math.min(r.left + window.scrollX, document.documentElement.clientWidth - mw - 8);
+    fmenu.style.left = Math.max(8, left) + "px";
+    fmenu.style.top = (r.bottom + window.scrollY + 4) + "px";
+  }
+  document.addEventListener("mousedown", function(e) {
+    if (fmenuKey && !fmenu.contains(e.target) && !(e.target.closest && e.target.closest(".fbtn"))) closeFilterMenu();
+  });
+  document.addEventListener("keydown", function(e) { if (e.key === "Escape" && fmenuKey) closeFilterMenu(); });
+
   function renderHead() {
     thead.innerHTML = "";
     const chkTh = document.createElement("th");
-    chkTh.style.width = "36px";
     thead.appendChild(chkTh);
     COLUMNS.forEach(function(col) {
       const th = document.createElement("th");
-      if (col.type === "number" || col.type === "order") th.classList.add("num");
+      if (isNumCol(col)) th.classList.add("num");
       if (col.emph) th.classList.add("emph-" + col.emph);
-      th.textContent = col.label;
+      const label = document.createElement("span");
+      label.textContent = col.label;
+      th.appendChild(label);
       const arrow = document.createElement("span");
       arrow.className = "arrow";
-      th.appendChild(arrow);
       if (col.key === sortKey) {
         th.classList.add("sorted");
         arrow.textContent = sortDir === "asc" ? "▲" : "▼";
       } else {
-        arrow.textContent = "▼";
+        arrow.textContent = "⇅";
+      }
+      th.appendChild(arrow);
+      if (col.type !== "image") {
+        const fb = document.createElement("button");
+        fb.className = "fbtn" + (FILTERS[col.key] ? " on" : "");
+        fb.title = "絞り込み・並べ替え";
+        fb.textContent = FILTERS[col.key] ? "▼●" : "▼";
+        fb.addEventListener("click", function(e) { e.stopPropagation(); openFilterMenu(col, fb); });
+        th.appendChild(fb);
       }
       th.addEventListener("click", function() {
         if (sortKey === col.key) {
           sortDir = sortDir === "asc" ? "desc" : "asc";
         } else {
           sortKey = col.key;
-          sortDir = (col.type === "number" || col.type === "order") ? "desc" : "asc";
+          sortDir = isNumCol(col) ? "desc" : "asc";
         }
         saveSort();
         page = 1;
@@ -1763,7 +2087,7 @@ def render_interactive_sku_table(
   }
 
   function applySort() {
-    sortedData = DATA.slice().sort(function(a, b) {
+    sortedData = DATA.filter(rowMatches).sort(function(a, b) {
       let av = a[sortKey], bv = b[sortKey];
       if (av === null || av === undefined) av = "";
       if (bv === null || bv === undefined) bv = "";
@@ -1816,7 +2140,11 @@ def render_interactive_sku_table(
     });
 
     pageinfo.textContent = "ページ " + page + " / " + tp;
-    totalinfo.textContent = "全 " + sortedData.length.toLocaleString("ja-JP") + " 件";
+    totalinfo.textContent = "全 " + sortedData.length.toLocaleString("ja-JP") + " 件" +
+      (Object.keys(FILTERS).length ? "（絞り込み前 " + DATA.length.toLocaleString("ja-JP") + " 件）" : "");
+    if (!sortedData.length) {
+      tbody.innerHTML = '<tr><td colspan="' + (COLUMNS.length + 1) + '" class="no-rows">条件に合う商品がありません（上の「すべて解除」でフィルターを外せます）</td></tr>';
+    }
     prevBtn.disabled = page <= 1;
     nextBtn.disabled = page >= tp;
   }
@@ -2314,9 +2642,20 @@ def render_interactive_sku_table(
   prevBtn.addEventListener("click", function() { if (page > 1) { page--; renderBody(); if (AUTO_H) { scrollToTableTop(); scheduleSticky(); } } });
   nextBtn.addEventListener("click", function() { if (page < totalPages()) { page++; renderBody(); if (AUTO_H) { scrollToTableTop(); scheduleSticky(); } } });
 
+  applyColWidths();
   applySort();
   renderHead();
+  renderChips();
   renderBody();
+  // Webフォントの読み込みが終わったら、文字幅を測り直して列の幅を決め直す（1回だけ）
+  try {
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(function() {
+        Object.keys(measureCache).forEach(function(k) { delete measureCache[k]; });
+        applyColWidths();
+      });
+    }
+  } catch (e) {}
 })();
 </script>
 """
@@ -4016,18 +4355,15 @@ h1, h2, h3, h4,
                 submit_restock = st.form_submit_button("🔎 この条件で表示", use_container_width=True)
 
             with st.expander(detail_label, expanded=True):
-                d1, d2, d3, d4, d5, d6 = st.columns(6)
+                # 売上個数・現在庫での絞り込みは、一覧の見出しの「▼」フィルターで行う
+                d1, d3, d5, d6 = st.columns(4)
                 with d1:
                     months_choices = [1, 2, 3, 4, 5, 6]
                     if st.session_state["rs_months"] not in months_choices:
                         st.session_state["rs_months"] = 1
                     st.selectbox("集計期間（直近◯ヶ月）", months_choices, key="rs_months")
-                with d2:
-                    st.number_input("売上個数（この数以上）", min_value=0, key="rs_min_sales")
                 with d3:
                     st.number_input("確保したい在庫日数", min_value=1, max_value=365, key="rs_target_days")
-                with d4:
-                    st.number_input("テンポスター在庫フィルター（この数以下）", min_value=0, max_value=999999, key="rs_max_stock")
                 with d5:
                     st.date_input("売上個数予想 開始日", key="rs_forecast_start")
                 with d6:
@@ -4052,10 +4388,8 @@ h1, h2, h3, h4,
             return
 
         keyword_r         = st.session_state["rs_keyword"]
-        min_total_sales_r = int(st.session_state["rs_min_sales"])
         restock_months    = int(st.session_state["rs_months"])
         target_days       = int(st.session_state["rs_target_days"])
-        max_current_stock = int(st.session_state["rs_max_stock"])
         forecast_start_r  = st.session_state["rs_forecast_start"]
         forecast_end_r    = st.session_state["rs_forecast_end"]
         forecast_map_r    = compute_forecast_map(all_sales_map, forecast_start_r, forecast_end_r)
@@ -4151,14 +4485,11 @@ h1, h2, h3, h4,
         other_sales30 = _num("ZOZO 30日販売") + _num("Amazon 30日販売")
         daily_avg = sales_recent["売上個数合計"] / period_days + other_sales30 / 30
         total_stock = _num("現在庫") + _num("ZOZO在庫") + _num("Amazon FBA在庫")
-        total_sales = sales_recent["売上個数合計"] + other_sales30   # 状態・売上個数フィルターの判定用
+        total_sales = sales_recent["売上個数合計"] + other_sales30   # 状態・一覧に出すかの判定用
 
         # 一覧に出す商品：期間中に売上がある商品（テンポスター・ZOZO・Amazonのいずれか）
+        # （売上個数・現在庫での絞り込みは、一覧の見出しの「▼」フィルターで行う）
         keep = total_sales > 0
-        if min_total_sales_r > 0:
-            keep &= total_sales >= min_total_sales_r
-        # テンポスター在庫フィルターは、テンポスターの現在庫で判定する
-        keep &= sales_recent["現在庫"] <= max_current_stock
 
         # ZOZO・Amazonを加味している時は、テンポスター単体の売上を別列にして、
         # 「売上個数合計」はテンポスター＋ZOZO＋Amazonの合計にする
@@ -4607,13 +4938,12 @@ h1, h2, h3, h4,
                 submit_sku = st.form_submit_button("🔎 この条件で表示", use_container_width=True)
 
             with st.expander(detail_label, expanded=True):
-                d1, d2, d3, d4, d5 = st.columns(5)
+                # 今年売上での絞り込みは、一覧の見出しの「▼」フィルターで行う
+                d1, d2, d4, d5 = st.columns(4)
                 with d1:
                     st.date_input("開始日", key="sku_start_date", min_value=min_date, max_value=max_date)
                 with d2:
                     st.date_input("終了日", key="sku_end_date", min_value=min_date, max_value=max_date)
-                with d3:
-                    st.number_input("売上個数（この数以上）", min_value=0, key="sku_min_sales")
                 with d4:
                     st.date_input("売上個数予想 開始日", key="sku_forecast_start")
                 with d5:
@@ -4644,7 +4974,6 @@ h1, h2, h3, h4,
         start_date     = st.session_state["sku_start_date"]
         end_date       = st.session_state["sku_end_date"]
         keyword        = st.session_state["sku_keyword"]
-        min_total_sales = int(st.session_state["sku_min_sales"])
         forecast_start_s = st.session_state["sku_forecast_start"]
         forecast_end_s   = st.session_state["sku_forecast_end"]
         forecast_map_s   = compute_forecast_map(all_sales_map, forecast_start_s, forecast_end_s)
@@ -4795,8 +5124,6 @@ h1, h2, h3, h4,
         # 売上個数予想（去年翌日を起点にした期間集計）
         sales_grouped["売上個数予想"] = codes_s.map(forecast_map_s).fillna(0).astype(int)
 
-        if min_total_sales > 0:
-            sales_grouped = sales_grouped[sales_grouped["売上個数合計"] >= min_total_sales]
 
         sales_grouped = sales_grouped.sort_values("売上個数合計", ascending=False)
 
