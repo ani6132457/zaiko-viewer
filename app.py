@@ -1443,6 +1443,8 @@ def render_interactive_sku_table(
         return
 
     col_keys = [c["key"] for c in columns if c["key"] in df_view.columns]
+    # 下段表示用の列（前年売上など）も一緒に渡す
+    col_keys += [c["sub"] for c in columns if c.get("sub") and c["sub"] in df_view.columns and c["sub"] not in col_keys]
     df_data = df_view[col_keys].copy()
 
     # NaN/NaT を JSON 変換可能な None に変換
@@ -1488,6 +1490,11 @@ def render_interactive_sku_table(
   .sku-table tbody tr.selected { background:var(--violet-soft); }
   .sku-table img { max-height:56px; width:auto; display:block; margin:auto; border-radius:8px; }
   .sku-table td.num, .sku-table th.num { text-align:right; font-variant-numeric: tabular-nums; white-space:nowrap; }
+  /* 数値の下段（前年売上と前年差） */
+  .sku-table .prev-line { font-size:11px; font-weight:500; color:#8F8AA6; margin-top:2px; white-space:nowrap; }
+  .sku-table .prev-diff.up { color:#1E9E5A; font-weight:700; }
+  .sku-table .prev-diff.down { color:#E5484D; font-weight:700; }
+  .sku-table .prev-diff.flat { color:#8F8AA6; }
   /* 強調列（売上個数合計・現在庫など）：太字・少し大きめ＋列全体にごく薄い色 */
   .sku-table td.emph-violet { font-weight:800; font-size:15px; color:#4B2FD6; background:rgba(123,95,255,0.07); }
   .sku-table th.emph-violet { background:#E2DAFF; color:#4B2FD6; }
@@ -1676,6 +1683,15 @@ def render_interactive_sku_table(
     });
   }
 
+  // 数値の下段：「前年 12（+7）」。前年がnull（在庫なし）なら「前年 -」
+  function prevLineHtml(cur, prev) {
+    if (prev === null || prev === undefined || prev === "") return '<div class="prev-line">前年 -</div>';
+    const d = (Number(cur) || 0) - (Number(prev) || 0);
+    const cls = d > 0 ? "up" : (d < 0 ? "down" : "flat");
+    const dt = d > 0 ? "+" + fmtNum(d) : (d < 0 ? "−" + fmtNum(Math.abs(d)) : "±0");
+    return '<div class="prev-line">前年 ' + fmtNum(prev) + '<span class="prev-diff ' + cls + '">（' + dt + '）</span></div>';
+  }
+
   function cellHtml(col, val) {
     if (col.type === "image") {
       if (!val) return "";
@@ -1787,7 +1803,7 @@ def render_interactive_sku_table(
         if (col.emph) td.classList.add("emph-" + col.emph);
         if (col.key === "商品名") td.classList.add("name-cell");
         if (col.type === "text") td.classList.add("cell-text-select");
-        td.innerHTML = cellHtml(col, row[col.key]);
+        td.innerHTML = cellHtml(col, row[col.key]) + (col.sub ? prevLineHtml(row[col.key], row[col.sub]) : "");
         tr.appendChild(td);
       });
       tr.addEventListener("click", function(e) {
@@ -2499,6 +2515,30 @@ def build_order_events_all(file_paths, file_dates) -> dict:
         return add_order_events({}, dict(zip(codes[mask], base_col[mask])), orders, file_dates)
     except Exception:
         return {}   # 発注履歴が読めなくても、グラフ本体は表示する
+
+
+def prev_year_sales_values(codes, sales_last: dict, history_map: dict, start, end) -> list:
+    """前年同期間の売上の表示値をSKUごとに返す。
+      売上あり → その数／売上なし・期間中に在庫あり → 0／期間中ずっと在庫なし（未登録含む） → None（「-」と表示）
+    在庫の有無は、テンポスターの日別在庫（変動後）で判定する。期間の初日時点の在庫か、期間中のどこかで在庫が1以上なら「在庫あり」。"""
+    import bisect
+    s_ymd, e_ymd = start.strftime("%Y%m%d"), end.strftime("%Y%m%d")
+    out = []
+    for code in codes:
+        code = str(code).strip()
+        sold = int(sales_last.get(code, 0) or 0)
+        if sold > 0:
+            out.append(sold)
+            continue
+        hist = history_map.get(code) or []
+        days = [h["d"] for h in hist]
+        i = bisect.bisect_right(days, s_ymd)          # 期間の初日以前で最後の記録
+        had = i > 0 and int(hist[i - 1]["stock"]) > 0
+        if not had:
+            j = bisect.bisect_right(days, e_ymd)
+            had = any(int(h["stock"]) > 0 for h in hist[i:j])
+        out.append(0 if had else None)
+    return out
 
 
 def latest_order_date_map(orders: pd.DataFrame, since, until) -> dict:
@@ -4065,9 +4105,26 @@ h1, h2, h3, h4,
         else:
             ts_sales = {}
 
+        # --- 前年同期間のテンポスター売上（集計期間をそのまま1年前にずらした期間） ---
+        last_start_r = (pd.Timestamp(start_r) - DateOffset(years=1)).date()
+        last_end_r = (pd.Timestamp(end_r) - DateOffset(years=1)).date()
+        last_files_r = [fi for fi in file_infos if last_start_r <= fi["date"] <= last_end_r]
+        ts_sales_last = {}
+        if last_files_r:
+            df_last_r = load_tempostar_data([fi["path"] for fi in last_files_r])
+            if "更新理由" in df_last_r.columns:
+                df_last_r = df_last_r[df_last_r["更新理由"] == "受注取込"]
+            if {"商品コード", "増減値"}.issubset(df_last_r.columns):
+                codes_last = df_last_r["商品コード"].astype(str).str.strip()
+                ts_sales_last = (-df_last_r.groupby(codes_last)["増減値"].sum()).to_dict()
+
         sales_recent = base
         codes_r = sales_recent["商品コード"]
         sales_recent["売上個数合計"] = codes_r.map(ts_sales).fillna(0).astype(int).clip(lower=0)
+        sales_recent["前年売上"] = prev_year_sales_values(
+            codes_r, ts_sales_last, get_tempostar_stock_history_map([fi["path"] for fi in file_infos]),
+            last_start_r, last_end_r,
+        )
         sales_recent["現在庫"] = pd.to_numeric(sales_recent["現在庫"], errors="coerce").fillna(0).astype(int)
 
         # 楽天在庫（RMS 在庫API 2.0・リアルタイム取得）
@@ -4197,12 +4254,15 @@ h1, h2, h3, h4,
             {"key": "発注推奨数", "label": "発注推奨数", "type": "order"},
         ]
         restock_columns = [c for c in restock_columns if c["key"] in restock_view.columns]
-        df_view_r = restock_view[[c["key"] for c in restock_columns]].copy()
+        prev_target = "テンポスター売上" if "テンポスター売上" in restock_view.columns else "売上個数合計"
+        restock_columns = [dict(c, sub="前年売上") if c["key"] == prev_target else c for c in restock_columns]
+        df_view_r = restock_view[[c["key"] for c in restock_columns] + ["前年売上"]].copy()
 
         st.markdown(
             f'<div class="metric-bar">'
             f'<div class="metric-chip">抽出SKU数<strong>{len(df_view_r):,}</strong></div>'
             f'<div class="metric-chip">集計期間<strong>{start_r} ～ {end_r}</strong></div>'
+            f'<div class="metric-chip">前年同期間<strong>{last_start_r} ～ {last_end_r}</strong></div>'
             f'<div class="metric-chip">売上個数予想の期間<strong>{forecast_start_r} ～ {forecast_end_r}</strong></div>'
             f'</div>',
             unsafe_allow_html=True,
@@ -4753,7 +4813,12 @@ h1, h2, h3, h4,
 
         # 今年・前年を別列で保持
         sales_grouped["今年売上"] = sales_grouped["売上個数合計"].astype(int)
-        sales_grouped["前年売上"] = sales_grouped["昨年売上個数"].astype(int)
+        sales_grouped["前年売上"] = prev_year_sales_values(
+            sales_grouped["商品コード"].astype(str).str.strip(),
+            dict(zip(sales_grouped["商品コード"].astype(str).str.strip(), sales_grouped["昨年売上個数"].astype(int))),
+            get_tempostar_stock_history_map(all_paths_for_snapshot),
+            last_start, last_end,
+        )
 
         # 不要列を落とす
         sales_grouped = sales_grouped.drop(
@@ -4769,8 +4834,7 @@ h1, h2, h3, h4,
             {"key": "商品名", "label": "商品名", "type": "text"},
             {"key": "属性1名", "label": "属性1名", "type": "text"},
             {"key": "属性2名", "label": "属性2名", "type": "text"},
-            {"key": "今年売上", "label": "今年売上", "type": "number", "emph": "violet"},
-            {"key": "前年売上", "label": "前年売上", "type": "number"},
+            {"key": "今年売上", "label": "今年売上", "type": "number", "emph": "violet", "sub": "前年売上"},
             {"key": "ZOZO 30日販売", "label": "ZOZO 30日販売", "type": "number"},
             {"key": "Amazon 30日販売", "label": "Amazon 30日販売", "type": "number"},
             {"key": "売上個数予想", "label": "売上個数予想", "type": "number"},
@@ -4780,7 +4844,7 @@ h1, h2, h3, h4,
             {"key": "Amazon FBA在庫", "label": "Amazon FBA在庫", "type": "number"},
         ]
         sales_columns = [c for c in sales_columns if c["key"] in sales_grouped.columns]
-        df_view = sales_grouped[[c["key"] for c in sales_columns]]
+        df_view = sales_grouped[[c["key"] for c in sales_columns] + ["前年売上"]]
 
         chips = [
             f'<div class="metric-chip">SKU数<strong>{len(df_view):,}</strong></div>',
