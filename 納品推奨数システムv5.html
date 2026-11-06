@@ -228,6 +228,34 @@
   }
   .chip-danger { background: var(--danger-bg); color: var(--danger-text); }
   .chip-unlisted { background: #f3f0ff; color: #5b21b6; }
+  /* 在庫日報から消えた商品（月初の在庫日報の蓄積から表示） */
+  .chip-gone { background: #eef2f6; color: #475569; border: 1px dashed #94a3b8; }
+  .chip-season { background: #fff4e5; color: #b45309; margin-left: 4px; }
+  .row-more { margin-left: 6px; border: 1px solid var(--border-md); background: var(--surface); color: var(--text-muted);
+    border-radius: 6px; padding: 0 7px; font-size: 13px; line-height: 18px; cursor: pointer; vertical-align: middle; }
+  .row-more:hover { background: var(--surface2); color: var(--text); }
+  .row-menu { position: absolute; z-index: 20000; background: #fff; border: 1px solid var(--border-md); border-radius: 10px;
+    box-shadow: 0 10px 28px rgba(0,0,0,0.18); padding: 6px; min-width: 200px; }
+  .row-menu button { display: block; width: 100%; text-align: left; border: 0; background: transparent; padding: 7px 10px;
+    border-radius: 6px; cursor: pointer; font-size: 13px; color: var(--text); font-family: inherit; }
+  .row-menu button:hover { background: #fdecec; color: #b91c1c; }
+  .row-menu .rm-note { font-size: 11px; color: var(--text-muted); padding: 4px 10px 2px; line-height: 1.5; }
+  .zv-toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: #1f2937; color: #fff;
+    padding: 9px 16px; border-radius: 10px; font-size: 13px; z-index: 30000; box-shadow: 0 8px 24px rgba(0,0,0,0.25); }
+  /* グラフ画面：在庫タブ（紫）／売上タブ（オレンジ） */
+  .sc-tabs { display: flex; gap: 6px; margin: 0 0 12px 0; border-bottom: 2px solid #ECE7FF; }
+  .sc-tab { border: 0; background: transparent; padding: 8px 18px; font-size: 13px; font-weight: 700; cursor: pointer;
+    border-radius: 10px 10px 0 0; color: #94a3b8; font-family: inherit; margin-bottom: -2px; border-bottom: 3px solid transparent; }
+  .sc-tab[data-t="stock"].active { color: #7B5FFF; background: #F4F1FF; border-bottom-color: #7B5FFF; }
+  .sc-tab[data-t="sales"].active { color: #E8590C; background: #FFF1E6; border-bottom-color: #E8590C; }
+  .stock-modal.tab-stock { border-top: 5px solid #7B5FFF; }
+  .stock-modal.tab-sales { border-top: 5px solid #E8590C; }
+  .ms-wrap { position: relative; }
+  .ms-bar { transition: opacity 0.12s; }
+  .ms-bar:hover { opacity: 0.8; }
+  .ms-note { font-size: 11px; color: #74708C; margin-top: 6px; line-height: 1.6; }
+  .ms-tooltip { position: absolute; display: none; background: #2A2440; color: #fff; font-size: 12px; padding: 6px 10px; border-radius: 8px;
+    pointer-events: none; white-space: nowrap; transform: translate(-50%, -100%); margin-top: -8px; z-index: 10; line-height: 1.5; }
   .chip-warn   { background: var(--warn-bg);   color: var(--warn-text); }
   .chip-ok     { background: var(--ok-bg);     color: var(--ok-text); }
   .chip-info   { background: var(--info-bg);   color: var(--info-text); }
@@ -307,6 +335,7 @@
   .status-check[data-status="発注推奨"].active   { color: #1e429f; border-color: #3b82f6; background: var(--info-bg); }
   .status-check[data-status="適正"].active       { color: #166534; border-color: #16a34a; background: var(--ok-bg); }
   .status-check[data-status="未出品"].active     { color: #5b21b6; border-color: #7c3aed; background: #f3f0ff; }
+  .status-check[data-status="在庫日報に無し"].active { color: #334155; border-color: #64748b; background: #eef2f6; }
   .filter-reset {
     font-size: 12px; color: var(--text-hint); cursor: pointer;
     padding: 5px 8px; border-radius: var(--radius);
@@ -385,12 +414,17 @@
 
 <!-- 在庫推移グラフ モーダル -->
 <div id="stock-modal-backdrop" class="stock-modal-backdrop" style="display:none;" onclick="closeStockModal(event)">
-  <div class="stock-modal" onclick="event.stopPropagation()">
+  <div class="stock-modal tab-stock" id="stock-modal-box" onclick="event.stopPropagation()">
     <div class="stock-modal-head">
       <span id="stock-modal-title" class="stock-modal-title">📈 在庫推移</span>
       <button class="export-btn" onclick="closeStockModal()">✕ 閉じる</button>
     </div>
     <div class="modal-meta" id="stock-modal-meta"></div>
+    <div class="sc-tabs" id="sc-tabs">
+      <button class="sc-tab active" data-t="stock" onclick="scSwitchTab('stock')">📦 在庫</button>
+      <button class="sc-tab" data-t="sales" onclick="scSwitchTab('sales')">📈 売上（ZOZO 月別）</button>
+    </div>
+    <div id="ms-body" style="display:none"></div>
     <div id="stock-modal-body">
       <div class="sc-period-bar" id="sc-periodbar">
         <button class="sc-period-btn" data-preset="1" onclick="scApplyPreset(1)">1ヶ月</button>
@@ -522,6 +556,9 @@
           <label class="status-check" data-status="未出品">
             <input type="checkbox" onchange="toggleStatus('未出品',this)"><span class="dot"></span>未出品
           </label>
+          <label class="status-check" data-status="在庫日報に無し" title="月初の在庫日報の蓄積にはあるが、今回の在庫日報には載っていない商品（ZOZO在庫0・直近30日販売0）">
+            <input type="checkbox" onchange="toggleStatus('在庫日報に無し',this)"><span class="dot"></span>在庫日報に無し
+          </label>
           <button class="filter-reset" onclick="resetStatus()">✕ すべて表示</button>
         </div>
         <div style="display:flex;gap:8px;">
@@ -641,6 +678,12 @@ let tempostarStockMap = {}; // { SKU: 現在庫 }（Streamlit側から自動注�
 let salesMap = {}; // { SKU: [{d:'YYYYMMDD', q:数量}, ...] }（Streamlit側から自動注入・日付昇順）
 let stockHistoryMap = {}; // { SKU: [{d:'YYYYMMDD', stock:在庫数}, ...] }（Streamlit側から自動注入・日付昇順）
 let forecastSalesMap = {}; // { SKU: 売上個数予想（指定期間の合計） }（Streamlit側から自動注入）
+// 月初の在庫日報の蓄積（Streamlit側から注入）
+//   items:   { CS品番: {name, color, size, brand_no, maker_no, category, firstSaleDate, last:'YYYY-MM-DD'} }（最後に載っていた在庫日報の内容）
+//   monthly: { CS品番: { 'YYYY-MM': 販売数 } }（各月初の在庫日報の「直近30日販売数」を前月分として）
+//   months:  ['YYYY-MM', ...]（月別販売が分かる月。昇順）／ src: { 'YYYY-MM': 元にした在庫日報の日付 }
+let zozoArchive = { items: {}, monthly: {}, months: [], src: {} };
+let discontinuedSet = new Set(); // 取扱終了にしたCS品番（Streamlit側のフォルダに保存）
 let tempostarInjected = false;
 let stockSourceLabel = '自社'; // Streamlit側から注入（例: "楽天(リアルタイム)"）
 
@@ -661,6 +704,12 @@ let stockSourceLabel = '自社'; // Streamlit側から注入（例: "楽天(リ�
   }
   if (typeof window.__FORECAST_SALES__ === 'object' && window.__FORECAST_SALES__) {
     forecastSalesMap = window.__FORECAST_SALES__;
+  }
+  if (typeof window.__ZOZO_ARCHIVE__ === 'object' && window.__ZOZO_ARCHIVE__) {
+    zozoArchive = Object.assign({ items: {}, monthly: {}, months: [], src: {} }, window.__ZOZO_ARCHIVE__);
+  }
+  if (Array.isArray(window.__ZOZO_DISCONTINUED__)) {
+    discontinuedSet = new Set(window.__ZOZO_DISCONTINUED__);
   }
   if (Array.isArray(window.__SKU_MASTER__) && window.__SKU_MASTER__.length > 0) {
     masterMap = window.__SKU_MASTER__.map(r => ({
@@ -919,10 +968,7 @@ function handleAllRowClick(event, rowId) {
 
   const row = data.find(r => r._id === rowId);
   if (!row) return;
-  if (!row.sku) {
-    alert('この商品はSKUマスターに登録がないため、在庫推移を表示できません。');
-    return;
-  }
+  // SKUマスターに無い商品も、売上（ZOZO 月別）タブは見られるので開く（在庫タブは「データなし」）
   openStockModal(row.sku, row.name || row.cs_no, row);
 }
 
@@ -1231,6 +1277,94 @@ function scApplyCustom() {
   scDrawRange(s, e);
 }
 
+// ── 売上（ZOZO 月別）タブ ──
+const MS = { cs: '' };
+function scSwitchTab(t) {
+  document.querySelectorAll('#sc-tabs .sc-tab').forEach(b => b.classList.toggle('active', b.dataset.t === t));
+  const box = document.getElementById('stock-modal-box');
+  box.classList.toggle('tab-stock', t === 'stock');
+  box.classList.toggle('tab-sales', t === 'sales');
+  document.getElementById('stock-modal-body').style.display = t === 'stock' ? '' : 'none';
+  const ms = document.getElementById('ms-body');
+  ms.style.display = t === 'sales' ? '' : 'none';
+  if (t === 'sales') renderMonthlySales(MS.cs);
+}
+
+function renderMonthlySales(cs) {
+  const el = document.getElementById('ms-body');
+  const months = zozoArchive.months || [];
+  if (!months.length) {
+    el.innerHTML = '<p class="sc-nodata">月別販売のデータがまだありません。アプリのZOZO機能の「月初の在庫日報の保存」から、月初の在庫日報を保存してください。</p>';
+    return;
+  }
+  const per = (zozoArchive.monthly || {})[cs] || {};
+  // その商品が初めて在庫日報に載った月より前は「未登録」（棒を出さない）。載ってから在庫日報に無い月は0
+  const firstIdx = months.findIndex(m => per[m] !== undefined);
+  const vals = months.map((m, i) => (firstIdx < 0 || i < firstIdx) ? null : (per[m] || 0));
+  if (firstIdx < 0) {
+    el.innerHTML = '<p class="sc-nodata">この商品は、保存されている月初の在庫日報に一度も載っていません。</p>';
+    return;
+  }
+  const W = 860, H = 320, padL = 46, padR = 16, padT = 24, padB = 46;
+  const innerW = W - padL - padR, innerH = H - padT - padB;
+  const maxV = Math.max(1, ...vals.filter(v => v !== null));
+  const niceMax = (function (v) { const p = Math.pow(10, Math.floor(Math.log10(v))); const n = v / p; return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * p; })(maxV);
+  const slot = innerW / months.length;
+  const bw = Math.max(6, Math.min(44, slot * 0.62));
+  const yAt = v => padT + innerH - (v / niceMax) * innerH;
+  let grid = '';
+  for (let g = 0; g <= 4; g++) {
+    const v = niceMax * g / 4, y = yAt(v);
+    grid += `<line class="sc-grid" x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}"></line>` +
+      `<text class="sc-axis" x="${padL - 8}" y="${y + 4}" text-anchor="end">${Math.round(v)}</text>`;
+  }
+  let bars = '', labels = '';
+  const step = Math.max(1, Math.ceil(months.length / 18));   // 月が多い時は月の文字を間引く
+  months.forEach((m, i) => {
+    const cx = padL + slot * (i + 0.5);
+    const y = Number(m.slice(0, 4)), mo = Number(m.slice(5, 7));
+    if (i % step === 0 || i === months.length - 1) {
+      labels += `<text class="sc-axis" x="${cx}" y="${H - padB + 18}" text-anchor="middle">${(mo === 1 || i === 0) ? y + '/' + mo : mo + '月'}</text>`;
+    }
+    const v = vals[i];
+    if (v === null) {
+      labels += `<text x="${cx}" y="${yAt(0) - 4}" text-anchor="middle" font-size="9" fill="#b6b2c8">未登録</text>`;
+      return;
+    }
+    const top = yAt(v), h = Math.max(v > 0 ? 2 : 0, yAt(0) - top);
+    bars += `<rect class="ms-bar" x="${cx - bw / 2}" y="${yAt(0) - h}" width="${bw}" height="${h}" rx="4" fill="#F08C3A"
+      data-m="${m}" data-v="${v}" data-src="${esc((zozoArchive.src || {})[m] || '')}"></rect>` +
+      (slot >= 22 ? `<text x="${cx}" y="${yAt(0) - h - 5}" text-anchor="middle" font-size="10" font-weight="700" fill="#C2410C">${v}</text>` : '');
+  });
+  const total = vals.reduce((a, v) => a + (v || 0), 0);
+  el.innerHTML = `
+    <div class="sc-summary" style="display:flex;background:#FFF1E6;">
+      <span class="ps-title" style="color:#E8590C;">📈 ZOZO 月別販売数（${months[firstIdx].replace('-', '/')} 〜 ${months[months.length - 1].replace('-', '/')}）</span>
+      <span class="ps-item">合計 <b>${total.toLocaleString('ja-JP')}個</b></span>
+      <span class="ps-item">最多 <b>${Math.max(...vals.filter(v => v !== null))}個</b></span>
+    </div>
+    <div class="ms-wrap">
+      <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;">${grid}${bars}${labels}</svg>
+      <div class="ms-tooltip"></div>
+    </div>
+    <div class="ms-note">※ 各月の数字は、その翌月初に保存した在庫日報の「直近30日販売数」です（例：11/2の在庫日報 → 10月分）。30日分のため、31日ある月や保存日がずれた月は目安になります。<br>
+    ※ 在庫日報に載っていなかった月は0（ZOZO在庫0・販売0）、初めて載る前の月は「未登録」です。</div>`;
+  const wrap = el.querySelector('.ms-wrap'), tip = el.querySelector('.ms-tooltip');
+  el.querySelectorAll('.ms-bar').forEach(b => {
+    b.addEventListener('mouseenter', () => {
+      const m = b.dataset.m;
+      tip.innerHTML = `${m.slice(0, 4)}年${Number(m.slice(5, 7))}月：<b>${b.dataset.v}個</b>` +
+        (b.dataset.src ? `<br><span style="opacity:0.75">${b.dataset.src} の在庫日報より</span>` : '');
+      tip.style.display = 'block';
+      const r = b.getBoundingClientRect(), wr = wrap.getBoundingClientRect();
+      const half = tip.offsetWidth / 2;
+      tip.style.left = Math.max(half + 4, Math.min(wr.width - half - 4, r.left - wr.left + r.width / 2)) + 'px';
+      tip.style.top = (r.top - wr.top) + 'px';
+    });
+    b.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+  });
+}
+
 function renderStockChart(sku, history) {
   SC.sku = sku;
   SC.points = scBuildSeries(history);
@@ -1306,7 +1440,11 @@ function openStockModal(sku, label, row) {
   title.textContent = `📈 ${label || '在庫推移'}`;
   const metaEl = document.getElementById('stock-modal-meta');
   if (metaEl) metaEl.innerHTML = metaChipsHtml(sku, (row && row.color) || '', (row && row.size) || '');
-  renderStockChart(sku, stockHistoryMap[sku]);
+  renderStockChart(sku, (sku && stockHistoryMap[sku]) || []);
+  MS.cs = (row && row.cs_no) || '';
+  document.getElementById('ms-body').innerHTML = '';
+  // SKUマスターに無い商品は在庫推移が無いので、売上タブから開く
+  scSwitchTab(sku ? 'stock' : 'sales');
   backdrop.style.display = 'flex';
   positionModalToParentViewport(backdrop);
 
@@ -1733,6 +1871,34 @@ function runAnalysis() {
   catSel.innerHTML = '<option value="">カテゴリ（全て）</option>';
   cats.forEach(c => { const o = document.createElement('option'); o.value=c; o.textContent=c; catSel.appendChild(o); });
 
+  // 在庫日報から消えた商品（在庫0かつ直近30日の販売0だと、ZOZOの在庫日報に載らなくなる）を、
+  // 月初の在庫日報の蓄積から「ZOZO在庫0・30日販売0」として足す。取扱終了にした商品は出さない
+  {
+    const invKeysNow = new Set(data.map(r => r.cs_no));
+    Object.keys(zozoArchive.items || {}).forEach(cs => {
+      if (!cs || invKeysNow.has(cs) || discontinuedSet.has(cs)) return;
+      const it = zozoArchive.items[cs] || {};
+      const unref = recentDelivery[cs] || 0;
+      const { sku, tempostarStock } = getTempostarInfo(cs);
+      data.push({
+        _id: 'r' + (_idSeq++),
+        name: it.name || '', brand_no: it.brand_no || '',
+        color: it.color || '', size: it.size || '',
+        cs_no: cs, category: it.category || '',
+        maker_no: it.maker_no || '',
+        firstSaleDate: it.firstSaleDate || '',
+        currentStock: 0, unref, realStock: Math.max(0, unref), sold30: 0, sold7: 0, dailyRate: 0,
+        recommend: 0, stockDays: null,
+        sku, tempostarStock, companySales: null,
+        forecastSales: sku && forecastSalesMap[sku] !== undefined ? forecastSalesMap[sku] : null,
+        deliveryQty: null, group: null,
+        gone: true, lastSeen: it.last || '',
+        fromDateStr: `${fromDate.getFullYear()}/${fromDate.getMonth()+1}/${fromDate.getDate()}`,
+        baseDateStr: `${baseDate.getFullYear()}/${baseDate.getMonth()+1}/${baseDate.getDate()}`,
+      });
+    });
+  }
+
   // 未出品行を生成（商品一覧CSVにあり、納品書CSVに一度も登場しないCS品番）
   if (rawItems) {
     const itemRows = parseCSV(rawItems);
@@ -1833,6 +1999,7 @@ function sortBy(key) {
 // ── フィルタ & ソート ──
 function getStatusLabel(r) {
   if (r.unlisted)          return '未出品';
+  if (r.gone)              return '在庫日報に無し';
   if (r.realStock === 0)   return '欠品';
   if (r.recommend >= 10)   return '要発注';
   if (r.recommend > 0)     return '発注推奨';
@@ -1899,6 +2066,14 @@ function resetStatus() {
 function statusChip(r) {
   if (r.unlisted)
     return '<span class="chip chip-unlisted">未出品</span>';
+  if (r.gone) {
+    // 季節品かも：前年同期の自社売上（売上個数予想）が1以上
+    const season = r.forecastSales !== null && r.forecastSales !== undefined && r.forecastSales >= 1
+      ? '<span class="chip chip-season" title="前年同期の自社売上（売上個数予想）が ' + r.forecastSales + ' 個あります">季節品かも</span>' : '';
+    const last = r.lastSeen ? '最後に載っていた在庫日報：' + r.lastSeen : '';
+    return '<span class="chip chip-gone" title="' + esc(last) + '">在庫日報に無し</span>' + season +
+      '<button class="row-more" title="その他の操作" onclick="openRowMenu(event, \'' + r._id + '\')">⋯</button>';
+  }
   if (r.realStock === 0)
     return '<span class="chip chip-danger">欠品</span>';
   if (r.recommend >= 10)
@@ -1974,7 +2149,7 @@ function render() {
   document.getElementById('metrics').innerHTML = `
     <div class="metric">
       <div class="metric-label">総 SKU 数</div>
-      <div class="metric-value">${data.filter(r=>!r.unlisted).length.toLocaleString()}</div>
+      <div class="metric-value">${data.filter(r=>!r.unlisted && !r.gone).length.toLocaleString()}</div>
       <div class="metric-sub">在庫日報より</div>
     </div>
     <div class="metric">
@@ -1987,6 +2162,12 @@ function render() {
       <div class="metric-value" style="color:var(--accent)">${withUnref.toLocaleString()}</div>
       <div class="metric-sub">合計 +${totalUnref.toLocaleString()} 点</div>
     </div>
+    ${Object.keys(zozoArchive.items || {}).length ? `
+    <div class="metric">
+      <div class="metric-label">在庫日報に無し</div>
+      <div class="metric-value" style="color:#475569">${data.filter(r => r.gone).length.toLocaleString()}</div>
+      <div class="metric-sub">うち季節品かも ${data.filter(r => r.gone && r.forecastSales >= 1).length} 件</div>
+    </div>` : ''}
     ${rawItems ? `
     <div class="metric">
       <div class="metric-label">未出品 SKU</div>
@@ -2005,6 +2186,63 @@ function render() {
   document.getElementById('info-bar').innerHTML =
     `📌 実質在庫 ＝ 現在庫 ＋ 未反映納品。推奨納品数 ＝ 目標在庫（日販速度 × ${targetDays}日）－ 実質在庫。
      未反映納品は出荷日が ${periodStr} の納品書全行を対象。${tempostarInjected ? `<br>📦 ${stockSourceLabel}在庫＝${stockSourceLabel}の最新在庫（SKUマスターでCS品番と紐付け）。自社売上個数＝${salesStartLabel} 〜 ${salesEndLabel} の期間集計（上部の日付で変更可）。` : ''}`;
+}
+
+// ── 行の「⋯」メニュー（誤操作を防ぐため、取扱終了はメニューの中に置く） ──
+let _rowMenuEl = null;
+function closeRowMenu() { if (_rowMenuEl) { _rowMenuEl.remove(); _rowMenuEl = null; } }
+function openRowMenu(event, rowId) {
+  event.stopPropagation();
+  closeRowMenu();
+  const row = data.find(r => r._id === rowId);
+  if (!row) return;
+  const m = document.createElement('div');
+  m.className = 'row-menu';
+  m.innerHTML = `<div class="rm-note">${esc(row.cs_no)}　${esc(row.color)}${row.size ? ' / ' + esc(row.size) : ''}</div>
+    <button type="button">🚫 取扱終了にする</button>
+    <div class="rm-note">以後この画面に表示しません。<br>アプリの「取扱終了にした商品」から戻せます。</div>`;
+  document.body.appendChild(m);
+  const r = event.target.getBoundingClientRect();
+  m.style.top = (r.bottom + window.scrollY + 4) + 'px';
+  m.style.left = Math.max(8, r.right + window.scrollX - m.offsetWidth) + 'px';
+  m.querySelector('button').addEventListener('click', () => { closeRowMenu(); markDiscontinued(row); });
+  _rowMenuEl = m;
+}
+document.addEventListener('mousedown', e => { if (_rowMenuEl && !_rowMenuEl.contains(e.target)) closeRowMenu(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeRowMenu(); });
+
+function showToast(msg) {
+  const t = document.createElement('div');
+  t.className = 'zv-toast';
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 3500);
+}
+
+// アプリ（Streamlit）側の受け取り欄に書き込んで伝える。アプリがフォルダの取扱終了リストに保存する
+function sendToApp(cmd) {
+  try {
+    const inp = window.parent.document.querySelector('.st-key-zozo_tool_cmd input');
+    if (!inp) return false;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    setter.call(inp, JSON.stringify(Object.assign({ t: Date.now() }, cmd)));
+    inp.dispatchEvent(new Event('input', { bubbles: true }));
+    inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+    return true;
+  } catch (e) { return false; }
+}
+
+function markDiscontinued(row) {
+  const ok = sendToApp({ a: 'end', cs: row.cs_no, name: row.name, color: row.color, size: row.size });
+  if (!ok) {
+    alert('アプリの外で開いているため、取扱終了を保存できません。在庫管理アプリのZOZO機能から操作してください。');
+    return;
+  }
+  // 画面からはすぐに消す（保存はアプリ側で行われ、画面の再読み込み後も表示されない）
+  discontinuedSet.add(row.cs_no);
+  data = data.filter(r => r.cs_no !== row.cs_no);
+  render();
+  showToast(`🚫 ${row.cs_no} を取扱終了にしました（アプリの「取扱終了にした商品」から戻せます）`);
 }
 
 function changePage(d) { currentPage += d; render(); if (window.__syncEmbedHeight) setTimeout(window.__syncEmbedHeight, 0); }

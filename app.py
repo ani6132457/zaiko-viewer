@@ -247,6 +247,204 @@ def get_tempostar_sales_map(file_paths):
 
 
 # ==========================
+# ZOZO：月初の在庫日報の蓄積（在庫日報から消えた商品の表示・ZOZOの月別販売数）
+# ==========================
+# ZOZOの在庫日報は「在庫0かつ直近30日の販売0」の商品が載らなくなるため、月初の在庫日報をフォルダに貯めて、
+# 一度でも載った商品を消えないようにする。各月初の「直近30日販売数」は前月の販売数として月別グラフに使う。
+ZOZO_DAILY_FOLDER = "ZOZO在庫日報"
+ZOZO_DISCONTINUED_FILE = os.path.join(ZOZO_DAILY_FOLDER, "取扱終了リスト.json")
+_ZOZO_DAILY_RE = re.compile(r"在庫日報_(\d{4})_(\d{1,2})_(\d{1,2})\.csv$")
+ZOZO_MONTHLY_MAX_DAY = 10   # 月別販売数に使うのは、その月の10日までの在庫日報（月初のもの）
+
+
+def zozo_daily_date_from_name(name: str):
+    """ファイル名（在庫日報_2026_11_02.csv）から日付を読む。形が違えば None。"""
+    m = _ZOZO_DAILY_RE.search(os.path.basename(str(name)))
+    if not m:
+        return None
+    try:
+        return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3))).date()
+    except ValueError:
+        return None
+
+
+def list_zozo_daily_files() -> list:
+    """フォルダの在庫日報を [(日付, パス), ...]（日付の古い順）で返す。"""
+    if not os.path.isdir(ZOZO_DAILY_FOLDER):
+        return []
+    out = []
+    for path in glob.glob(os.path.join(ZOZO_DAILY_FOLDER, "*.csv")):
+        d = zozo_daily_date_from_name(path)
+        if d:
+            out.append((d, path))
+    return sorted(out)
+
+
+@st.cache_data(show_spinner=False)
+def build_zozo_archive(files_key: tuple) -> dict:
+    """蓄積した在庫日報から、納品推奨数システムに渡すデータを作る。
+    files_key: ((パス, 更新時刻, 'YYYY-MM-DD'), ...)（日付の古い順。更新時刻はファイルが変わった時に作り直すため）
+    戻り値: {"items": {CS品番: 商品情報（最後に載っていた在庫日報の内容）},
+             "monthly": {CS品番: {"YYYY-MM": 販売数}}, "months": [...], "src": {"YYYY-MM": "11/2"}}"""
+    items, monthly, src = {}, {}, {}
+    first_of_month = {}   # "YYYY-MM" → (日付, DataFrame)：その月で一番早い（10日まで）の在庫日報
+    col_map = {"name": "商品名", "color": "カラー", "size": "サイズ", "brand_no": "ブランド品番",
+               "maker_no": "メーカー品番", "category": "親商品タイプ", "firstSaleDate": "初回販売開始設定日"}
+    for path, _mtime, ds in files_key:
+        try:
+            with open(path, "rb") as f:
+                df = _read_csv_bytes_as_str(f.read())
+        except OSError:
+            continue
+        if df is None:
+            continue
+        df.columns = [str(c).strip() for c in df.columns]
+        if "CS品番" not in df.columns:
+            continue
+        df["CS品番"] = df["CS品番"].fillna("").astype(str).str.strip()
+        df = df[df["CS品番"] != ""]
+        # 商品情報は新しい在庫日報の内容で上書きしていく（古い順に読んでいるため）
+        cols = {k: v for k, v in col_map.items() if v in df.columns}
+        for rec in df[["CS品番"] + list(cols.values())].fillna("").to_dict("records"):
+            info = {k: str(rec[v]).strip() for k, v in cols.items()}
+            info["last"] = ds
+            items[rec["CS品番"]] = info
+        d = datetime.strptime(ds, "%Y-%m-%d").date()
+        ym = f"{d.year}-{d.month:02d}"
+        if d.day <= ZOZO_MONTHLY_MAX_DAY and ym not in first_of_month and "直近30日販売数" in df.columns:
+            first_of_month[ym] = (d, df)
+    # 月初の在庫日報の「直近30日販売数」＝前月の販売数
+    for ym, (d, df) in sorted(first_of_month.items()):
+        prev = pd.Timestamp(d).replace(day=1) - pd.Timedelta(days=1)
+        pm = f"{prev.year}-{prev.month:02d}"
+        src[pm] = f"{d.month}/{d.day}"
+        sold = _to_int_series(df["直近30日販売数"])
+        for cs, v in zip(df["CS品番"], sold):
+            slot = monthly.setdefault(cs, {})
+            slot[pm] = slot.get(pm, 0) + int(v)
+    return {"items": items, "monthly": monthly, "months": sorted(src), "src": src}
+
+
+def load_zozo_discontinued() -> list:
+    """取扱終了にした商品の一覧 [{cs, name, color, size, at}, ...]"""
+    try:
+        with open(ZOZO_DISCONTINUED_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return [x for x in data if isinstance(x, dict) and x.get("cs")]
+    except (OSError, ValueError):
+        return []
+
+
+def save_zozo_discontinued(items: list):
+    os.makedirs(ZOZO_DAILY_FOLDER, exist_ok=True)
+    tmp = ZOZO_DISCONTINUED_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(items, f, ensure_ascii=False, indent=1)
+    os.replace(tmp, ZOZO_DISCONTINUED_FILE)
+
+
+def render_zozo_daily_archive_controls():
+    """ZOZO機能の上部：取扱終了の受け取り、月初の在庫日報の保存欄、取扱終了にした商品の一覧。
+    戻り値: (蓄積データ, 取扱終了にしたCS品番のリスト)"""
+    jst_now = datetime.now(timezone(timedelta(hours=9)))
+
+    # --- 納品推奨数システムの「⋯ → 取扱終了にする」を受け取る（HTMLツールが下の隠し欄に書き込む） ---
+    cmd_raw = st.session_state.get("zozo_tool_cmd", "")
+    if cmd_raw:
+        try:
+            cmd = json.loads(cmd_raw)
+        except ValueError:
+            cmd = None
+        if isinstance(cmd, dict) and cmd.get("a") == "end" and cmd.get("cs") \
+                and cmd.get("t") != st.session_state.get("zozo_tool_cmd_last"):
+            lst = load_zozo_discontinued()
+            if cmd["cs"] not in {x["cs"] for x in lst}:
+                lst.append({
+                    "cs": str(cmd["cs"]), "name": str(cmd.get("name", "")),
+                    "color": str(cmd.get("color", "")), "size": str(cmd.get("size", "")),
+                    "at": jst_now.strftime("%Y-%m-%d %H:%M"),
+                })
+                save_zozo_discontinued(lst)
+            st.session_state["zozo_tool_cmd_last"] = cmd.get("t")
+        st.session_state["zozo_tool_cmd"] = ""   # 受け取ったら空にする（ウィジェットを作る前なので変更できる）
+    st.markdown(
+        "<style>.st-key-zozo_tool_cmd{position:absolute!important;left:-10000px!important;height:0!important;"
+        "overflow:hidden!important;margin:0!important;}</style>",
+        unsafe_allow_html=True,
+    )
+    st.text_input("zozo_tool_cmd", key="zozo_tool_cmd", label_visibility="collapsed")
+
+    # --- 月初の在庫日報の保存 ---
+    files = list_zozo_daily_files()
+    this_month = (jst_now.year, jst_now.month)
+    has_this_month = any((d.year, d.month) == this_month and d.day <= ZOZO_MONTHLY_MAX_DAY for d, _ in files)
+    if files and not has_this_month:
+        st.warning(f"📥 今月（{jst_now.month}月）の月初の在庫日報がまだ保存されていません。下の「月初の在庫日報の保存」から保存してください。")
+    elif not files:
+        st.info("📥 月初の在庫日報を保存すると、在庫日報から消えた商品（在庫0・直近30日の販売0）も表示され、グラフでZOZOの月別販売数が見られるようになります。")
+
+    msg = st.session_state.pop("zozo_daily_save_msg", None)
+    if msg:
+        (st.success if msg[0] == "ok" else st.error)(msg[1])
+
+    label = "📥 月初の在庫日報の保存"
+    if files:
+        label += f"（保存済み {len(files)}件：{files[0][0]:%Y/%m/%d} 〜 {files[-1][0]:%Y/%m/%d}）"
+    with st.expander(label, expanded=not files):
+        st.caption(
+            f"ファイル名が「在庫日報_YYYY_MM_DD.csv」の在庫日報を『{ZOZO_DAILY_FOLDER}』フォルダに保存します（複数まとめて選べます）。"
+            f"月別販売数には、各月{ZOZO_MONTHLY_MAX_DAY}日までの一番早い在庫日報の「直近30日販売数」を、前月分として使います。"
+        )
+        ver = st.session_state.get("zozo_daily_up_ver", 0)
+        ups = st.file_uploader(
+            "在庫日報CSV（月初のもの）", type="csv", accept_multiple_files=True, key=f"zozo_daily_up_{ver}"
+        )
+        # 複数ファイルはアップロードが少しずつ終わるため、全部そろってから「保存する」で保存する
+        if st.button(f"💾 保存する（{len(ups)}件）" if ups else "💾 保存する", disabled=not ups, key=f"zozo_daily_save_btn_{ver}"):
+            saved, errors = [], []
+            os.makedirs(ZOZO_DAILY_FOLDER, exist_ok=True)
+            for f in ups:
+                d = zozo_daily_date_from_name(f.name)
+                if d is None:
+                    errors.append(f"{f.name}：ファイル名が「在庫日報_YYYY_MM_DD.csv」の形ではありません")
+                    continue
+                raw = f.getvalue()
+                df = _read_csv_bytes_as_str(raw)
+                if df is None or not {"CS品番", "直近30日販売数"}.issubset({str(c).strip() for c in df.columns}):
+                    errors.append(f"{f.name}：在庫日報の形（CS品番・直近30日販売数の列）ではありません")
+                    continue
+                with open(os.path.join(ZOZO_DAILY_FOLDER, f"在庫日報_{d:%Y_%m_%d}.csv"), "wb") as out:
+                    out.write(raw)
+                saved.append(f"{d:%Y/%m/%d}" + ("" if d.day <= ZOZO_MONTHLY_MAX_DAY else "（月初ではないため、月別販売数には使いません）"))
+            if errors:
+                st.session_state["zozo_daily_save_msg"] = ("err", "保存できなかったファイルがあります：\n" + "\n".join(errors)
+                                                           + ("\n\n保存したもの：" + "、".join(saved) if saved else ""))
+            else:
+                st.session_state["zozo_daily_save_msg"] = ("ok", "✅ 保存しました：" + "、".join(saved))
+            st.session_state["zozo_daily_up_ver"] = ver + 1   # アップロード欄を空に戻す
+            st.rerun()
+        if files:
+            months_text = "、".join(f"{d:%Y/%m/%d}" for d, _ in files[-24:])
+            st.caption(f"保存済み：{months_text}" + (" …" if len(files) > 24 else ""))
+
+    archive = build_zozo_archive(tuple((path, os.path.getmtime(path), d.isoformat()) for d, path in files))
+
+    # --- 取扱終了にした商品（元に戻せる） ---
+    disc = load_zozo_discontinued()
+    if disc:
+        with st.expander(f"🚫 取扱終了にした商品（{len(disc)}件）"):
+            st.caption("納品推奨数システムの「⋯ → 取扱終了にする」で非表示にした商品です。選んで元に戻せます。")
+            labels = {x["cs"]: f"{x['cs']}　{x.get('name', '')[:30]}　{x.get('color', '')} {x.get('size', '')}（{x.get('at', '')}）" for x in disc}
+            rv = st.session_state.get("zozo_disc_ver", 0)
+            sel = st.multiselect("元に戻す商品", list(labels), format_func=lambda k: labels.get(k, k), key=f"zozo_disc_sel_{rv}")
+            if st.button("↩️ 選んだ商品を元に戻す", disabled=not sel, key=f"zozo_disc_btn_{rv}"):
+                save_zozo_discontinued([x for x in disc if x["cs"] not in set(sel)])
+                st.session_state["zozo_disc_ver"] = rv + 1
+                st.rerun()
+    return archive, [x["cs"] for x in disc]
+
+
+# ==========================
 # 日別在庫履歴（納品推奨数システムの在庫推移グラフ用）
 # ==========================
 @st.cache_data
@@ -1026,14 +1224,16 @@ def render_fba_compare_tab(file_infos, df_master):
     if df_master is None:
         st.caption("ℹ️ sku_master.xlsx が未読み込みのため、Amazon SKUをそのまま商品コードとして照合します。")
 
-    payload = build_fba_compare_payload(
-        paths_with_mtime, latest_ymd, trend_start_date.strftime("%Y%m%d"), trend_file_dates, master_items
-    )
+    with perf("　Amazon内訳：在庫比較のデータ作成"):
+        payload = build_fba_compare_payload(
+            paths_with_mtime, latest_ymd, trend_start_date.strftime("%Y%m%d"), trend_file_dates, master_items
+        )
 
     with open(FBA_COMPARE_HTML, "r", encoding="utf-8") as f:
         html_content = f.read()
     # 本体スクリプトが動く前に注入データを読み込ませるため、<head>の直後に挿入
-    order_events = build_order_events_all([p for p, _ in paths_with_mtime], list(trend_file_dates))
+    with perf("　Amazon内訳：発注履歴の注文日"):
+        order_events = build_order_events_all([p for p, _ in paths_with_mtime], list(trend_file_dates))
     order_json = json.dumps(order_events, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
     html_content = html_content.replace(
         "<head>",
@@ -3903,6 +4103,47 @@ def _boot_render(pct: int, label: str):
     ph.markdown(html_, unsafe_allow_html=True)
 
 
+# ==========================
+# 処理時間の計測（URLに ?debug=1 を付けた時だけ）
+# ==========================
+_PERF = {"rows": None, "t0": 0.0}
+
+
+def _perf_enabled() -> bool:
+    try:
+        return st.query_params.get("debug", "") == "1"
+    except Exception:
+        return False
+
+
+class perf:
+    """with perf("ラベル"): ... の中の処理時間を記録する（計測オフの時は何もしない）。"""
+    def __init__(self, label: str):
+        self.label = label
+
+    def __enter__(self):
+        self.t = time.perf_counter()
+        return self
+
+    def __exit__(self, *exc):
+        if _PERF["rows"] is not None:
+            _PERF["rows"].append((self.label, time.perf_counter() - self.t))
+        return False
+
+
+def _render_perf_report():
+    rows = _PERF["rows"]
+    if rows is None:
+        return
+    total = time.perf_counter() - _PERF["t0"]
+    with st.expander(f"⏱ 処理時間（デバッグ表示）：合計 {total:.2f} 秒", expanded=True):
+        st.caption("Python側の計算時間です（ブラウザでの描画時間は含みません）。このまま画面のスクリーンショットを送ってください。")
+        df = pd.DataFrame(
+            [{"処理": label, "秒": round(sec, 2), "割合": f"{sec / total * 100:.0f}%" if total > 0 else ""} for label, sec in rows]
+        )
+        st.dataframe(df, hide_index=True, use_container_width=True)
+
+
 def _boot_step(pct: int, label: str):
     _boot_render(pct, label)
 
@@ -3930,11 +4171,16 @@ def main():
             _BOOT["ph"] = st.empty()
             _BOOT["pct"] = 0
             _boot_render(8, "起動しています…")
+    if _perf_enabled():
+        _PERF["rows"], _PERF["t0"] = [], time.perf_counter()
+    else:
+        _PERF["rows"] = None
     try:
         _main_impl()
     finally:
         _boot_clear()
         save_ui_state_to_url()
+        _render_perf_report()
 
 
 def _main_impl():
@@ -3971,10 +4217,11 @@ def _main_impl():
     trend_files = [fi for fi in file_infos if trend_start_date <= fi["date"] <= max_date]
     trend_paths = sorted(fi["path"] for fi in trend_files)
     _boot_step(40, "在庫の推移を読み込み・集計中…")
-    full_trend_map, full_event_map = get_stock_trend_and_event_maps(
-        tuple((fi["path"], os.path.getmtime(fi["path"])) for fi in file_infos),
-        trend_start_date.strftime("%Y%m%d"),
-    )
+    with perf("共通：在庫推移・内訳の集計"):
+        full_trend_map, full_event_map = get_stock_trend_and_event_maps(
+            tuple((fi["path"], os.path.getmtime(fi["path"])) for fi in file_infos),
+            trend_start_date.strftime("%Y%m%d"),
+        )
     trend_file_dates = [fi["date"].strftime("%Y-%m-%d") for fi in trend_files]
 
     # ---------- 楽天在庫（RMS 在庫API 2.0・非ブロッキング背景取得） ----------
@@ -3986,13 +4233,14 @@ def _main_impl():
     need_session_fetch = not st.session_state.get("rakuten_session_fetched", False)
     st.session_state["rakuten_session_fetched"] = True
 
-    if _rakuten_auth_header() is None:
-        rakuten_stock_map, rakuten_errors, rakuten_fetched_at, rakuten_fetching = {}, [], None, False
-    else:
-        rakuten_pairs = get_rakuten_sku_pairs(all_paths_for_rakuten)
-        rakuten_stock_map, rakuten_errors, rakuten_fetched_at, rakuten_fetching = get_rakuten_stock_state(
-            rakuten_pairs, force=(manual_refresh or need_session_fetch)
-        )
+    with perf("共通：楽天在庫の確認"):
+        if _rakuten_auth_header() is None:
+            rakuten_stock_map, rakuten_errors, rakuten_fetched_at, rakuten_fetching = {}, [], None, False
+        else:
+            rakuten_pairs = get_rakuten_sku_pairs(all_paths_for_rakuten)
+            rakuten_stock_map, rakuten_errors, rakuten_fetched_at, rakuten_fetching = get_rakuten_stock_state(
+                rakuten_pairs, force=(manual_refresh or need_session_fetch)
+            )
 
     # ---------- Amazon FBA在庫（SP-API） ----------
     # いったん停止中（取得自体を行わない）。FBA在庫は売上個数一覧タブで在庫補充レポートCSVから表示する。
@@ -4002,7 +4250,8 @@ def _main_impl():
 
     # ---------- 売上個数予想用：全期間の日別売上マップ（1回だけ計算） ----------
     _boot_step(80, "売上データを集計中…")
-    all_sales_map = get_tempostar_sales_map(all_paths_for_rakuten)
+    with perf("共通：日別売上の集計"):
+        all_sales_map = get_tempostar_sales_map(all_paths_for_rakuten)
 
     # ---------- 再起動前の検索条件を復元（ウィジェット作成・デフォルト設定より前に行う） ----------
     restore_ui_state_from_url(min_date, max_date)
@@ -4288,48 +4537,34 @@ h1, h2, h3, h4,
     display: none !important;
 }
 
-/* ===== ボタン操作などの再計算中：画面中央のくるくるゲージ ===== */
+/* ===== ボタン操作などの再計算中：画面の一番上に細い光のバーを流す（画面は覆わない） ===== */
 [data-testid="stStatusWidget"] { display: none !important; }
-[data-testid="stElementContainer"]:has(.zv-spinner) { position: absolute; width: 0; height: 0; margin: 0; padding: 0; }
-.zv-spinner {
-    position: fixed; inset: 0; z-index: 99990;
-    display: none; align-items: center; justify-content: center;
-    pointer-events: none;
-    background: rgba(246,242,255,0.38);
-    backdrop-filter: blur(1.5px);
+[data-testid="stElementContainer"]:has(.zv-topbar) { position: absolute; width: 0; height: 0; margin: 0; padding: 0; }
+.zv-topbar {
+    position: fixed; top: 0; left: 0; right: 0; height: 3px; z-index: 999999;
+    display: none; overflow: hidden; pointer-events: none;
+    background: rgba(123,95,255,0.12);
 }
-[data-testid="stApp"][data-test-script-state="running"] .zv-spinner,
-[data-testid="stApp"]:has([data-testid="stStatusWidget"]) .zv-spinner {
-    display: flex;
-    animation: zvspinfade .25s ease .5s both;   /* 一瞬で終わる処理では出さないよう、0.5秒待ってから表示 */
+[data-testid="stApp"][data-test-script-state="running"] .zv-topbar,
+[data-testid="stApp"]:has([data-testid="stStatusWidget"]) .zv-topbar {
+    display: block;
+    animation: zvbarfade .2s ease .3s both;   /* 一瞬で終わる処理では出さないよう、0.3秒待ってから表示 */
 }
-[data-testid="stApp"]:has(.zv-boot) .zv-spinner { display: none !important; }
-@keyframes zvspinfade { from { opacity: 0; } to { opacity: 1; } }
-.zv-spin-card {
-    position: relative; width: 112px; height: 112px; border-radius: 50%;
-    background: rgba(255,255,255,0.92);
-    box-shadow: 0 10px 34px rgba(123,95,255,0.30), inset 0 0 0 2px #EDE9FF;
-    display: flex; align-items: center; justify-content: center;
+[data-testid="stApp"]:has(.zv-boot) .zv-topbar { display: none !important; }
+@keyframes zvbarfade { from { opacity: 0; } to { opacity: 1; } }
+.zv-topbar::before {
+    content: ""; position: absolute; top: 0; bottom: 0; left: -40%; width: 40%;
+    background: linear-gradient(90deg, rgba(123,95,255,0) 0%, #7B5FFF 30%, #FF6B4A 70%, rgba(255,159,28,0) 100%);
+    box-shadow: 0 0 8px rgba(255,107,74,0.6);
+    animation: zvbarflow 1.1s ease-in-out infinite;
 }
-.zv-spin-ring {
-    position: absolute; width: 84px; height: 84px; border-radius: 50%;
-    background: conic-gradient(from 0deg, rgba(123,95,255,0) 0%, #7B5FFF 35%, #FF6B4A 70%, #FF9F1C 100%);
-    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 9px), #000 calc(100% - 8px));
-            mask: radial-gradient(farthest-side, transparent calc(100% - 9px), #000 calc(100% - 8px));
-    animation: zvspin 0.95s linear infinite;
+@keyframes zvbarflow { 0% { left: -40%; } 100% { left: 100%; } }
+@media (prefers-reduced-motion: reduce) { .zv-topbar::before { animation-duration: 2.4s; } }
+
+/* Streamlit標準の「再計算中は古い表示を薄くする」動きを止める（画面は普通に見えたまま） */
+[data-stale="true"], .stale-element {
+    opacity: 1 !important; transition: none !important; filter: none !important;
 }
-.zv-spin-orbit { position: absolute; width: 84px; height: 84px; animation: zvspin 0.95s linear infinite; }
-.zv-spin-orbit::after {
-    content: ""; position: absolute; top: -3px; left: 50%; width: 12px; height: 12px; margin-left: -6px; border-radius: 50%;
-    background: #FF9F1C; box-shadow: 0 0 10px 3px rgba(255,159,28,0.65);
-}
-.zv-spin-core {
-    width: 30px; height: 30px; border-radius: 50%;
-    background: radial-gradient(circle at 35% 30%, #fff 0%, #FFB199 35%, #FF6B4A 100%);
-    animation: zvpulse 1.1s ease-in-out infinite;
-}
-@keyframes zvspin { to { transform: rotate(360deg); } }
-@keyframes zvpulse { 0%,100% { transform: scale(0.8); } 50% { transform: scale(1.12); } }
 
 /* ===== メトリクスバー ===== */
 .metric-bar {
@@ -4517,13 +4752,8 @@ h1, h2, h3, h4,
         unsafe_allow_html=True,
     )
 
-    # 再計算中に画面中央へ出す「くるくるゲージ」（表示/非表示はCSS側で、スクリプトの実行状態に連動）
-    st.markdown(
-        '<div class="zv-spinner"><div class="zv-spin-card">'
-        '<div class="zv-spin-ring"></div><div class="zv-spin-orbit"></div><div class="zv-spin-core"></div>'
-        '</div></div>',
-        unsafe_allow_html=True,
-    )
+    # 再計算中に画面の一番上へ出す細い光のバー（表示/非表示はCSS側で、スクリプトの実行状態に連動）
+    st.markdown('<div class="zv-topbar"></div>', unsafe_allow_html=True)
 
         # ==========================
     # タブ（タブ名と中身を一致させる）
@@ -5430,11 +5660,16 @@ h1, h2, h3, h4,
             rakuten_fetched_at, rakuten_fetching, rakuten_errors, key="delivery"
         )
 
+        # 月初の在庫日報の蓄積（保存欄・取扱終了の受け取り）
+        with perf("　ZOZO内訳：月初の在庫日報の蓄積"):
+            zozo_archive, zozo_discontinued = render_zozo_daily_archive_controls()
+
         sku_master = load_sku_master()
         all_paths = [fi["path"] for fi in file_infos]
         sales_map = get_tempostar_sales_map(all_paths)
         tempostar_stock_map = get_tempostar_stock_map(all_paths)
-        stock_history_map = get_tempostar_stock_history_map(all_paths)
+        with perf("　ZOZO内訳：日別在庫履歴"):
+            stock_history_map = get_tempostar_stock_history_map(all_paths)
 
         # 売上個数予想（発注推奨一覧タブと同じ期間設定を流用。デフォルトは去年翌日から1ヶ月）
         forecast_default_start, forecast_default_end = default_forecast_range()
@@ -5479,9 +5714,11 @@ h1, h2, h3, h4,
         zozo_skus = {str(d.get("sku", "")).strip() for d in sku_master if d.get("sku")}
         all_file_dates = sorted(fi["date"].strftime("%Y-%m-%d") for fi in file_infos)
         stock_events = {k: v for k, v in full_event_map.items() if k in zozo_skus}
-        order_events = {k: v for k, v in build_order_events_all(all_paths, all_file_dates).items() if k in zozo_skus}
+        with perf("　ZOZO内訳：発注履歴の注文日"):
+            order_events = {k: v for k, v in build_order_events_all(all_paths, all_file_dates).items() if k in zozo_skus}
         stock_events_json = json.dumps(stock_events, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
         order_events_json = json.dumps(order_events, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
+        zozo_archive_json = json.dumps(zozo_archive, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
 
         with open(html_path, "r", encoding="utf-8") as f:
             html_content = f.read()
@@ -5497,6 +5734,8 @@ h1, h2, h3, h4,
             f"window.__STOCK_EVENTS__ = {stock_events_json};"
             f"window.__FILE_DATES__ = {json.dumps(all_file_dates)};"
             f"window.__ORDER_EVENTS__ = {order_events_json};"
+            f"window.__ZOZO_ARCHIVE__ = {zozo_archive_json};"
+            f"window.__ZOZO_DISCONTINUED__ = {json.dumps(zozo_discontinued, ensure_ascii=False)};"
             "</script>"
         )
         # 本体スクリプトが動く前に注入データを読み込ませるため、<script>タグの直前に挿入
@@ -5563,16 +5802,20 @@ h1, h2, h3, h4,
         )
 
         with tab_restock:
-            render_restock_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, all_sales_map, amazon_stock_map, amazon_fetching, amazon_errors, amazon_fetched_at)
+            with perf("テンポスター：発注推奨一覧"):
+                render_restock_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, all_sales_map, amazon_stock_map, amazon_fetching, amazon_errors, amazon_fetched_at)
 
         with tab_alert:
-            render_alert_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, amazon_stock_map, amazon_fetching, amazon_errors, amazon_fetched_at)
+            with perf("テンポスター：在庫アラート"):
+                render_alert_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, amazon_stock_map, amazon_fetching, amazon_errors, amazon_fetched_at)
 
         with tab_sales:
-            render_sales_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, all_sales_map, amazon_stock_map, amazon_fetching, amazon_errors, amazon_fetched_at)
+            with perf("テンポスター：売上個数一覧"):
+                render_sales_tab(file_infos, min_date, max_date, rakuten_stock_map, rakuten_fetching, rakuten_errors, rakuten_fetched_at, all_sales_map, amazon_stock_map, amazon_fetching, amazon_errors, amazon_fetched_at)
 
         with tab_orderhistory:
-            render_order_history_tab()
+            with perf("テンポスター：発注履歴"):
+                render_order_history_tab()
 
     with tab_group_zozo:
         tab_delivery, tab_stockcheck = st.tabs(
@@ -5580,16 +5823,20 @@ h1, h2, h3, h4,
         )
 
         with tab_delivery:
-            render_delivery_tab(file_infos, rakuten_stock_map, rakuten_errors, rakuten_fetching, rakuten_fetched_at)
+            with perf("ZOZO：納品推奨数システム"):
+                render_delivery_tab(file_infos, rakuten_stock_map, rakuten_errors, rakuten_fetching, rakuten_fetched_at)
 
         with tab_stockcheck:
-            render_stock_check_tab()
+            with perf("ZOZO：在庫下げチェック"):
+                render_stock_check_tab()
 
     with tab_group_amazon:
-        render_amazon_tab(file_infos)
+        with perf("Amazon機能"):
+            render_amazon_tab(file_infos)
 
     with tab_group_fetch:
-        render_fetch_tab()
+        with perf("各モールCSV自動取得"):
+            render_fetch_tab()
 
 
 if __name__ == "__main__":
