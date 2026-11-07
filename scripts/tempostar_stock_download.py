@@ -2,6 +2,8 @@
 Tempostar 在庫変動ログ自動取得（GitHub Actions / ローカル兼用）
 
 - 取得する日付は --dates で指定（YYYY-MM-DD、カンマ区切り）。空なら前日（日本時間）。
+- --catch-up N（毎日2時の自動実行で使用）: --dates が空の時、前日から N 日前までのうち、
+  <out-dir> に tempostar_stock_YYYYMMDD.csv がまだ無い日をまとめて取得する（取得済みの日は飛ばす）。
 - ログイン情報は環境変数から読む（コードには書かない）:
     TEMPOSTAR_COMPANY_ID / TEMPOSTAR_USER_ID / TEMPOSTAR_PASSWORD
 - 取得したCSVは  <out-dir>/tempostar_stock_YYYYMMDD.csv  として保存する。
@@ -10,6 +12,7 @@ Tempostar 在庫変動ログ自動取得（GitHub Actions / ローカル兼用�
 使い方の例:
     python scripts/tempostar_stock_download.py --headless --dates 2026-09-25,2026-09-27
     python scripts/tempostar_stock_download.py --dry-run          # ブラウザを起動せず対象日だけ確認
+    python scripts/tempostar_stock_download.py --catch-up 7 --dry-run   # 自動実行で取得する日を確認
 """
 
 import argparse
@@ -80,6 +83,17 @@ def parse_dates(raw: str) -> list:
     if not result:
         raise ValueError("取得する日付が指定されていません")
     return sorted(result)
+
+
+def catch_up_dates(out_dir: Path, days: int) -> list:
+    """前日〜days日前のうち、CSVがまだ無い日（古い順）。自動実行で、失敗した日を翌日以降に自動で埋めるため。"""
+    today = now_jst_naive().date()
+    result = []
+    for i in range(days, 0, -1):
+        d = today - timedelta(days=i)
+        if not (out_dir / f"tempostar_stock_{d.strftime('%Y%m%d')}.csv").exists():
+            result.append(d)
+    return result
 
 
 def env_required(name: str) -> str:
@@ -377,10 +391,20 @@ def main(argv=None) -> int:
     parser.add_argument("--headless", action="store_true", help="ブラウザ画面を出さずに実行")
     parser.add_argument("--debug-dir", default="", help="失敗時のスクリーンショット等の保存先")
     parser.add_argument("--dry-run", action="store_true", help="ブラウザを起動せず、対象日だけ表示して終了")
+    parser.add_argument("--catch-up", type=int, default=0,
+                        help="--dates が空の時、前日からこの日数ぶん遡って未取得の日をまとめて取得する（0なら前日のみ）")
     args = parser.parse_args(argv)
+    out_dir = Path(args.out_dir)
 
     try:
-        targets = parse_dates(args.dates)
+        if not (args.dates or "").strip() and args.catch_up > 0:
+            targets = catch_up_dates(out_dir, args.catch_up)
+            log(f"自動取得：直近{args.catch_up}日のうち未取得の日を取得します")
+            if not targets:
+                log("直近の日はすべて取得済みです。取得するものはありません。")
+                return 0
+        else:
+            targets = parse_dates(args.dates)
     except ValueError as e:
         print(f"引数エラー: {e}", file=sys.stderr)
         return 2
@@ -389,7 +413,6 @@ def main(argv=None) -> int:
     if args.dry_run:
         return 0
 
-    out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # 認証情報が無い場合はブラウザを起動する前に止める

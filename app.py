@@ -3590,14 +3590,18 @@ def _gh_dispatch(cfg: dict, dates: list):
 
 
 @st.cache_data(ttl=8, show_spinner=False)
-def _gh_recent_runs(cfg: dict, limit: int = 5):
-    """直近の実行履歴。短時間キャッシュ（タブを開いていない操作で毎回API呼び出しが走らないように）。"""
+def _gh_recent_runs(cfg: dict, limit: int = 5, event: str = ""):
+    """直近の実行履歴（手動・毎日2時の自動の両方。event="schedule" なら自動だけ）。
+    短時間キャッシュ（タブを開いていない操作で毎回API呼び出しが走らないように）。"""
     url = f"https://api.github.com/repos/{cfg['repo']}/actions/workflows/{cfg['workflow']}/runs"
+    params = {"per_page": limit}
+    if event:
+        params["event"] = event
     try:
         resp = requests.get(
             url,
             headers=_gh_headers(cfg),
-            params={"event": "workflow_dispatch", "per_page": limit},
+            params=params,
             timeout=15,
         )
     except requests.RequestException as e:
@@ -3613,6 +3617,7 @@ def _gh_recent_runs(cfg: dict, limit: int = 5):
                 "conclusion": r.get("conclusion"),
                 "created_at": r.get("created_at"),
                 "url": r.get("html_url"),
+                "event": r.get("event"),
             }
         )
     return runs, ""
@@ -3673,8 +3678,9 @@ def _render_fetch_runs_panel(cfg: dict):
         return
 
     for r in runs:
+        kind = "⏰ 自動" if r.get("event") == "schedule" else "👆 手動"
         st.markdown(
-            f"- {_run_status_label(r)}　{_run_started_label(r)} 開始　[GitHubで詳細を見る]({r['url']})"
+            f"- {_run_status_label(r)}　{kind}　{_run_started_label(r)} 開始　[GitHubで詳細を見る]({r['url']})"
         )
     _update_fetch_polling(any(_run_is_active(r) for r in runs))
 
@@ -3725,8 +3731,26 @@ def render_fetch_tab():
         )
         return
 
+    # ---------- 毎日2時の自動取得 ----------
+    last_auto, auto_err = _gh_recent_runs(cfg, limit=1, event="schedule")
+    if last_auto:
+        r = last_auto[0]
+        last_text = f"前回：{_run_started_label(r)} 開始 {_run_status_label(r)}"
+    elif auto_err:
+        last_text = "前回の結果を取得できませんでした"
+    else:
+        last_text = "まだ自動実行されていません"
+    st.info(
+        f"⏰ 自動取得：毎日 2:00（{last_text}）\n\n"
+        "前日から7日前までのうち、まだ取得していない日をまとめて取得します。"
+        "GitHubの混雑により、開始が数分〜数十分遅れることがあります。"
+    )
+    if last_auto and last_auto[0].get("conclusion") in ("failure", "timed_out"):
+        st.warning("前回の自動取得が失敗しています。取得できなかった日は、次の自動取得（翌日2時）で自動的にやり直します。"
+                   "急ぐ場合は、下から手動で取得してください。")
+
     # ---------- 取得の依頼 ----------
-    st.markdown("**取得する期間**")
+    st.markdown("**取得する期間（手動）**")
     picked = st.date_input(
         "開始日 → 終了日（1日だけなら同じ日を選択）",
         value=(yesterday, yesterday),

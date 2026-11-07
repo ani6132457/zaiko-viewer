@@ -1,7 +1,12 @@
 name: Tempostar在庫変動ログ取得
 
-# 手動実行のみ（Streamlitアプリの「各モールCSV自動取得」タブ、またはGitHubのActions画面から実行）
+# 実行のしかた
+# - 自動：毎日 日本時間2:00（GitHubの混雑により、数分〜数十分遅れて始まることがあります）
+#         前日から7日前までのうち、まだ取得していない日をまとめて取得する（失敗した日も翌日に自動で埋まる）
+# - 手動：Streamlitアプリの「各モールCSV自動取得」タブ、またはGitHubのActions画面から実行
 on:
+  schedule:
+    - cron: "0 17 * * *"   # UTC 17:00 = 日本時間 2:00（cronはUTCで書く）
   workflow_dispatch:
     inputs:
       dates:
@@ -43,10 +48,13 @@ jobs:
           TEMPOSTAR_PASSWORD: ${{ secrets.TEMPOSTAR_PASSWORD }}
           # 入力値は環境変数経由で渡す（コマンドに直接埋め込まない）
           INPUT_DATES: ${{ github.event.inputs.dates }}
+          # 自動実行（schedule）の時だけ、直近7日の未取得分をまとめて取得する
+          CATCH_UP_DAYS: ${{ github.event_name == 'schedule' && '7' || '0' }}
         run: |
           python scripts/tempostar_stock_download.py \
             --headless \
             --dates "$INPUT_DATES" \
+            --catch-up "$CATCH_UP_DAYS" \
             --out-dir . \
             --debug-dir debug
 
@@ -61,7 +69,11 @@ jobs:
             echo "新しいCSVはありません"
             exit 0
           fi
-          git commit -m "chore: Tempostar在庫変動ログを追加"
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            git commit -m "chore: Tempostar在庫変動ログを追加（自動）"
+          else
+            git commit -m "chore: Tempostar在庫変動ログを追加"
+          fi
           for i in 1 2 3; do
             git pull --rebase && git push && exit 0
             echo "push に失敗したため再試行します ($i/3)"
