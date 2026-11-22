@@ -3280,6 +3280,138 @@ def prev_year_sales_values(codes, sales_last: dict, history_map: dict, start, en
     return out
 
 
+def build_sales_csv(file_infos, start, end):
+    """売上個数一覧のCSV（1商品1行）を作る。指定期間に1個以上売れた商品だけ、売上個数の多い順。
+    戻り値: (CSVのbytes（UTF-8・BOM付き）, 行数, 期間内のCSVの日数, 期間内でCSVが無い日のリスト)"""
+    in_range = [fi for fi in file_infos if start <= fi["date"] <= end]
+    have = {fi["date"] for fi in in_range}
+    missing = [start + timedelta(days=i) for i in range((end - start).days + 1)
+               if (start + timedelta(days=i)) not in have]
+    if not in_range:
+        return None, 0, 0, missing
+
+    def _sales(files):
+        if not files:
+            return {}
+        df = load_tempostar_data([fi["path"] for fi in files])
+        if "更新理由" in df.columns:
+            df = df[df["更新理由"].astype(str).str.contains("受注取込", na=False)]
+        if not {"商品コード", "増減値"}.issubset(df.columns):
+            return {}
+        codes = df["商品コード"].astype(str).str.strip()
+        return (-pd.to_numeric(df["増減値"], errors="coerce").fillna(0).groupby(codes).sum()).to_dict()
+
+    sales = {k: int(v) for k, v in _sales(in_range).items() if v > 0}
+    if not sales:
+        return b"", 0, len(have), missing
+
+    # 前年同期間（期間をそのまま1年前にずらす）。在庫が無かった商品は空欄
+    last_start = (pd.Timestamp(start) - DateOffset(years=1)).date()
+    last_end = (pd.Timestamp(end) - DateOffset(years=1)).date()
+    sales_last = _sales([fi for fi in file_infos if last_start <= fi["date"] <= last_end])
+    all_paths = [fi["path"] for fi in file_infos]
+
+    snap = get_all_sku_snapshot(all_paths).copy()
+    snap["商品コード"] = snap["商品コード"].astype(str).str.strip()
+    out = pd.DataFrame({"商品コード": list(sales.keys()), "売上個数": list(sales.values())})
+    info_cols = [c for c in ["商品基本コード", "商品名", "属性1名", "属性2名", "現在庫"] if c in snap.columns]
+    out = out.merge(snap[["商品コード"] + info_cols].drop_duplicates("商品コード"), on="商品コード", how="left")
+    out["前年同期間の売上個数"] = prev_year_sales_values(
+        out["商品コード"], sales_last, get_tempostar_stock_history_map(all_paths), last_start, last_end
+    )
+    out["前年同期間の売上個数"] = out["前年同期間の売上個数"].astype("Int64")   # 在庫が無かった商品は空欄
+    if "現在庫" in out.columns:
+        out["現在庫"] = pd.to_numeric(out["現在庫"], errors="coerce").astype("Int64")
+    cols = ["商品コード", "商品基本コード", "商品名", "属性1名", "属性2名", "売上個数", "前年同期間の売上個数", "現在庫"]
+    out = out[[c for c in cols if c in out.columns]].sort_values(["売上個数", "商品コード"], ascending=[False, True])
+    data = out.to_csv(index=False).encode("utf-8-sig")
+    return data, len(out), len(have), missing
+
+
+def _sales_csv_dialog_body(file_infos, min_date, max_date):
+    """売上個数のCSVダウンロード画面の中身（期間は一覧の検索とは別に設定する）"""
+    st.caption("指定した期間に1個以上売れた商品を、1商品1行で書き出します（一覧の検索条件・フィルターとは関係なく全商品が対象）。")
+    # 初期値：前月の1日〜末日（データの範囲に収める）
+    first_this = max_date.replace(day=1)
+    def_end = first_this - timedelta(days=1)
+    def_start = def_end.replace(day=1)
+    if def_end < min_date:
+        def_start, def_end = min_date, max_date
+    def_start = max(def_start, min_date)
+
+    # 初期値は session_state に入れる（「先月」などのボタンから書き換えるため、value= は使わない）
+    for k, v in (("sales_csv_start", def_start), ("sales_csv_end", def_end)):
+        cur = st.session_state.get(k)
+        if cur is None or not (min_date <= cur <= max_date):
+            st.session_state[k] = v
+    c1, c2 = st.columns(2)
+    with c1:
+        d_start = st.date_input("開始日", min_value=min_date, max_value=max_date, key="sales_csv_start")
+    with c2:
+        d_end = st.date_input("終了日", min_value=min_date, max_value=max_date, key="sales_csv_end")
+
+    # よく使う期間（押すと開始日・終了日に入る）
+    def _set(a, b):
+        st.session_state["sales_csv_start"], st.session_state["sales_csv_end"] = max(a, min_date), min(b, max_date)
+        st.session_state.pop("sales_csv_result", None)
+    q1, q2, q3, q4 = st.columns(4)
+    q1.button("先月", on_click=_set, args=(def_start, def_end), use_container_width=True, key="sales_csv_q_lastm")
+    q2.button("今月", on_click=_set, args=(first_this, max_date), use_container_width=True, key="sales_csv_q_thism")
+    q3.button("直近30日", on_click=_set, args=(max_date - timedelta(days=29), max_date), use_container_width=True, key="sales_csv_q_30")
+    q4.button("直近1年", on_click=_set, args=(max_date - timedelta(days=364), max_date), use_container_width=True, key="sales_csv_q_1y")
+    st.caption(f"データがある期間：{min_date:%Y/%m/%d} 〜 {max_date:%Y/%m/%d}　｜　売上は一覧と同じく「受注取込」の個数です。")
+
+    if d_start > d_end:
+        st.error("開始日が終了日より後になっています。")
+        return
+
+    period_key = (d_start.isoformat(), d_end.isoformat())
+    res = st.session_state.get("sales_csv_result")
+    if res and res["key"] != period_key:
+        res = None   # 期間を変えたら作り直す
+
+    if st.button("📄 CSVを作成", type="primary", use_container_width=True, key="sales_csv_make"):
+        with st.spinner("集計中…（期間が長いと少し時間がかかります）"):
+            data, n, days, missing = build_sales_csv(file_infos, d_start, d_end)
+        res = {"key": period_key, "data": data, "n": n, "days": days, "missing": missing}
+        st.session_state["sales_csv_result"] = res
+
+    if res:
+        if res["data"] is None:
+            st.error("この期間のテンポスターのCSVがありません。")
+            return
+        if res["missing"]:
+            ms = res["missing"]
+            st.warning(f"期間内でCSVが無い日が {len(ms)} 日あります（その日の売上は含まれません）："
+                       + "、".join(f"{d:%m/%d}" for d in ms[:10]) + (" …" if len(ms) > 10 else ""))
+        if res["n"] == 0:
+            st.info("この期間に売れた商品はありません。")
+            return
+        st.success(f"✅ {res['n']:,} 商品（{d_start:%Y/%m/%d}〜{d_end:%Y/%m/%d}・CSV {res['days']} 日分）")
+        kw = {}
+        try:
+            import inspect
+            if "on_click" in inspect.signature(st.download_button).parameters:
+                kw["on_click"] = "ignore"   # ダウンロードしても画面を作り直さない
+        except Exception:
+            pass
+        st.download_button(
+            "⬇️ ダウンロード",
+            data=res["data"],
+            file_name=f"売上個数_{d_start:%Y%m%d}-{d_end:%Y%m%d}.csv",
+            mime="text/csv",
+            use_container_width=True,
+            key="sales_csv_dl",
+            **kw,
+        )
+
+
+if hasattr(st, "dialog"):
+    _sales_csv_dialog = st.dialog("📥 売上個数のCSVダウンロード", width="large")(_sales_csv_dialog_body)
+else:
+    _sales_csv_dialog = None
+
+
 def latest_order_date_map(orders: pd.DataFrame, since, until) -> dict:
     """since〜until（両端含む）に注文がある基本コード → 一番新しい注文日。"""
     if orders.empty:
@@ -5406,11 +5538,22 @@ h1, h2, h3, h4,
                     f"データ期間：{min_date} ～ {max_date} ｜ 売上個数予想の期間のデフォルトは「去年の翌日から1ヶ月」"
                 )
 
-        rc, _ = st.columns([3, 2])
+        rc, _gap, dlc = st.columns([3, 1, 1])
         with rc:
             render_rakuten_refresh_control(
                 rakuten_fetched_at, rakuten_fetching, rakuten_errors, key="sales"
             )
+        with dlc:
+            # CSVダウンロード：押すとポップアップで期間を設定して書き出す（検索の期間とは別）
+            if st.button("📥 CSVダウンロード", use_container_width=True, key="sales_csv_open"):
+                st.session_state.pop("sales_csv_result", None)
+                if _sales_csv_dialog is not None:
+                    _sales_csv_dialog(file_infos, min_date, max_date)
+                else:
+                    st.session_state["sales_csv_inline"] = True
+        if _sales_csv_dialog is None and st.session_state.get("sales_csv_inline"):
+            with st.container(border=True):
+                _sales_csv_dialog_body(file_infos, min_date, max_date)
 
         if submit_sku:
             # 開始・終了日の順序を自動補正
