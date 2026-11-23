@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>納品推奨数システム</title>
 <script src="https://cdn.jsdelivr.net/npm/encoding-japanese@2.2.0/encoding.min.js"></script>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@500;700;800&family=Noto+Sans+JP:wght@400;500;700&display=swap">
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -302,6 +303,122 @@
 
   #results { display: none; }
 
+  /* ================================================================
+     見た目をAmazon機能（テンポスター×FBA在庫比較）に合わせる
+     ================================================================ */
+  :root {
+    --bg: transparent; --surface: #ffffff; --surface2: #F7F5FF;
+    --border: #ECE9F7; --border-md: #DDD7F5;
+    --text: #2A2440; --text-muted: #74708C; --text-hint: #A39FB8;
+    --accent: #7B5FFF; --accent-bg: #EDE9FF; --accent-text: #5B3FE0;
+    --violet: #7B5FFF; --violet-soft: #EDE9FF; --coral: #FF4D6D; --orange: #FF6B4A; --orange-soft: #FFE7DE; --mint: #12B886;
+    --radius: 12px; --radius-lg: 18px;
+  }
+  body { font-family: 'Noto Sans JP', -apple-system, "Segoe UI", Meiryo, sans-serif; font-size: 13px; background: transparent; }
+  header { background: #fff; border-bottom: 1px solid var(--border); border-radius: 0 0 18px 18px; box-shadow: 0 4px 16px rgba(42,36,64,0.06); }
+  .logo { font-family: 'M PLUS Rounded 1c', sans-serif; font-weight: 800; }
+  main { padding: 1rem 0.5rem 2rem; }
+  .upload-section { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)) !important; gap: 12px; margin-bottom: 1rem; }
+  .upload-card { border: 2px dashed #CFC6FF; border-radius: 16px; background: var(--violet-soft); padding: 1rem 1.1rem; }
+  .upload-card:hover, .upload-card.dragging { border-color: var(--violet); background: #E1DAFF; }
+  .upload-card.loaded { border-style: solid; border-color: var(--mint); background: #E6FCF5; }
+  .upload-card.loaded .upload-status { color: #0C8C66; }
+  .upload-label { font-weight: 700; }
+  .upload-icon { font-size: 20px; margin-bottom: 4px; }
+  .run-btn { background: linear-gradient(90deg, var(--violet), #9B7BFF); border-radius: 999px; font-weight: 800;
+    font-family: 'M PLUS Rounded 1c', sans-serif; box-shadow: 0 6px 16px rgba(123,95,255,0.25); margin-bottom: 1rem; }
+  .metrics { gap: 10px; }
+  .metric { border: 0; border-radius: 16px; box-shadow: 0 4px 16px rgba(42,36,64,0.08); padding: 12px 14px; }
+  .metric-label { font-weight: 700; letter-spacing: 0; text-transform: none; }
+  .metric-value { font-family: 'M PLUS Rounded 1c', sans-serif; font-size: 24px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .info-bar { background: #F4F1FF; color: var(--text-muted); border-radius: 14px; font-size: 11.5px; }
+  .tab { border: 0; background: var(--violet-soft); color: var(--violet); font-weight: 700; padding: 6px 16px; }
+  .tab:hover { background: #E1DAFF; }
+  .tab.active { background: var(--violet); color: #fff; box-shadow: 0 2px 6px rgba(123,95,255,.3); }
+  .export-btn, .filter-reset, .pagination button { border: 2px solid var(--violet-soft) !important; background: #fff; color: var(--violet);
+    border-radius: 999px !important; padding: 5px 13px; font-weight: 700; font-size: 12.5px; font-family: inherit; }
+  .export-btn:hover, .pagination button:hover:not(:disabled) { background: var(--violet-soft); }
+  .controls input[type=text] { border: 2px solid var(--border); border-radius: 999px; padding: 7px 14px; }
+  .controls input[type=text]:focus { border-color: var(--violet); }
+  .controls select { border: 2px solid var(--border); border-radius: 999px; }
+  .status-check { border-width: 2px; }
+
+  /* 表：横スクロールを出さない（列の幅は画面に収まるように自動調整し、長い文字は折り返す） */
+  .table-wrap { border: 0; border-radius: 18px; box-shadow: 0 4px 16px rgba(42,36,64,0.10); overflow: hidden; overflow-x: hidden; }
+  .table-wrap table { min-width: 0; width: 100%; table-layout: auto; font-size: 12.5px; }
+  #thead-row th { background: var(--violet-soft); color: var(--violet); font-size: 11.5px; font-weight: 700; font-family: 'M PLUS Rounded 1c', sans-serif;
+    padding: 0; white-space: normal; text-transform: none; letter-spacing: 0; line-height: 1.3; vertical-align: middle;
+    position: relative; top: auto; z-index: 3; will-change: transform; cursor: default; border-bottom: 0; }
+  #thead-row th:hover { background: var(--violet-soft); color: var(--violet); }
+  thead.stuck #thead-row th { box-shadow: 0 3px 6px -2px rgba(42,36,64,0.18); }
+  #thead-row th .th-in { display: flex; align-items: center; flex-wrap: wrap; gap: 1px; padding: 8px 3px 8px 7px; }
+  #thead-row th.r .th-in { justify-content: flex-end; text-align: right; }
+  #thead-row th .lab { cursor: pointer; user-select: none; min-width: 0; overflow-wrap: anywhere; }
+  #thead-row th .ar { margin-left: 3px; opacity: .45; font-size: 10px; }
+  #thead-row th.sorted .ar { opacity: 1; color: var(--orange); }
+  #thead-row th .fbtn { border: 1px solid transparent; background: transparent; color: var(--violet); border-radius: 6px; cursor: pointer;
+    font-size: 10px; padding: 2px 5px; line-height: 1.2; opacity: .55; font-family: inherit; }
+  #thead-row th .fbtn:hover { opacity: 1; background: #fff; border-color: #D9D1FF; }
+  #thead-row th .fbtn.on { opacity: 1; background: var(--orange); color: #fff; }
+  #tbody td { padding: 7px 7px; border-bottom: 1px solid #F1EEFC; }
+  #tbody tr { border-bottom: 0; }
+  #tbody tr:hover { background: var(--orange-soft); }
+  #tbody td.r { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  #tbody td.name { max-width: none; white-space: normal; }
+  #tbody td.name .nm { min-width: 110px; max-width: 320px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.35em; }
+  #tbody td.code { white-space: nowrap; font-size: 11.5px; }
+  #tbody td.qty input { width: 56px !important; }
+  /* 列が多い時は文字と余白を詰めて、画面幅に収める（Amazon機能と同じ「詰め表示」） */
+  .table-wrap table.dense { font-size: 11.5px; }
+  .table-wrap table.dense #thead-row th { font-size: 10.5px; }
+  .table-wrap table.dense #thead-row th .th-in { padding: 6px 2px 6px 5px; }
+  .table-wrap table.dense #tbody td { padding: 6px 5px; }
+  .table-wrap table.dense #tbody td.code { font-size: 10.5px; }
+  .table-wrap table.dense #tbody td.name .nm { min-width: 90px; }
+  .table-wrap table.dense #tbody td.qty input { width: 48px !important; font-size: 12px !important; padding: 2px 4px !important; }
+  .table-wrap table.dense .chip { font-size: 10px; padding: 1px 6px; }
+
+  /* ZOZO（リアルタイム）在庫：MUSEの在庫状況CSV */
+  .rt { display: inline-block; font-size: 11px; font-weight: 700; border-radius: 999px; padding: 2px 9px; white-space: nowrap; }
+  .rt.out { background: #FFE3E8; color: var(--coral); }
+  .rt.low { background: #FFF1DC; color: #D9780A; }
+  .rt.ok { color: var(--text-hint); font-weight: 500; padding: 0; }
+
+  /* 表示する列・かけているフィルター */
+  .colvis { display: none; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+  .colvis.open { display: flex; }
+  .colvis .cv { border: 2px solid var(--violet-soft); border-radius: 999px; padding: 4px 11px; font-size: 12px; cursor: pointer; user-select: none;
+    color: var(--text-muted); background: #fff; }
+  .colvis .cv.on { background: var(--violet); border-color: var(--violet); color: #fff; }
+  .active-filters { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; align-items: center; }
+  .active-filters:empty { display: none; }
+  .active-filters .af { background: var(--orange-soft); color: var(--orange); border-radius: 999px; padding: 3px 4px 3px 11px; font-size: 12px; font-weight: 700; }
+  .active-filters .af button { border: 0; background: transparent; color: var(--orange); cursor: pointer; font-weight: 800; padding: 0 6px; }
+  .active-filters .af-clear { border: 2px solid #FFD6CC; background: #fff; color: var(--orange); border-radius: 999px; padding: 3px 12px;
+    font-weight: 700; font-size: 12px; cursor: pointer; font-family: inherit; }
+
+  /* 見出しの「▼」で開くフィルターのメニュー（Amazon機能と同じ形） */
+  .fmenu { position: absolute; z-index: 9000; width: 280px; background: #fff; border: 1px solid #DDD7F5; border-radius: 12px;
+    box-shadow: 0 10px 30px rgba(42,36,64,0.18); padding: 10px; font-size: 12.5px; color: var(--text); display: none; }
+  .fmenu .sorts { display: flex; flex-direction: column; gap: 2px; padding-bottom: 8px; border-bottom: 1px solid var(--border); margin-bottom: 8px; }
+  .fmenu .sorts button { text-align: left; border: 0; background: transparent; padding: 5px 8px; border-radius: 6px; cursor: pointer; font-family: inherit; font-size: 12.5px; color: var(--text); }
+  .fmenu .sorts button:hover { background: var(--violet-soft); }
+  .fmenu .flabel { font-size: 11px; color: var(--text-muted); margin-bottom: 4px; }
+  .fmenu .range { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; }
+  .fmenu .range input { width: 100%; border: 1px solid #DDD7F5; border-radius: 6px; padding: 5px 7px; font-family: inherit; font-size: 12px; }
+  .fmenu .fsearch { width: 100%; border: 1px solid #DDD7F5; border-radius: 6px; padding: 6px 8px; font-family: inherit; font-size: 12px; margin-bottom: 6px; }
+  .fmenu .vals { max-height: 240px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 4px 0; }
+  .fmenu .vals label { display: flex; align-items: center; gap: 6px; padding: 3px 8px; cursor: pointer; white-space: nowrap; }
+  .fmenu .vals label:hover { background: #F7F5FF; }
+  .fmenu .vals label span.v { overflow: hidden; text-overflow: ellipsis; }
+  .fmenu .vals .cnt { margin-left: auto; color: var(--text-muted); font-size: 11px; padding-left: 8px; }
+  .fmenu .vals .all { font-weight: 700; border-bottom: 1px solid var(--border); margin-bottom: 2px; }
+  .fmenu .vals .more { color: var(--text-muted); padding: 4px 8px; font-size: 11px; }
+  .fmenu .fbtns { display: flex; justify-content: flex-end; gap: 6px; margin-top: 10px; }
+  .fmenu .fbtns button { border: 1px solid #DDD7F5; background: #fff; color: var(--text); border-radius: 999px; padding: 4px 12px; cursor: pointer; font-family: inherit; font-size: 12px; }
+  .fmenu .fbtns .clear { margin-right: auto; color: var(--text-muted); }
+  .fmenu .fbtns .ok { background: var(--violet); border-color: var(--violet); color: #fff; font-weight: 700; }
+
   /* ── ステータスフィルター ── */
   .status-filter {
     display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
@@ -490,6 +607,13 @@
       <div class="upload-desc">CS品番,SKU（在庫下げCSV用）</div>
       <div class="upload-status" id="status-master">ファイルを選択またはドロップ</div>
     </div>
+    <div class="upload-card" id="card-muse" ondragover="onDrag(event,'muse')" ondragleave="offDrag('muse')" ondrop="onDrop(event,'muse')">
+      <input type="file" accept=".csv" id="file-muse" onchange="loadFile('muse', this.files[0])">
+      <div class="upload-icon">⚡</div>
+      <div class="upload-label">⑤ ZOZO（リアルタイム）在庫 CSV <span style="font-size:11px;color:var(--text-hint);font-weight:400">（任意）</span></div>
+      <div class="upload-desc">MUSEで取得した在庫状況（在庫切れ・残り1〜5点）</div>
+      <div class="upload-status" id="status-muse">ファイルを選択またはドロップ</div>
+    </div>
   </div>
 
   <!-- 設定 -->
@@ -590,7 +714,10 @@
       <div class="controls">
         <input type="text" id="search" placeholder="商品名・CS品番・カラー・メーカー品番で検索..." oninput="render()">
         <select id="cat-filter" onchange="render()"><option value="">カテゴリ（全て）</option></select>
+        <button class="export-btn" id="colvis-btn" onclick="toggleColvis()">表示する列 ▾</button>
       </div>
+      <div class="colvis" id="colvis"></div>
+      <div class="active-filters" id="active-filters"></div>
 
       <div class="table-wrap">
         <table>
@@ -635,6 +762,10 @@
 <script>
 // ── 状態 ──
 let rawInv = null, rawDel = null, rawItems = null;
+let rawMuse = null;          // MUSEで取得したZOZOの在庫状況CSV（ZOZO（リアルタイム）在庫）
+let museMap = null;          // { ブランド品番|カラー|サイズ: {n, label, note, url} }
+let museUnmatched = 0;       // MUSEのCSVのうち、在庫日報の商品と紐付かなかった行数
+let museAppliedTo = null;    // どの data に反映済みか（data が作り直されたら反映し直す）
 let rawCarryOver = null;
 let carryOverMap = {}; // 前回エクスポートCSVから読み込んだ「CS品番→{deliveryQty, group}」
 let data = [];
@@ -745,7 +876,7 @@ function autosaveState() {
       }
     });
     const state = {
-      rawInv, rawDel, rawItems, rawCarryOver,
+      rawInv, rawDel, rawItems, rawCarryOver, rawMuse,
       masterMap, masterIdSeq,
       groupList,
       deliveryMap,
@@ -828,6 +959,8 @@ function restoreAutosavedState() {
   rawInv = state.rawInv || null;
   rawDel = state.rawDel || null;
   rawItems = state.rawItems || null;
+  rawMuse = state.rawMuse || null;
+  if (rawMuse) buildMuseMap();
   rawCarryOver = state.rawCarryOver || null;
   if (rawCarryOver) parseCarryOverCsv();
 
@@ -840,6 +973,7 @@ function restoreAutosavedState() {
   if (rawInv) markLoaded('inv', '復元済み（自動保存より）');
   if (rawDel) markLoaded('del', '復元済み（自動保存より）');
   if (rawItems) markLoaded('items', '復元済み（自動保存より）');
+  if (rawMuse) markLoaded('muse', '復元済み（自動保存より）');
   if (rawCarryOver) {
     const statusEl = document.getElementById('carry-import-status');
     if (statusEl) statusEl.textContent = '✓ 前回の引き継ぎ内容を復元済み';
@@ -1546,6 +1680,7 @@ function loadFile(type, file) {
     if (type === 'inv')   rawInv   = e.target.result;
     else if (type === 'del')   rawDel   = e.target.result;
     else if (type === 'items') rawItems = e.target.result;
+    else if (type === 'muse') { rawMuse = e.target.result; buildMuseMap(); museAppliedTo = null; if (data.length) render(); }
     document.getElementById('card-'+type).classList.add('loaded');
     document.getElementById('status-'+type).textContent = '✓ ' + file.name;
     checkReady();
@@ -1952,42 +2087,308 @@ function runAnalysis() {
   setTimeout(() => document.getElementById('results').scrollIntoView({behavior:'smooth', block:'start'}), 100);
 }
 
-// ── ヘッダー定義 ──
+// ── 列の定義 ──
+// type: num（数値）／str（文字）。val(r)：絞り込み・並べ替えに使う値（無ければ r[key]）
 const COLS = [
-  { key:'name',         label:'商品名',      width:'15%', align:'l', type:'str' },
-  { key:'cs_no',        label:'CS品番',      width:'10%', align:'l', type:'str' },
-  { key:'color',        label:'カラー/サイズ', width:'7%',  align:'l', type:'str' },
-  { key:'maker_no',     label:'メーカー品番', width:'8%',  align:'l', type:'str' },
-  { key:'firstSaleDate',label:'初回販売開始日', width:'6%', align:'l', type:'str' },
-  { key:'deliveryQty',  label:'納品数',       width:'5%',  align:'r', type:'num' },
-  { key:'currentStock', label:'ZOZO在庫',     width:'5%',  align:'r', type:'num' },
-  { key:'tempostarStock', label:`${stockSourceLabel}在庫`, width:'6%', align:'r', type:'num' },
-  { key:'companySales', label:'自社売上個数', width:'6%',  align:'r', type:'num' },
-  { key:'forecastSales', label:'売上個数予想', width:'6%',  align:'r', type:'num' },
-  { key:'unref',        label:'未反映納品',   width:'6%',  align:'r', type:'num' },
-  { key:'realStock',    label:'実質在庫',     width:'6%',  align:'r', type:'num' },
-  { key:'sold30',       label:'30日販売',     width:'5%',  align:'r', type:'num' },
-  { key:'sold7',        label:'7日販売',      width:'5%',  align:'r', type:'num' },
-  { key:'recommend',    label:'推奨納品数',   width:'6%',  align:'r', type:'num' },
-  { key:'status',       label:'ステータス',   width:'8%',  align:'l', type:'str' },
+  { key:'name',          label:'商品名',            align:'l', type:'str' },
+  { key:'cs_no',         label:'CS品番',            align:'l', type:'str' },
+  { key:'color',         label:'カラー/サイズ',     align:'l', type:'str', val: r => r.color + (r.size && r.size !== 'FREE' ? ' / ' + r.size : '') },
+  { key:'maker_no',      label:'メーカー品番',      align:'l', type:'str' },
+  { key:'firstSaleDate', label:'初回販売開始日',    align:'l', type:'str' },
+  { key:'deliveryQty',   label:'納品数',            align:'r', type:'num' },
+  { key:'currentStock',  label:'ZOZO在庫',          align:'r', type:'num' },
+  { key:'zozoRt',        label:'ZOZO(リアルタイム)在庫', align:'r', type:'rt', val: r => r.zozoRt ? r.zozoRt.label : '（未読込）' },
+  { key:'tempostarStock', label:`${stockSourceLabel}在庫`, align:'r', type:'num' },
+  { key:'companySales',  label:'自社売上個数',      align:'r', type:'num' },
+  { key:'forecastSales', label:'売上個数予想',      align:'r', type:'num' },
+  { key:'unref',         label:'未反映納品',        align:'r', type:'num' },
+  { key:'realStock',     label:'実質在庫',          align:'r', type:'num' },
+  { key:'sold30',        label:'30日販売',          align:'r', type:'num' },
+  { key:'sold7',         label:'7日販売',           align:'r', type:'num' },
+  { key:'recommend',     label:'推奨納品数',        align:'r', type:'num' },
+  { key:'status',        label:'ステータス',        align:'l', type:'str', val: r => getStatusLabel(r) },
 ];
+// 最初から隠しておく列（「表示する列」で出せる）
+const DEFAULT_HIDDEN = ['tempostarStock', 'firstSaleDate'];
+const COLVIS_KEY = 'zozo_hidden_cols_v1';
+let hiddenCols = (function () {
+  try { const v = JSON.parse(localStorage.getItem(COLVIS_KEY) || 'null'); if (Array.isArray(v)) return v; } catch (e) {}
+  return DEFAULT_HIDDEN.slice();
+})();
+function visCols() { return COLS.filter(c => !hiddenCols.includes(c.key)); }
+function colVal(c, r) { return c.val ? c.val(r) : r[c.key]; }
+
+function toggleColvis() {
+  const el = document.getElementById('colvis');
+  el.classList.toggle('open');
+  renderColvis();
+  if (window.__syncEmbedHeight) setTimeout(window.__syncEmbedHeight, 0);
+}
+function renderColvis() {
+  const el = document.getElementById('colvis');
+  el.innerHTML = COLS.map(c => `<span class="cv ${hiddenCols.includes(c.key) ? '' : 'on'}" data-k="${c.key}">${esc(c.label)}</span>`).join('') +
+    `<span class="cv" data-k="__reset" style="border-style:dashed">↺ 初期の表示に戻す</span>`;
+  el.querySelectorAll('.cv').forEach(sp => sp.addEventListener('click', () => {
+    const k = sp.dataset.k;
+    if (k === '__reset') hiddenCols = DEFAULT_HIDDEN.slice();
+    else if (hiddenCols.includes(k)) hiddenCols = hiddenCols.filter(x => x !== k);
+    else if (visCols().length > 1) hiddenCols.push(k);
+    try { localStorage.setItem(COLVIS_KEY, JSON.stringify(hiddenCols)); } catch (e) {}
+    renderColvis();
+    render();
+  }));
+  const btn = document.getElementById('colvis-btn');
+  if (btn) btn.textContent = hiddenCols.length ? `表示する列（${hiddenCols.length}列を非表示）▾` : '表示する列 ▾';
+}
+
+// ── ZOZO（リアルタイム）在庫：MUSEの在庫状況CSV ──
+// 在庫日報の「ブランド品番＋カラー＋サイズ」で紐付ける。CSVに載っていない商品は「在庫あり」（6点以上）
+function parseCsvQuoted(text) {
+  text = text.replace(/^﻿/, '');
+  const rows = []; let row = [], cur = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (q) {
+      if (ch === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else q = false; }
+      else cur += ch;
+    } else if (ch === '"') q = true;
+    else if (ch === ',') { row.push(cur); cur = ''; }
+    else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && text[i + 1] === '\n') i++;
+      row.push(cur); rows.push(row); row = []; cur = '';
+    } else cur += ch;
+  }
+  if (cur !== '' || row.length) { row.push(cur); rows.push(row); }
+  const head = (rows.shift() || []).map(h => h.trim());
+  return rows.filter(r => r.some(v => v.trim() !== '')).map(r => {
+    const o = {}; head.forEach((h, i) => o[h] = (r[i] || '').trim()); return o;
+  });
+}
+const museKey = (b, c, z) => [b, c, z].map(v => String(v || '').normalize('NFKC').trim().toUpperCase()).join('|');
+function buildMuseMap() {
+  museMap = null;
+  if (!rawMuse) return;
+  const map = {};
+  parseCsvQuoted(rawMuse).forEach(o => {
+    const st = o['状態'] || '';
+    let n = null;
+    if (st.indexOf('在庫切れ') >= 0) n = 0;
+    else { const m = st.match(/残り\s*(\d+)\s*点/); if (m) n = Number(m[1]); }
+    const k = museKey(o['ブランド品番'], o['カラー'], o['サイズ']);
+    const prev = map[k];
+    if (!prev || (n !== null && (prev.n === null || n < prev.n))) {   // 同じ商品が複数行あれば少ない方
+      map[k] = { n, label: st || '—', note: o['備考'] || '', url: o['商品URL'] || '' };
+    }
+  });
+  museMap = map;
+}
+function applyMuse() {
+  museAppliedTo = data;
+  if (!museMap) { data.forEach(r => { r.zozoRt = null; r.zozoRtN = null; }); museUnmatched = 0; return; }
+  const used = new Set();
+  data.forEach(r => {
+    const k = museKey(r.brand_no, r.color, r.size);
+    const m = museMap[k];
+    if (m) { used.add(k); r.zozoRt = m; r.zozoRtN = m.n; }
+    else { r.zozoRt = { n: null, label: '在庫あり', note: '', url: '' }; r.zozoRtN = 999; }
+  });
+  museUnmatched = Object.keys(museMap).filter(k => !used.has(k)).length;
+}
+function rtCell(r) {
+  const z = r.zozoRt;
+  if (!z) return '<span style="color:var(--text-hint)">—</span>';
+  const tip = [z.note ? '備考：' + z.note : '', z.url].filter(Boolean).join('\n');
+  const cls = z.n === 0 ? 'out' : (z.n !== null ? 'low' : 'ok');
+  return `<span class="rt ${cls}"${tip ? ` title="${esc(tip)}"` : ''}>${esc(z.label)}${z.note ? ' ※' : ''}</span>`;
+}
+
+// ── 見出しの「▼」フィルター ──
+// FILTERS = { 列: {t:'range', min, max} | {t:'vals', vals:[...]} }（このブラウザのタブの間は残る）
+const FILTER_KEY = 'zozo_filters_v1';
+let FILTERS = (function () {
+  try { const v = JSON.parse(sessionStorage.getItem(FILTER_KEY) || 'null'); if (v && typeof v === 'object') return v; } catch (e) {}
+  return {};
+})();
+function saveFilters() { try { sessionStorage.setItem(FILTER_KEY, JSON.stringify(FILTERS)); } catch (e) {} }
+const BLANK = '（空欄）';
+function filterValues(c, r) {
+  const v = colVal(c, r);
+  return (v === null || v === undefined || v === '') ? BLANK : String(v);
+}
+function rowPassesFilters(r) {
+  for (const k in FILTERS) {
+    const c = COLS.find(x => x.key === k); if (!c) continue;
+    const f = FILTERS[k];
+    if (f.t === 'range') {
+      const v = r[k];
+      if (v === null || v === undefined) return false;
+      if (f.min !== null && f.min !== undefined && v < f.min) return false;
+      if (f.max !== null && f.max !== undefined && v > f.max) return false;
+    } else if (f.t === 'vals') {
+      if (!f.vals.includes(filterValues(c, r))) return false;
+    }
+  }
+  return true;
+}
+function filterText(c, f) {
+  if (f.t === 'range') {
+    const a = f.min !== null && f.min !== undefined ? f.min : '', b = f.max !== null && f.max !== undefined ? f.max : '';
+    return a !== '' && b !== '' ? `${a}〜${b}` : (a !== '' ? `${a}以上` : `${b}以下`);
+  }
+  return f.vals.length <= 3 ? f.vals.join('、') : f.vals.slice(0, 3).join('、') + ` ほか${f.vals.length - 3}件`;
+}
+function renderActiveFilters() {
+  const el = document.getElementById('active-filters'); if (!el) return;
+  const keys = Object.keys(FILTERS).filter(k => COLS.some(c => c.key === k));
+  if (!keys.length) { el.innerHTML = ''; return; }
+  el.innerHTML = keys.map(k => {
+    const c = COLS.find(x => x.key === k);
+    return `<span class="af">${esc(c.label)}：${esc(filterText(c, FILTERS[k]))}<button data-k="${k}" title="このフィルターを解除">✕</button></span>`;
+  }).join('') + `<button class="af-clear" id="af-clear">すべて解除</button>`;
+  el.querySelectorAll('.af button').forEach(b => b.addEventListener('click', () => { delete FILTERS[b.dataset.k]; saveFilters(); currentPage = 1; render(); }));
+  document.getElementById('af-clear').addEventListener('click', () => { FILTERS = {}; saveFilters(); currentPage = 1; render(); });
+}
+
+let fmenuEl = null, fmenuKey = null;
+function closeFilter() { if (fmenuEl) fmenuEl.style.display = 'none'; fmenuKey = null; }
+function openFilter(key, anchor) {
+  if (fmenuKey === key) { closeFilter(); return; }
+  const c = COLS.find(x => x.key === key); if (!c) return;
+  if (!fmenuEl) { fmenuEl = document.createElement('div'); fmenuEl.className = 'fmenu'; document.body.appendChild(fmenuEl); }
+  fmenuKey = key;
+  const cur = FILTERS[key];
+  const isNum = c.type === 'num';
+  let h = `<div class="sorts"><button data-s="1">${isNum ? '↑ 小さい順に並べ替え' : '↑ 昇順に並べ替え'}</button>` +
+          `<button data-s="-1">${isNum ? '↓ 大きい順に並べ替え' : '↓ 降順に並べ替え'}</button></div>`;
+  let all = null, counts = null, checked = null;
+  if (isNum) {
+    h += `<div class="flabel">数値の範囲</div><div class="range">` +
+      `<input type="number" class="fmin" placeholder="下限" value="${cur && cur.t === 'range' && cur.min != null ? cur.min : ''}"><span>〜</span>` +
+      `<input type="number" class="fmax" placeholder="上限" value="${cur && cur.t === 'range' && cur.max != null ? cur.max : ''}"></div>`;
+  } else {
+    counts = {};
+    data.forEach(r => { const v = filterValues(c, r); counts[v] = (counts[v] || 0) + 1; });
+    all = Object.keys(counts).sort((a, b) => {
+      if (c.type === 'rt') { const n = v => v === '在庫切れ' ? 0 : (v.match(/(\d+)/) ? Number(v.match(/(\d+)/)[1]) : 99); return n(a) - n(b); }
+      if (a === BLANK) return 1; if (b === BLANK) return -1;
+      return a.localeCompare(b, 'ja', { numeric: true });
+    });
+    checked = {}; all.forEach(v => checked[v] = !cur || cur.t !== 'vals' || cur.vals.includes(v));
+    h += `<input type="text" class="fsearch" placeholder="値を検索…"><div class="vals"></div>`;
+  }
+  h += `<div class="fbtns"><button class="clear">解除</button><button class="cancel">キャンセル</button><button class="ok">OK</button></div>`;
+  fmenuEl.innerHTML = h;
+  if (all) {
+    const valsEl = fmenuEl.querySelector('.vals'), searchEl = fmenuEl.querySelector('.fsearch'), LIMIT = 300;
+    const shown = () => { const q = searchEl.value.trim().toLowerCase(); return q ? all.filter(v => v.toLowerCase().includes(q)) : all; };
+    const draw = () => {
+      const sh = shown(), allOn = sh.length > 0 && sh.every(v => checked[v]);
+      let x = `<label class="all"><input type="checkbox" class="vall"${allOn ? ' checked' : ''}> ${searchEl.value.trim() ? '（検索結果をすべて選択）' : '（すべて選択）'}</label>`;
+      sh.slice(0, LIMIT).forEach((v, i) => { x += `<label><input type="checkbox" data-i="${i}"${checked[v] ? ' checked' : ''}> <span class="v">${esc(v)}</span><span class="cnt">${counts[v]}</span></label>`; });
+      if (sh.length > LIMIT) x += `<div class="more">ほか ${(sh.length - LIMIT).toLocaleString()} 件（検索で絞り込んでください）</div>`;
+      if (!sh.length) x += `<div class="more">該当する値がありません</div>`;
+      valsEl.innerHTML = x;
+      valsEl.querySelector('.vall').addEventListener('change', e => {
+        if (searchEl.value.trim()) all.forEach(v => checked[v] = false);   // 検索中は検索結果だけを選ぶ（Excelと同じ）
+        shown().forEach(v => checked[v] = e.target.checked); draw();
+      });
+      valsEl.querySelectorAll('input[data-i]').forEach(cb => cb.addEventListener('change', () => { checked[sh[Number(cb.dataset.i)]] = cb.checked; draw(); }));
+    };
+    searchEl.addEventListener('input', draw); draw();
+    setTimeout(() => searchEl.focus(), 0);
+  }
+  fmenuEl.querySelectorAll('.sorts button').forEach(b => b.addEventListener('click', () => {
+    sortKey = key; sortDir = Number(b.dataset.s); closeFilter(); currentPage = 1; render();
+  }));
+  fmenuEl.querySelector('.clear').addEventListener('click', () => { delete FILTERS[key]; saveFilters(); closeFilter(); currentPage = 1; render(); });
+  fmenuEl.querySelector('.cancel').addEventListener('click', closeFilter);
+  const apply = () => {
+    if (isNum) {
+      const a = fmenuEl.querySelector('.fmin').value, b = fmenuEl.querySelector('.fmax').value;
+      if (a === '' && b === '') delete FILTERS[key];
+      else FILTERS[key] = { t: 'range', min: a === '' ? null : Number(a), max: b === '' ? null : Number(b) };
+    } else {
+      const sel = all.filter(v => checked[v]);
+      if (sel.length === all.length) delete FILTERS[key]; else FILTERS[key] = { t: 'vals', vals: sel };
+    }
+    saveFilters(); closeFilter(); currentPage = 1; render();
+  };
+  fmenuEl.querySelector('.ok').addEventListener('click', apply);
+  fmenuEl.querySelectorAll('.range input').forEach(inp => inp.addEventListener('keydown', e => { if (e.key === 'Enter') apply(); }));
+  fmenuEl.style.display = 'block';
+  const r = anchor.getBoundingClientRect(), mw = fmenuEl.offsetWidth;
+  let left = r.right + window.scrollX - mw;
+  if (left < 8) left = Math.min(r.left + window.scrollX, document.documentElement.clientWidth - mw - 8);
+  fmenuEl.style.left = Math.max(8, left) + 'px';
+  fmenuEl.style.top = (r.bottom + window.scrollY + 4) + 'px';
+  if (window.__syncEmbedHeight) setTimeout(window.__syncEmbedHeight, 0);
+}
+document.addEventListener('mousedown', e => {
+  if (fmenuKey && fmenuEl && !fmenuEl.contains(e.target) && !(e.target.closest && e.target.closest('.fbtn'))) closeFilter();
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && fmenuKey) closeFilter(); });
 
 function buildHeader() {
   const tr = document.getElementById('thead-row');
   let checkboxTh = '';
   let groupTh = '';
   if (viewMode === 'delivery') {
-    checkboxTh = `<th style="width:34px;text-align:center"><input type="checkbox" id="select-all-delivery" onchange="toggleSelectAllDelivery(this)"></th>`;
-    groupTh = `<th style="width:90px">グループ</th>`;
+    checkboxTh = `<th style="width:30px;text-align:center"><div class="th-in" style="justify-content:center"><input type="checkbox" id="select-all-delivery" onchange="toggleSelectAllDelivery(this)"></div></th>`;
+    groupTh = `<th><div class="th-in"><span class="lab">グループ</span></div></th>`;
   }
-  tr.innerHTML = checkboxTh + groupTh + COLS.map(c => {
+  tr.innerHTML = checkboxTh + groupTh + visCols().map(c => {
     const active = sortKey === c.key;
     const icon = active ? (sortDir === 1 ? '▲' : '▼') : '⇅';
-    return `<th style="width:${c.width}"${c.align==='r'?' class="r"':''} onclick="sortBy('${c.key}')" ${active?'class="sort-active'+(c.align==='r'?' r':'') +'"':''}>
-      ${c.label}<i class="sort-icon">${icon}</i>
-    </th>`;
+    const cls = [c.align === 'r' ? 'r' : '', active ? 'sorted' : ''].filter(Boolean).join(' ');
+    return `<th${cls ? ` class="${cls}"` : ''} data-k="${c.key}"><div class="th-in">` +
+      `<span class="lab" onclick="sortBy('${c.key}')">${esc(c.label)}</span><span class="ar">${icon}</span>` +
+      `<button class="fbtn${FILTERS[c.key] ? ' on' : ''}" title="絞り込み・並べ替え" onclick="event.stopPropagation(); openFilter('${c.key}', this)">${FILTERS[c.key] ? '▼●' : '▼'}</button>` +
+      `</div></th>`;
   }).join('');
+  // 列が多い時は詰め表示（Amazon機能と同じ）
+  const table = tr.closest('table');
+  if (table) table.classList.toggle('dense', visCols().length + (viewMode === 'delivery' ? 2 : 0) > 12);
 }
+
+// ── 見出し行の固定（このHTMLはStreamlitの中に高さいっぱいで埋め込まれ、スクロールは親ページ側で起きるため、
+//    親ページのスクロール位置から見出しをずらして表示する。Amazon機能と同じ仕組み） ──
+function parentTopBar() {
+  let bottom = 0;
+  try {
+    window.parent.document.querySelectorAll('[role="tablist"]').forEach(list => {
+      const r = list.getBoundingClientRect();
+      if (r.height > 0 && r.top >= -1 && r.top < 200 && r.bottom < 260) {
+        let el = list, fixed = false;
+        while (el && el !== window.parent.document.body) {
+          const p = window.parent.getComputedStyle(el).position;
+          if (p === 'fixed' || p === 'sticky') { fixed = true; break; }
+          el = el.parentElement;
+        }
+        if (fixed) bottom = Math.max(bottom, r.bottom);
+      }
+    });
+  } catch (e) {}
+  return bottom;
+}
+let _stickyRaf = 0;
+function updateStickyHead() {
+  _stickyRaf = 0;
+  const tr = document.getElementById('thead-row'); if (!tr) return;
+  const thead = tr.parentElement, table = thead.closest('table');
+  if (!table || !table.offsetParent) return;
+  const frame = _findSelfIframeInParent();
+  const viewTop = frame ? frame.getBoundingClientRect().top : 0;
+  const tRect = table.getBoundingClientRect();
+  let off = (frame ? parentTopBar() : 0) - (viewTop + tRect.top);
+  off = Math.max(0, Math.min(off, tRect.height - thead.offsetHeight));
+  const val = off > 0 ? `translateY(${off}px)` : '';
+  thead.classList.toggle('stuck', off > 0);
+  tr.querySelectorAll('th').forEach(th => { th.style.transform = val; });
+}
+function scheduleSticky() { if (!_stickyRaf) _stickyRaf = requestAnimationFrame(updateStickyHead); }
+try { window.parent.addEventListener('scroll', scheduleSticky, true); window.parent.addEventListener('resize', scheduleSticky); } catch (e) {}
+window.addEventListener('scroll', scheduleSticky, true);
+window.addEventListener('resize', scheduleSticky);
 
 function sortBy(key) {
   if (sortKey === key) { sortDir *= -1; }
@@ -2014,6 +2415,7 @@ function getFiltered() {
     if (q && !r.name.toLowerCase().includes(q) && !r.cs_no.toLowerCase().includes(q) && !r.color.toLowerCase().includes(q) && !r.maker_no.toLowerCase().includes(q)) return false;
     if (cat && r.category !== cat) return false;
     if (currentStatusSet().size > 0 && !currentStatusSet().has(getStatusLabel(r))) return false;
+    if (!rowPassesFilters(r)) return false;
     if (viewMode === 'delivery' && !(r.deliveryQty > 0)) return false;
     if (viewMode === 'delivery' && groupFilter !== null) {
       if (groupFilter === '__none__') { if (r.group) return false; }
@@ -2026,6 +2428,7 @@ function getFiltered() {
   rows.sort((a, b) => {
     let av, bv;
     if (sortKey === 'status') { av = getStatusLabel(a); bv = getStatusLabel(b); }
+    else if (sortKey === 'zozoRt') { av = a.zozoRtN; bv = b.zozoRtN; }
     else if (sortKey === 'color') { av = a.color + a.size; bv = b.color + b.size; }
     else { av = a[sortKey]; bv = b[sortKey]; }
     if (col && col.type === 'str') {
@@ -2083,8 +2486,32 @@ function statusChip(r) {
   return '<span class="chip chip-ok">適正</span>';
 }
 
+// 列ごとのセル（表示する列だけ描く）
+const CELL = {
+  name:          r => `<td class="name cell-text" title="${esc(r.name)}"><div class="nm">${esc(r.name)}</div></td>`,
+  cs_no:         r => `<td class="cell-text code">${esc(r.cs_no)}</td>`,
+  color:         r => `<td class="cell-text">${esc(r.color)}${r.size && r.size!=='FREE' ? ' / '+esc(r.size) : ''}</td>`,
+  maker_no:      r => `<td class="cell-text code" style="color:var(--text-muted)">${esc(r.maker_no)}</td>`,
+  firstSaleDate: r => `<td class="cell-text code" style="color:var(--text-muted)">${esc(r.firstSaleDate)}</td>`,
+  deliveryQty:   r => `<td class="r qty"><input type="number" min="0" step="1" value="${r.deliveryQty !== null && r.deliveryQty !== undefined ? r.deliveryQty : ''}" placeholder="—" style="width:64px;text-align:right;border:1px solid var(--border-md);border-radius:6px;padding:3px 6px;font-size:13px;background:var(--surface);color:var(--text);outline:none;" oninput="updateDelivery('${r._id}', this.value)"></td>`,
+  currentStock:  r => `<td class="r">${r.currentStock !== null ? r.currentStock : '—'}</td>`,
+  zozoRt:        r => `<td class="r">${rtCell(r)}</td>`,
+  tempostarStock:r => `<td class="r bold" style="color:var(--accent)">${r.tempostarStock !== null && r.tempostarStock !== undefined ? r.tempostarStock : '—'}</td>`,
+  companySales:  r => `<td class="r">${r.companySales !== null && r.companySales !== undefined ? r.companySales : '—'}</td>`,
+  forecastSales: r => `<td class="r">${r.forecastSales !== null && r.forecastSales !== undefined ? r.forecastSales : '—'}</td>`,
+  unref:         r => `<td class="r ${r.unref>0?'info':''}">${r.unref>0?'+'+r.unref:'—'}</td>`,
+  realStock:     r => `<td class="r bold">${r.realStock !== null ? r.realStock : '—'}</td>`,
+  sold30:        r => `<td class="r">${r.sold30 !== null ? r.sold30 : '—'}</td>`,
+  sold7:         r => `<td class="r">${r.sold7  !== null ? r.sold7  : '—'}</td>`,
+  recommend:     r => `<td class="r ${r.recommend>0?'warn':''}">${r.recommend !== null && r.recommend > 0 ? r.recommend : '—'}</td>`,
+  status:        r => `<td>${statusChip(r)}</td>`,
+};
+
 function render() {
+  if (museAppliedTo !== data) applyMuse();
   buildHeader();
+  renderActiveFilters();
+  renderColvis();
   updateDeliveryCount();
   const rows = getFiltered();
   const total = rows.length;
@@ -2093,7 +2520,7 @@ function render() {
   const slice = rows.slice((currentPage-1)*PER_PAGE, currentPage*PER_PAGE);
 
   const tbody = document.getElementById('tbody');
-  const colCount = COLS.length + (viewMode === 'delivery' ? 2 : 0);
+  const colCount = visCols().length + (viewMode === 'delivery' ? 2 : 0);
   if (slice.length === 0) {
     tbody.innerHTML = `<tr><td colspan="${colCount}"><div class="empty"><div class="empty-icon">🔍</div>該当する商品がありません</div></td></tr>`;
   } else {
@@ -2107,24 +2534,11 @@ function render() {
       }>
         ${viewMode === 'delivery' ? `<td style="text-align:center"><input type="checkbox" class="delivery-select" data-id="${r._id}" ${selectedForDelete.has(r._id)?'checked':''} onchange="toggleDeliverySelect('${r._id}', this)"></td>` : ''}
         ${viewMode === 'delivery' ? `<td style="font-size:11px">${r.group ? `<span style="background:${getGroupColor(r.group)};color:#fff;border-radius:10px;padding:2px 8px;white-space:nowrap;">${esc(r.group)}</span>` : `<span style="color:var(--text-muted)">未グループ</span>`}</td>` : ''}
-        <td class="name cell-text" title="${esc(r.name)}">${esc(r.name)}</td>
-        <td class="cell-text" style="font-size:12px">${esc(r.cs_no)}</td>
-        <td class="cell-text">${esc(r.color)}${r.size && r.size!=='FREE' ? ' / '+esc(r.size) : ''}</td>
-        <td class="cell-text" style="font-size:12px;color:var(--text-muted)">${esc(r.maker_no)}</td>
-        <td class="cell-text" style="font-size:12px;color:var(--text-muted)">${esc(r.firstSaleDate)}</td>
-        <td class="r"><input type="number" min="0" step="1" value="${r.deliveryQty !== null && r.deliveryQty !== undefined ? r.deliveryQty : ''}" placeholder="—" style="width:64px;text-align:right;border:0.5px solid var(--border-md);border-radius:4px;padding:3px 6px;font-size:13px;background:var(--surface);color:var(--text);outline:none;" oninput="updateDelivery('${r._id}', this.value)"></td>
-        <td class="r">${r.currentStock !== null ? r.currentStock : '—'}</td>
-        <td class="r bold" style="color:var(--accent)">${r.tempostarStock !== null && r.tempostarStock !== undefined ? r.tempostarStock : '—'}</td>
-        <td class="r">${r.companySales !== null && r.companySales !== undefined ? r.companySales : '—'}</td>
-        <td class="r">${r.forecastSales !== null && r.forecastSales !== undefined ? r.forecastSales : '—'}</td>
-        <td class="r ${r.unref>0?'info':''}">${r.unref>0?'+'+r.unref:'—'}</td>
-        <td class="r bold">${r.realStock !== null ? r.realStock : '—'}</td>
-        <td class="r">${r.sold30 !== null ? r.sold30 : '—'}</td>
-        <td class="r">${r.sold7  !== null ? r.sold7  : '—'}</td>
-        <td class="r ${r.recommend>0?'warn':''}">${r.recommend !== null && r.recommend > 0 ? r.recommend : '—'}</td>
-        <td>${statusChip(r)}</td>
+        ${visCols().map(c => CELL[c.key](r)).join('')}
       </tr>`).join('');
   }
+
+  scheduleSticky();
 
   // ページネーション
   const pg = document.getElementById('pagination');
@@ -2162,6 +2576,12 @@ function render() {
       <div class="metric-value" style="color:var(--accent)">${withUnref.toLocaleString()}</div>
       <div class="metric-sub">合計 +${totalUnref.toLocaleString()} 点</div>
     </div>
+    ${museMap ? `
+    <div class="metric">
+      <div class="metric-label">ZOZO（リアルタイム）</div>
+      <div class="metric-value" style="color:var(--coral)">${data.filter(r => r.zozoRtN === 0).length.toLocaleString()}</div>
+      <div class="metric-sub">在庫切れ／残り1〜5点 ${data.filter(r => r.zozoRtN >= 1 && r.zozoRtN <= 5).length} 件${museUnmatched ? `<br>紐付かなかった行 ${museUnmatched} 件` : ''}</div>
+    </div>` : ''}
     ${Object.keys(zozoArchive.items || {}).length ? `
     <div class="metric">
       <div class="metric-label">在庫日報に無し</div>
@@ -2264,9 +2684,9 @@ function toShiftJisCsvBlob(text) {
 
 // ── CSVエクスポート ──
 function buildCsvString(rows) {
-  const header = `商品名,CS品番,カラー,サイズ,メーカー品番,初回販売開始日,カテゴリ,ZOZO在庫,${stockSourceLabel}在庫,自社売上個数,売上個数予想,未反映納品数,実質在庫,直近30日販売数,直近7日販売数,推奨納品数,納品数(入力),グループ,ステータス\n`;
+  const header = `商品名,CS品番,カラー,サイズ,メーカー品番,初回販売開始日,カテゴリ,ZOZO在庫,ZOZO(リアルタイム)在庫,${stockSourceLabel}在庫,自社売上個数,売上個数予想,未反映納品数,実質在庫,直近30日販売数,直近7日販売数,推奨納品数,納品数(入力),グループ,ステータス\n`;
   const body = rows.map(r =>
-    `"${r.name}",${r.cs_no},"${r.color}",${r.size},"${r.maker_no}","${r.firstSaleDate}","${r.category}",${r.currentStock!==null?r.currentStock:''},${r.tempostarStock!==null&&r.tempostarStock!==undefined?r.tempostarStock:''},${r.companySales!==null&&r.companySales!==undefined?r.companySales:''},${r.forecastSales!==null&&r.forecastSales!==undefined?r.forecastSales:''},${r.unref},${r.realStock!==null?r.realStock:''},${r.sold30!==null?r.sold30:''},${r.sold7!==null?r.sold7:''},${r.recommend!==null?r.recommend:''},${r.deliveryQty!==null&&r.deliveryQty!==undefined?r.deliveryQty:''},"${r.group||''}",${getStatusLabel(r)}`
+    `"${r.name}",${r.cs_no},"${r.color}",${r.size},"${r.maker_no}","${r.firstSaleDate}","${r.category}",${r.currentStock!==null?r.currentStock:''},${r.zozoRt?r.zozoRt.label:''},${r.tempostarStock!==null&&r.tempostarStock!==undefined?r.tempostarStock:''},${r.companySales!==null&&r.companySales!==undefined?r.companySales:''},${r.forecastSales!==null&&r.forecastSales!==undefined?r.forecastSales:''},${r.unref},${r.realStock!==null?r.realStock:''},${r.sold30!==null?r.sold30:''},${r.sold7!==null?r.sold7:''},${r.recommend!==null?r.recommend:''},${r.deliveryQty!==null&&r.deliveryQty!==undefined?r.deliveryQty:''},"${r.group||''}",${getStatusLabel(r)}`
   ).join('\n');
   return header + body;
 }
