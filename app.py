@@ -3280,8 +3280,9 @@ def prev_year_sales_values(codes, sales_last: dict, history_map: dict, start, en
     return out
 
 
-def build_sales_csv(file_infos, start, end):
-    """売上個数一覧のCSV（1商品1行）を作る。指定期間に1個以上売れた商品だけ、売上個数の多い順。
+def build_sales_csv(file_infos, start, end, include_zero=True):
+    """売上個数一覧のCSV（1商品1行）を作る。売上個数の多い順。
+    include_zero=True なら、指定期間中に在庫があった（期間中に一度でも在庫が1以上あった）のに売れなかった商品も、売上0で入れる。
     戻り値: (CSVのbytes（UTF-8・BOM付き）, 行数, 期間内のCSVの日数, 期間内でCSVが無い日のリスト)"""
     in_range = [fi for fi in file_infos if start <= fi["date"] <= end]
     have = {fi["date"] for fi in in_range}
@@ -3302,6 +3303,15 @@ def build_sales_csv(file_infos, start, end):
         return (-pd.to_numeric(df["増減値"], errors="coerce").fillna(0).groupby(codes).sum()).to_dict()
 
     sales = {k: int(v) for k, v in _sales(in_range).items() if v > 0}
+    all_paths = [fi["path"] for fi in file_infos]
+    history_map = get_tempostar_stock_history_map(all_paths)
+    if include_zero:
+        # 期間中に在庫があった商品（prev_year_sales_values は「売上なし・期間中に在庫あり」を0で返す）
+        snap_codes = get_all_sku_snapshot(all_paths)["商品コード"].astype(str).str.strip()
+        rest = [c for c in snap_codes.unique() if c and c not in sales]
+        for code, v in zip(rest, prev_year_sales_values(rest, {}, history_map, start, end)):
+            if v == 0:
+                sales[code] = 0
     if not sales:
         return b"", 0, len(have), missing
 
@@ -3309,7 +3319,6 @@ def build_sales_csv(file_infos, start, end):
     last_start = (pd.Timestamp(start) - DateOffset(years=1)).date()
     last_end = (pd.Timestamp(end) - DateOffset(years=1)).date()
     sales_last = _sales([fi for fi in file_infos if last_start <= fi["date"] <= last_end])
-    all_paths = [fi["path"] for fi in file_infos]
 
     snap = get_all_sku_snapshot(all_paths).copy()
     snap["商品コード"] = snap["商品コード"].astype(str).str.strip()
@@ -3317,7 +3326,7 @@ def build_sales_csv(file_infos, start, end):
     info_cols = [c for c in ["商品基本コード", "商品名", "属性1名", "属性2名", "現在庫"] if c in snap.columns]
     out = out.merge(snap[["商品コード"] + info_cols].drop_duplicates("商品コード"), on="商品コード", how="left")
     out["前年同期間の売上個数"] = prev_year_sales_values(
-        out["商品コード"], sales_last, get_tempostar_stock_history_map(all_paths), last_start, last_end
+        out["商品コード"], sales_last, history_map, last_start, last_end
     )
     out["前年同期間の売上個数"] = out["前年同期間の売上個数"].astype("Int64")   # 在庫が無かった商品は空欄
     if "現在庫" in out.columns:
@@ -3330,7 +3339,7 @@ def build_sales_csv(file_infos, start, end):
 
 def _sales_csv_dialog_body(file_infos, min_date, max_date):
     """売上個数のCSVダウンロード画面の中身（期間は一覧の検索とは別に設定する）"""
-    st.caption("指定した期間に1個以上売れた商品を、1商品1行で書き出します（一覧の検索条件・フィルターとは関係なく全商品が対象）。")
+    st.caption("指定した期間の売上個数を、1商品1行で書き出します（一覧の検索条件・フィルターとは関係なく全商品が対象）。")
     # 初期値：前月の1日〜末日（データの範囲に収める）
     first_this = max_date.replace(day=1)
     def_end = first_this - timedelta(days=1)
@@ -3361,18 +3370,22 @@ def _sales_csv_dialog_body(file_infos, min_date, max_date):
     q4.button("直近1年", on_click=_set, args=(max_date - timedelta(days=364), max_date), use_container_width=True, key="sales_csv_q_1y")
     st.caption(f"データがある期間：{min_date:%Y/%m/%d} 〜 {max_date:%Y/%m/%d}　｜　売上は一覧と同じく「受注取込」の個数です。")
 
+    include_zero = st.checkbox(
+        "売上0の商品も含める（期間中に在庫があったのに売れなかった商品）", value=True, key="sales_csv_zero"
+    )
+
     if d_start > d_end:
         st.error("開始日が終了日より後になっています。")
         return
 
-    period_key = (d_start.isoformat(), d_end.isoformat())
+    period_key = (d_start.isoformat(), d_end.isoformat(), include_zero)
     res = st.session_state.get("sales_csv_result")
     if res and res["key"] != period_key:
         res = None   # 期間を変えたら作り直す
 
     if st.button("📄 CSVを作成", type="primary", use_container_width=True, key="sales_csv_make"):
         with st.spinner("集計中…（期間が長いと少し時間がかかります）"):
-            data, n, days, missing = build_sales_csv(file_infos, d_start, d_end)
+            data, n, days, missing = build_sales_csv(file_infos, d_start, d_end, include_zero)
         res = {"key": period_key, "data": data, "n": n, "days": days, "missing": missing}
         st.session_state["sales_csv_result"] = res
 
@@ -3385,7 +3398,7 @@ def _sales_csv_dialog_body(file_infos, min_date, max_date):
             st.warning(f"期間内でCSVが無い日が {len(ms)} 日あります（その日の売上は含まれません）："
                        + "、".join(f"{d:%m/%d}" for d in ms[:10]) + (" …" if len(ms) > 10 else ""))
         if res["n"] == 0:
-            st.info("この期間に売れた商品はありません。")
+            st.info("この期間に該当する商品はありません。")
             return
         st.success(f"✅ {res['n']:,} 商品（{d_start:%Y/%m/%d}〜{d_end:%Y/%m/%d}・CSV {res['days']} 日分）")
         kw = {}
